@@ -1,0 +1,26 @@
+# ninja log v7
+1	21	1774510633698427318	CMakeFiles/__CMAKE__CXX26@synth_7dc728aa2457.dir/df29794099f5.bmi.ddi	250874d1842fa089
+1	269	1774510633697293270	CMakeFiles/__CMAKE__CXX26@synth_7dc728aa2457.dir/1f708004f604.bmi.ddi	4eecadbc53bbee9f
+269	273	1774510633969748493	CMakeFiles/__CMAKE__CXX26@synth_7dc728aa2457.dir/CXX.dd	f9daed3a4e97472c
+269	273	1774510633969748493	CMakeFiles/__CMAKE__CXX26@synth_7dc728aa2457.dir/CXXModules.json	f9daed3a4e97472c
+269	273	1774510633969748493	CMakeFiles/__CMAKE__CXX26@synth_7dc728aa2457.dir/1f708004f604.bmi.modmap	f9daed3a4e97472c
+269	273	1774510633969748493	CMakeFiles/__CMAKE__CXX26@synth_7dc728aa2457.dir/df29794099f5.bmi.modmap	f9daed3a4e97472c
+273	280	1774510633969748493	test/module/CMakeFiles/cp_test_module.dir/main.cpp.o.ddi	7a8b47c114dfdb7a
+273	280	1774510633970573119	test/module/CMakeFiles/cp_test_module.dir/smoke.cppm.o.ddi	922dfbce6a7be468
+280	284	1774510633980771122	test/module/CMakeFiles/cp_test_module.dir/CXX.dd	8b7528dbf5ccee89
+280	284	1774510633980771122	test/module/CMakeFiles/cp_test_module.dir/CXXModules.json	8b7528dbf5ccee89
+280	284	1774510633980771122	test/module/CMakeFiles/cp_test_module.dir/main.cpp.o.modmap	8b7528dbf5ccee89
+280	284	1774510633980771122	test/module/CMakeFiles/cp_test_module.dir/smoke.cppm.o.modmap	8b7528dbf5ccee89
+284	3398	1774510637045283936	CMakeFiles/__CMAKE__CXX26@synth_7dc728aa2457.dir/1f708004f604.bmi	253c656fe7fe77eb
+3400	3752	1774510637447282815	test/module/CMakeFiles/cp_test_module.dir/smoke.cppm.o	a21c4396582785d5
+3400	3752	1774510637447282815	test/module/CMakeFiles/cp_test_module.dir/smoke.gcm	a21c4396582785d5
+3752	4081	1774510637448282812	test/module/CMakeFiles/cp_test_module.dir/main.cpp.o	a0328167d8c24908
+4081	4130	1774510637777281895	test/module/cp_test_module	59587aa80026ade2
+2	6	1774510944370447930	CMakeFiles/__CMAKE__CXX26@synth_7dc728aa2457.dir/CXX.dd	f9daed3a4e97472c
+2	6	1774510944370447930	CMakeFiles/__CMAKE__CXX26@synth_7dc728aa2457.dir/CXXModules.json	f9daed3a4e97472c
+2	6	1774510944370447930	CMakeFiles/__CMAKE__CXX26@synth_7dc728aa2457.dir/1f708004f604.bmi.modmap	f9daed3a4e97472c
+2	6	1774510944370447930	CMakeFiles/__CMAKE__CXX26@synth_7dc728aa2457.dir/df29794099f5.bmi.modmap	f9daed3a4e97472c
+7	10	1774510944375447916	test/module/CMakeFiles/cp_test_module.dir/CXX.dd	8b7528dbf5ccee89
+7	10	1774510944375447916	test/module/CMakeFiles/cp_test_module.dir/CXXModules.json	8b7528dbf5ccee89
+7	10	1774510944375447916	test/module/CMakeFiles/cp_test_module.dir/main.cpp.o.modmap	8b7528dbf5ccee89
+7	10	1774510944375447916	test/module/CMakeFiles/cp_test_module.dir/smoke.cppm.o.modmap	8b7528dbf5ccee89

@@ -1,0 +1,6 @@
+ninja_dyndep_version = 1.0
+build test/module/CMakeFiles/cp_test_module.dir/main.cpp.o: dyndep | CMakeFiles/__CMAKE__CXX26@synth_7dc728aa2457.dir/1f708004f604.bmi test/module/CMakeFiles/cp_test_module.dir/smoke.gcm
+
+build test/module/CMakeFiles/cp_test_module.dir/smoke.cppm.o | test/module/CMakeFiles/cp_test_module.dir/smoke.gcm: dyndep | CMakeFiles/__CMAKE__CXX26@synth_7dc728aa2457.dir/1f708004f604.bmi
+  restat = 1
+
