@@ -1,6 +1,6 @@
-add_executable(cp_test_module)
+add_executable(module_smoke_test)
 
-target_sources(cp_test_module
+target_sources(module_smoke_test
     PRIVATE
         main.cpp
     PRIVATE
@@ -9,11 +9,11 @@ target_sources(cp_test_module
             smoke.cppm
 )
 
-set_target_properties(cp_test_module PROPERTIES
+set_target_properties(module_smoke_test PROPERTIES
     CXX_STANDARD 26
     CXX_EXTENSIONS OFF
     CXX_MODULE_STD ON
     CXX_SCAN_FOR_MODULES ON
 )
 
-add_test(NAME module COMMAND cp_test_module)
+add_test(NAME module COMMAND module_smoke_test)

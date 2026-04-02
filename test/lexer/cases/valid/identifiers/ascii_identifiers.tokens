@@ -1,0 +1,6 @@
+identifier	_	start_of_line
+identifier	snake_case	leading_space
+identifier	A1	leading_space
+identifier	keyword_prefix	leading_space
+identifier	_x2	leading_space
+eof		-

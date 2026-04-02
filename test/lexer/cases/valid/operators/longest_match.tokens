@@ -1,0 +1,19 @@
+colon_colon	::	start_of_line
+colon	:	leading_space
+arrow	->	leading_space
+minus	-	leading_space
+equal_equal	==	leading_space
+equal	=	leading_space
+less_equal	<=	leading_space
+less	<	leading_space
+greater_equal	>=	leading_space
+greater	>	leading_space
+less_less	<<	leading_space
+less	<	leading_space
+greater_greater	>>	leading_space
+greater	>	leading_space
+plus_plus	++	leading_space
+plus	+	leading_space
+minus_minus	--	leading_space
+minus	-	leading_space
+eof		-

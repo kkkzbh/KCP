@@ -1,8 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/home/kkkzbh/code/cp/build-clion/cmake_install.cmake",
-		"/home/kkkzbh/code/cp/build-clion/test/module/cmake_install.cmake"
-	],
-	"Parallel" : false
-}

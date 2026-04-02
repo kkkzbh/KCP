@@ -7,6 +7,6 @@ auto main() -> int
         return 1;
     }
 
-    const std::vector<int> values{1, 2, 3};
+    auto const values = std::vector{1, 2, 3};
     return values.size() == 3 ? 0 : 2;
 }

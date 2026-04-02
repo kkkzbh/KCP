@@ -1,0 +1,4 @@
+string_literal	"cp"	start_of_line
+string_literal	"a\nb"	leading_space
+string_literal	"quote: \""	leading_space
+eof		-

@@ -1,0 +1,6 @@
+char_literal	'x'	start_of_line
+char_literal	'\n'	leading_space
+char_literal	'\t'	leading_space
+char_literal	'\\'	leading_space
+char_literal	'\''	leading_space
+eof		-
