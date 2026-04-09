@@ -42,7 +42,7 @@ namespace test_lexer {
     auto fields = std::vector<std::string>{};
     auto start = 0uz;
 
-    for (;;) {
+    while (true) {
         auto const index = line.find(delimiter, start);
         if (index == std::string::npos) {
             fields.push_back(line.substr(start));

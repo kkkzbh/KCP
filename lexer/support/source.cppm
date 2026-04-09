@@ -6,19 +6,19 @@ export using file_id = std::uint32_t;
 
 export struct span
 {
+    [[nodiscard]] constexpr auto operator==(span const&) const -> bool = default;
+
     file_id file{};
     std::size_t start{};
     std::size_t end{};
-
-    [[nodiscard]] constexpr auto operator==(span const&) const -> bool = default;
 };
 
 export struct source_position
 {
+    [[nodiscard]] constexpr auto operator==(source_position const&) const -> bool = default;
+
     std::size_t line{};
     std::size_t column{};
-
-    [[nodiscard]] constexpr auto operator==(source_position const&) const -> bool = default;
 };
 
 export struct source_manager
@@ -46,13 +46,13 @@ private:
 
 auto source_manager::add_source(std::string name, std::string text) -> file_id
 {
-    auto file = source_file {
+    auto file = source_file{
         .name = std::move(name),
         .text = std::move(text),
         .line_starts = { 0 },
     };
 
-    std::ranges::for_each (
+    std::ranges::for_each(
         std::views::iota(0uz, file.text.size())
         | std::views::filter([&](auto const index) {
             return file.text[index] == '\n';
@@ -90,7 +90,7 @@ auto source_manager::position(file_id id, std::size_t offset) const -> source_po
     auto const line_index = static_cast<std::size_t>(std::distance(file.line_starts.begin(), it) - 1);
     auto const line_start = file.line_starts[line_index];
 
-    return source_position {
+    return source_position{
         .line = line_index + 1,
         .column = safe_offset - line_start + 1,
     };

@@ -4,6 +4,7 @@ import std;
 import lexer.source;
 import lexer.token;
 import lexer.diagnostic;
+import preprocessor.core;
 
 export struct lexer
 {
@@ -49,6 +50,12 @@ private:
 
     [[nodiscard]] auto skip_trivia() -> trivia_state;
 
+    [[nodiscard]] auto preprocess_issue_at_offset() -> preprocess_issue const*;
+
+    [[nodiscard]] auto issue_contains_newline(preprocess_issue const& issue) const -> bool;
+
+    [[nodiscard]] auto lex_preprocess_issue(token_flags flags, preprocess_issue const& issue) -> token;
+
     [[nodiscard]] auto lex_token(token_flags flags) -> token;
 
     [[nodiscard]] auto lex_identifier_or_keyword(std::size_t start, token_flags flags) -> token;
@@ -67,21 +74,21 @@ private:
 
     [[nodiscard]] auto lex_invalid_character(std::size_t start, token_flags flags) -> token;
 
-    [[nodiscard]] auto lex_unterminated_block_comment(std::size_t start, token_flags flags) -> token;
-
     source_manager const& sources_;
     diagnostic_sink& sink_;
     file_id file_{};
     std::size_t offset_{};
+    preprocessed_file preprocessed_{};
     bool has_peeked_{};
     token peeked_{};
     bool at_line_start_{ true };
+    std::size_t next_issue_index_{};
 };
 
 namespace detail {
 using namespace std::literals;
 
-constexpr auto punctuation_table = std::to_array({
+auto constexpr punctuation_table = std::to_array({
     std::pair{ "<<="sv, token_kind::less_less_equal },
     std::pair{ ">>="sv, token_kind::greater_greater_equal },
     std::pair{ "::"sv, token_kind::colon_colon },
@@ -127,7 +134,7 @@ constexpr auto punctuation_table = std::to_array({
     std::pair{ "?"sv, token_kind::question },
 });
 
-constexpr auto keyword_table = std::to_array({
+auto constexpr keyword_table = std::to_array({
     std::pair{ "let"sv, token_kind::kw_let },
     std::pair{ "const"sv, token_kind::kw_const },
     std::pair{ "if"sv, token_kind::kw_if },
@@ -164,13 +171,13 @@ constexpr auto keyword_table = std::to_array({
 
 [[nodiscard]] auto is_recovery_delimiter(char ch) -> bool
 {
-    constexpr auto delimiters = " \t\r\n(){}[],:;.+-*/%<>=&|^~?\"'"sv;
+    auto constexpr delimiters = " \t\r\n(){}[],:;.+-*/%<>=&|^~?\"'"sv;
     return delimiters.contains(ch);
 }
 
 [[nodiscard]] auto is_simple_escape(char ch) -> bool
 {
-    constexpr auto escapes = "\\'\"?abfnrtv"sv;
+    auto constexpr escapes = "\\'\"?abfnrtv"sv;
     return std::ranges::find(escapes, ch) != escapes.end();
 }
 
@@ -196,16 +203,20 @@ constexpr auto keyword_table = std::to_array({
 }
 } // namespace detail
 
-lexer::lexer(source_manager const& sources, file_id file, diagnostic_sink& sink) : sources_(sources), sink_(sink),
-    file_(file) {}
+lexer::lexer(source_manager const& sources, file_id file, diagnostic_sink& sink) : sources_(sources), sink_(sink)
+{
+    reset(file);
+}
 
 auto lexer::reset(file_id file) -> void
 {
     file_ = file;
     offset_ = 0;
+    preprocessed_ = preprocess(sources_, file_);
     has_peeked_ = false;
     peeked_ = {};
     at_line_start_ = true;
+    next_issue_index_ = 0;
 }
 
 auto lexer::peek() -> token
@@ -238,13 +249,17 @@ auto lexer::next() -> token
         return make_token(token_kind::eof, offset_, offset_, flags);
     }
 
+    if(auto const* issue = preprocess_issue_at_offset()) {
+        return lex_preprocess_issue(flags, *issue);
+    }
+
     return lex_token(flags);
 }
 
 auto lexer::tokenize_all() -> std::vector<token>
 {
     auto result = std::vector<token>{};
-    for(;;) {
+    while(true) {
         auto const current_token = next();
         result.push_back(current_token);
         if(current_token.kind == token_kind::eof) {
@@ -257,7 +272,7 @@ auto lexer::tokenize_all() -> std::vector<token>
 
 auto lexer::current_source() const -> std::string_view
 {
-    return sources_.text(file_);
+    return preprocessed_.normalized_text;
 }
 
 auto lexer::eof() const -> bool
@@ -307,6 +322,14 @@ auto lexer::skip_trivia() -> trivia_state
     auto result = trivia_state{ .saw_space = false,.at_line_start = at_line_start_ };
 
     while(!eof()) {
+        if(auto const* issue = preprocess_issue_at_offset()) {
+            result.saw_space = true;
+            if(issue_contains_newline(*issue)) {
+                result.at_line_start = true;
+            }
+            break;
+        }
+
         auto const ch = current();
 
         if(std::isspace(static_cast<unsigned char>(ch)) != 0) {
@@ -319,57 +342,63 @@ auto lexer::skip_trivia() -> trivia_state
             continue;
         }
 
-        if(ch == '/' && peek_char() == '/') {
-            result.saw_space = true;
-            advance(2);
-            while(!eof() && current() != '\n') {
-                advance();
-            }
-            continue;
-        }
-
-        if(ch == '/' && peek_char() == '*') {
-            result.saw_space = true;
-            auto const start = offset_;
-            advance(2);
-            auto closed = false;
-            while(!eof()) {
-                if(current() == '\n') {
-                    at_line_start_ = true;
-                    result.at_line_start = true;
-                }
-                if(current() == '*' && peek_char() == '/') {
-                    advance(2);
-                    closed = true;
-                    break;
-                }
-                advance();
-            }
-            if(!closed) {
-                offset_ = start;
-                break;
-            }
-            continue;
-        }
-
         break;
     }
 
-    if(!eof()) {
+    if(!eof() && preprocess_issue_at_offset() == nullptr) {
         at_line_start_ = false;
     }
 
     return result;
 }
 
+auto lexer::preprocess_issue_at_offset() -> preprocess_issue const*
+{
+    while(next_issue_index_ < preprocessed_.issues.size()
+          && preprocessed_.issues[next_issue_index_].source_span.end <= offset_) {
+        ++next_issue_index_;
+    }
+
+    if(next_issue_index_ >= preprocessed_.issues.size()) {
+        return nullptr;
+    }
+
+    auto const& issue = preprocessed_.issues[next_issue_index_];
+    return issue.source_span.start == offset_ ? &issue : nullptr;
+}
+
+auto lexer::issue_contains_newline(preprocess_issue const& issue) const -> bool
+{
+    auto const source = current_source().substr(
+        issue.source_span.start,
+        issue.source_span.end - issue.source_span.start);
+    return source.find('\n') != std::string_view::npos;
+}
+
+auto lexer::lex_preprocess_issue(token_flags flags, preprocess_issue const& issue) -> token
+{
+    switch(issue.kind) {
+    case preprocess_issue_kind::unterminated_block_comment:
+        report(diagnostic_code::unterminated_block_comment, "unterminated block comment",
+               issue.source_span.start, issue.source_span.end);
+        break;
+    }
+
+    offset_ = issue.source_span.end;
+    at_line_start_ = issue_contains_newline(issue);
+    ++next_issue_index_;
+
+    return token{
+        .kind = token_kind::invalid,
+        .source_span = issue.source_span,
+        .flags = flags | token_flags::unterminated | token_flags::recovered,
+    };
+}
+
 auto lexer::lex_token(token_flags flags) -> token
 {
     auto const start = offset_;
     auto const ch = current();
-
-    if(ch == '/' && peek_char() == '*') {
-        return lex_unterminated_block_comment(start, flags);
-    }
 
     if(detail::is_identifier_start(ch)) {
         return lex_identifier_or_keyword(start, flags);
@@ -606,18 +635,4 @@ auto lexer::lex_invalid_character(std::size_t start, token_flags flags) -> token
     advance();
     report(diagnostic_code::invalid_character, "invalid character", start, offset_);
     return make_token(token_kind::invalid, start, offset_, flags | token_flags::recovered);
-}
-
-auto lexer::lex_unterminated_block_comment(std::size_t start, token_flags flags) -> token
-{
-    advance(2);
-    while(!eof()) {
-        if(current() == '\n') {
-            at_line_start_ = true;
-        }
-        advance();
-    }
-
-    report(diagnostic_code::unterminated_block_comment, "unterminated block comment", start, offset_);
-    return make_token(token_kind::invalid, start, offset_, flags | token_flags::unterminated | token_flags::recovered);
 }

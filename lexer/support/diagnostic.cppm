@@ -22,7 +22,7 @@ export enum class diagnostic_code
 
 export struct diagnostic
 {
-    diagnostic_severity severity{diagnostic_severity::error};
+    diagnostic_severity severity{ diagnostic_severity::error };
     diagnostic_code code{};
     std::string message;
     span primary_span{};

@@ -112,11 +112,11 @@ export [[nodiscard]] constexpr auto has_flag(token_flags flags, token_flags bit)
 
 export struct token
 {
+    [[nodiscard]] constexpr auto operator==(token const&) const -> bool = default;
+
     token_kind kind{};
     span source_span{};
     token_flags flags{token_flags::none};
-
-    [[nodiscard]] constexpr auto operator==(token const&) const -> bool = default;
 };
 
 auto to_string(token_kind kind) -> std::string_view

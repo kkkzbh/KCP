@@ -10,5 +10,8 @@ project(language_lab LANGUAGES CXX)
 
 include(CTest)
 add_subdirectory(lexer)
+add_subdirectory(preprocessor)
+target_link_libraries(lexer_core PRIVATE preprocessor_core)
 add_subdirectory(test/module)
 add_subdirectory(test/lexer)
+add_subdirectory(test/preprocessor)

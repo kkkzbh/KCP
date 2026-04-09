@@ -67,6 +67,20 @@ auto main() -> int
         diagnostics.diagnostics().back().code == diagnostic_code::unterminated_block_comment,
         "unterminated block comment should diagnose correctly");
 
+    auto const comment_span = sources.add_source("comment_span.lex", "let/* inner */value;");
+    lex.reset(comment_span);
+
+    auto const first_after_comment = lex.next();
+    auto const second_after_comment = lex.next();
+    test_lexer::assert_true(first_after_comment.kind == token_kind::kw_let,
+        "token before block comment should still lex correctly");
+    test_lexer::assert_true(second_after_comment.kind == token_kind::identifier,
+        "token after block comment should still lex correctly");
+    test_lexer::assert_true(std::string(sources.slice(second_after_comment.source_span)) == "value",
+        "token span after block comment should slice original source text");
+    test_lexer::assert_true(has_flag(second_after_comment.flags, token_flags::leading_space),
+        "token after block comment should still observe synthesized separating whitespace");
+
     diagnostics.clear();
     test_lexer::assert_true(diagnostics.diagnostics().empty(), "api behavior test should not emit diagnostics");
     return 0;

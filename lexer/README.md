@@ -6,15 +6,17 @@
 
 - `core/` 放词法入口与核心扫描逻辑。
 - `support/` 放通用基础模块，包括源码管理、token 定义与诊断接口。
+- 顶层 `preprocessor/` 提供注释预处理阶段，负责把注释归一化为空格和换行，并保留原始偏移。
 - `docs/` 放设计说明文档。
 - `core/lexer.cppm` 是入口模块，它重新导出 `source`、`token`、`diagnostic`、`scanner` 四个子模块。
 - `support/source.cppm` 管理源码文件、切片与行列位置。
 - `support/token.cppm` 定义 `token_kind`、`token_flags` 与 `token`。
 - `support/diagnostic.cppm` 定义词法阶段的错误类型与诊断收集接口。
-- `core/scanner.cppm` 是核心扫描器实现：跳过空白和注释，按最长匹配规则识别关键字、标识符、数字、字符串、字符字面量与运算符。
+- `core/scanner.cppm` 是核心扫描器实现：基于预处理后的规范化源码跳过空白，并按最长匹配规则识别关键字、标识符、数字、字符串、字符字面量与运算符。
 - 当前词法规则把 `as` 视为保留关键字，支持复合赋值 `+= -= *= /= %= &= |= ^= <<= >>=`。
 - 字符串与字符字面量采用常见 C 风格转义，支持简单转义、八进制转义和十六进制转义。
 - 本语言不支持 C/C++ 风格的 `\` 加物理换行行拼接；该情况会在词法阶段直接报错。
+- 注释预处理保持输入长度不变，因此 `token.source_span` 仍始终指向原始源码。
 - 词法错误不会中止扫描；会生成 `invalid` token，同时通过 `diagnostic_sink` 报告错误。
 
 更细的正规式设计见 [docs/regex.md](/home/kkkzbh/code/cp/lexer/docs/regex.md)。
