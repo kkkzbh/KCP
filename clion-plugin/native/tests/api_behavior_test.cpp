@@ -1,0 +1,124 @@
+import std;
+import cp_lexer_helper;
+
+using namespace std::literals;
+
+namespace {
+
+auto contains(std::string_view haystack, std::string_view needle) -> bool
+{
+    return haystack.find(needle) != std::string_view::npos;
+}
+
+} // namespace
+
+auto main() -> int
+{
+    auto const assert_true = [](bool condition, std::string_view message) {
+        if(condition) {
+            return;
+        }
+
+        std::cerr << "assertion failed: " << message << '\n';
+        std::exit(1);
+    };
+
+    auto const valid_diagnostics = cp_lexer_helper::analyze(
+        "valid.cp",
+        "let value = 1;\nreturn value;\n");
+    assert_true(valid_diagnostics.empty(), "valid input should not produce diagnostics");
+
+    auto const invalid_diagnostics = std::array{
+        std::pair{ "invalid_character", "let value = 1; @"sv },
+        std::pair{ "unterminated_string_literal", "\"unterminated\n"sv },
+        std::pair{ "unterminated_char_literal", "'a\n"sv },
+        std::pair{ "unterminated_block_comment", "let value = 1; /* comment"sv },
+        std::pair{ "invalid_char_literal", "'ab'"sv },
+        std::pair{ "invalid_escape_sequence", "\"\\q\""sv },
+        std::pair{ "invalid_number_suffix", "123suffix"sv },
+    };
+
+    for(auto const& [expected_code, source] : invalid_diagnostics) {
+        auto const diagnostics = cp_lexer_helper::analyze("invalid.cp", source);
+        assert_true(diagnostics.size() == 1, "each invalid sample should produce one diagnostic");
+        assert_true(diagnostics.front().code == expected_code, "diagnostic code should match");
+        assert_true(diagnostics.front().severity == "error", "severity should be error");
+        assert_true(diagnostics.front().line == 1, "single-line invalid samples should map to line 1");
+        assert_true(diagnostics.front().column >= 1, "columns should be one-based");
+        assert_true(diagnostics.front().end_offset >= diagnostics.front().start_offset,
+            "diagnostic span should be non-negative");
+    }
+
+    auto const positioned = cp_lexer_helper::analyze(
+        "position.cp",
+        "let ok = 1;\nlet bad = @;\n");
+    assert_true(positioned.size() == 1, "position sample should produce one diagnostic");
+    assert_true(positioned.front().line == 2, "diagnostic line should map through source manager");
+    assert_true(positioned.front().column == 11, "diagnostic column should point at invalid character");
+
+    auto const tokens = cp_lexer_helper::tokenize("tokens.cp", "let value = 42;\n");
+    assert_true(tokens.size() >= 5, "token stream should contain source tokens and eof");
+    assert_true(tokens.front().kind == "kw_let", "first token should be kw_let");
+    assert_true(tokens.front().start_offset == 0, "first token should start at 0");
+    assert_true(tokens.front().start_of_line, "first token should mark start of line");
+    assert_true(tokens[1].kind == "identifier", "second token should be identifier");
+    assert_true(tokens[1].lexeme == "value", "identifier lexeme should match");
+    assert_true(tokens[1].leading_space, "identifier should record leading space");
+    assert_true(tokens.back().kind == "eof", "helper token mode should include eof");
+
+    auto const diagnostics_json = cp_lexer_helper::diagnostics_to_json(positioned);
+    assert_true(contains(diagnostics_json, "\"code\":\"invalid_character\""),
+        "diagnostic json should contain diagnostic code");
+    assert_true(contains(diagnostics_json, "\"startOffset\":22"),
+        "diagnostic json should contain start offset");
+    assert_true(contains(diagnostics_json, "\"column\":11"),
+        "diagnostic json should contain column");
+
+    auto const tokens_json = cp_lexer_helper::tokens_to_json(tokens);
+    assert_true(contains(tokens_json, "\"kind\":\"kw_let\""),
+        "token json should contain token kind");
+    assert_true(contains(tokens_json, "\"lexeme\":\"value\""),
+        "token json should contain token lexeme");
+    assert_true(contains(tokens_json, "\"startOfLine\":true"),
+        "token json should include token flags");
+
+    auto analyze_in = std::istringstream{"let bad = @;"};
+    auto analyze_out = std::ostringstream{};
+    auto analyze_err = std::ostringstream{};
+    auto const analyze_code = cp_lexer_helper::run_cli(
+        { "analyze", "--stdin", "--filename", "cli.cp", "--format", "json" },
+        analyze_in,
+        analyze_out,
+        analyze_err);
+    assert_true(analyze_code == 0, "analyze cli should succeed");
+    assert_true(analyze_err.view().empty(), "analyze cli should not write stderr on success");
+    assert_true(contains(analyze_out.view(), "\"code\":\"invalid_character\""),
+        "analyze cli should emit diagnostic json");
+
+    auto tokens_in = std::istringstream{"let value = 0;"};
+    auto tokens_out = std::ostringstream{};
+    auto tokens_err = std::ostringstream{};
+    auto const tokens_code = cp_lexer_helper::run_cli(
+        { "tokens", "--stdin", "--filename", "cli.cp", "--format", "json" },
+        tokens_in,
+        tokens_out,
+        tokens_err);
+    assert_true(tokens_code == 0, "tokens cli should succeed");
+    assert_true(tokens_err.view().empty(), "tokens cli should not write stderr on success");
+    assert_true(contains(tokens_out.view(), "\"kind\":\"kw_let\""),
+        "tokens cli should emit token json");
+
+    auto invalid_in = std::istringstream{"ignored"};
+    auto invalid_out = std::ostringstream{};
+    auto invalid_err = std::ostringstream{};
+    auto const invalid_code = cp_lexer_helper::run_cli(
+        { "analyze", "--filename", "missing.cp", "--format", "json" },
+        invalid_in,
+        invalid_out,
+        invalid_err);
+    assert_true(invalid_code == 2, "invalid cli arguments should fail");
+    assert_true(contains(invalid_err.view(), "usage: cp-lexer-helper"),
+        "invalid cli arguments should print usage");
+
+    return 0;
+}

@@ -1,4 +1,5 @@
 .idea/
 build/
 build-clion/
+build-clion-plugin-native/
 cmake-build-debug/

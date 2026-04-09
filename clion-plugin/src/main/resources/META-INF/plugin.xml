@@ -1,0 +1,21 @@
+<idea-plugin package="org.cp.lang.clion">
+    <id>org.cp.lang.clion</id>
+    <name>cp Language Support</name>
+    <vendor>kkkzbh</vendor>
+    <description><![CDATA[
+        Basic CLion support for the cp experimental language: file type registration,
+        syntax highlighting, comment handling, brace matching, and lexer diagnostics.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>com.intellij.modules.clion</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <fileType name="cp" language="cp" extensions="cp" implementationClass="org.cp.lang.clion.CpFileType" fieldName="INSTANCE" />
+        <lang.parserDefinition language="cp" implementationClass="org.cp.lang.clion.CpParserDefinition" />
+        <lang.syntaxHighlighterFactory language="cp" implementationClass="org.cp.lang.clion.CpSyntaxHighlighterFactory" />
+        <lang.commenter language="cp" implementationClass="org.cp.lang.clion.CpCommenter" />
+        <lang.braceMatcher language="cp" implementationClass="org.cp.lang.clion.CpBraceMatcher" />
+        <externalAnnotator language="cp" implementationClass="org.cp.lang.clion.CpExternalAnnotator" />
+    </extensions>
+</idea-plugin>
