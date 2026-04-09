@@ -1,0 +1,9 @@
+import std;
+import parser;
+
+#include "runner.hpp"
+
+auto main() -> int
+{
+    return test_parser::run_case_suite("valid");
+}
