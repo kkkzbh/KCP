@@ -17,6 +17,12 @@ public:
     [[nodiscard]] auto tokenize_all() -> std::vector<token>;
 
 private:
+    enum class escape_result {
+        valid,
+        invalid,
+        unterminated,
+    };
+
     struct trivia_state {
         bool saw_space{};
         bool at_line_start{true};
@@ -45,6 +51,9 @@ private:
     [[nodiscard]] auto lex_number(std::size_t start, token_flags flags) -> token;
     [[nodiscard]] auto lex_string_literal(std::size_t start, token_flags flags) -> token;
     [[nodiscard]] auto lex_char_literal(std::size_t start, token_flags flags) -> token;
+    [[nodiscard]] auto consume_escape_sequence(
+        std::size_t literal_start,
+        diagnostic_code unterminated_code) -> escape_result;
     [[nodiscard]] auto lex_invalid_after_number(std::size_t start, token_flags flags) -> token;
     [[nodiscard]] auto lex_invalid_character(std::size_t start, token_flags flags) -> token;
     [[nodiscard]] auto lex_unterminated_block_comment(std::size_t start, token_flags flags) -> token;
@@ -57,6 +66,8 @@ namespace front {
 namespace detail {
 
 constexpr auto punctuation_table = std::to_array({
+    std::pair{std::string_view{"<<="}, token_kind::less_less_equal},
+    std::pair{std::string_view{">>="}, token_kind::greater_greater_equal},
     std::pair{std::string_view{"::"}, token_kind::colon_colon},
     std::pair{std::string_view{"->"}, token_kind::arrow},
     std::pair{std::string_view{"=="}, token_kind::equal_equal},
@@ -67,6 +78,14 @@ constexpr auto punctuation_table = std::to_array({
     std::pair{std::string_view{">>"}, token_kind::greater_greater},
     std::pair{std::string_view{"++"}, token_kind::plus_plus},
     std::pair{std::string_view{"--"}, token_kind::minus_minus},
+    std::pair{std::string_view{"+="}, token_kind::plus_equal},
+    std::pair{std::string_view{"-="}, token_kind::minus_equal},
+    std::pair{std::string_view{"*="}, token_kind::star_equal},
+    std::pair{std::string_view{"/="}, token_kind::slash_equal},
+    std::pair{std::string_view{"%="}, token_kind::percent_equal},
+    std::pair{std::string_view{"&="}, token_kind::amp_equal},
+    std::pair{std::string_view{"|="}, token_kind::pipe_equal},
+    std::pair{std::string_view{"^="}, token_kind::caret_equal},
     std::pair{std::string_view{"("}, token_kind::l_paren},
     std::pair{std::string_view{")"}, token_kind::r_paren},
     std::pair{std::string_view{"{"}, token_kind::l_brace},
@@ -109,6 +128,7 @@ constexpr auto keyword_table = std::to_array({
     std::pair{std::string_view{"struct"}, token_kind::kw_struct},
     std::pair{std::string_view{"impl"}, token_kind::kw_impl},
     std::pair{std::string_view{"trait"}, token_kind::kw_trait},
+    std::pair{std::string_view{"as"}, token_kind::kw_as},
     std::pair{std::string_view{"true"}, token_kind::kw_true},
     std::pair{std::string_view{"false"}, token_kind::kw_false},
     std::pair{std::string_view{"and"}, token_kind::kw_and},
@@ -130,6 +150,22 @@ constexpr auto keyword_table = std::to_array({
 {
     constexpr auto delimiters = std::string_view{" \t\r\n(){}[],:;.+-*/%<>=&|^~?\"'"};
     return delimiters.contains(ch);
+}
+
+[[nodiscard]] auto is_simple_escape(char ch) -> bool
+{
+    constexpr auto escapes = std::string_view{"\\'\"?abfnrtv"};
+    return escapes.contains(ch);
+}
+
+[[nodiscard]] auto is_octal_digit(char ch) -> bool
+{
+    return ch >= '0' && ch <= '7';
+}
+
+[[nodiscard]] auto is_hex_digit(char ch) -> bool
+{
+    return std::isxdigit(static_cast<unsigned char>(ch)) != 0;
 }
 
 [[nodiscard]] auto keyword_kind(std::string_view text) -> std::optional<token_kind>
@@ -404,21 +440,29 @@ auto lexer::lex_number(std::size_t start, token_flags flags) -> token
 auto lexer::lex_string_literal(std::size_t start, token_flags flags) -> token
 {
     advance();
+    auto has_invalid_escape = false;
+
     while (!eof()) {
-        if (current() == '\\') {
-            advance();
-            if (!eof()) {
-                advance();
-            }
-            continue;
-        }
         if (current() == '"') {
             advance();
+            if (has_invalid_escape) {
+                return make_token(token_kind::invalid, start, offset_, flags | token_flags::recovered);
+            }
             return make_token(token_kind::string_literal, start, offset_, flags);
         }
         if (current() == '\n') {
             report(diagnostic_code::unterminated_string_literal, "unterminated string literal", start, offset_);
             return make_token(token_kind::invalid, start, offset_, flags | token_flags::unterminated | token_flags::recovered);
+        }
+        if (current() == '\\') {
+            auto const escape = consume_escape_sequence(start, diagnostic_code::unterminated_string_literal);
+            if (escape == escape_result::unterminated) {
+                return make_token(token_kind::invalid, start, offset_, flags | token_flags::unterminated | token_flags::recovered);
+            }
+            if (escape == escape_result::invalid) {
+                has_invalid_escape = true;
+            }
+            continue;
         }
         advance();
     }
@@ -431,28 +475,34 @@ auto lexer::lex_char_literal(std::size_t start, token_flags flags) -> token
 {
     advance();
     auto content_count = 0U;
+    auto has_invalid_escape = false;
 
     while (!eof()) {
-        if (current() == '\n') {
-            report(diagnostic_code::unterminated_char_literal, "unterminated char literal", start, offset_);
-            return make_token(token_kind::invalid, start, offset_, flags | token_flags::unterminated | token_flags::recovered);
-        }
-        if (current() == '\\') {
-            ++content_count;
-            advance();
-            if (eof()) {
-                break;
-            }
-            advance();
-            continue;
-        }
         if (current() == '\'') {
             advance();
+            if (has_invalid_escape) {
+                return make_token(token_kind::invalid, start, offset_, flags | token_flags::recovered);
+            }
             if (content_count == 1) {
                 return make_token(token_kind::char_literal, start, offset_, flags);
             }
             report(diagnostic_code::invalid_char_literal, "invalid char literal", start, offset_);
             return make_token(token_kind::invalid, start, offset_, flags | token_flags::recovered);
+        }
+        if (current() == '\n') {
+            report(diagnostic_code::unterminated_char_literal, "unterminated char literal", start, offset_);
+            return make_token(token_kind::invalid, start, offset_, flags | token_flags::unterminated | token_flags::recovered);
+        }
+        if (current() == '\\') {
+            auto const escape = consume_escape_sequence(start, diagnostic_code::unterminated_char_literal);
+            if (escape == escape_result::unterminated) {
+                return make_token(token_kind::invalid, start, offset_, flags | token_flags::unterminated | token_flags::recovered);
+            }
+            if (escape == escape_result::invalid) {
+                has_invalid_escape = true;
+            }
+            ++content_count;
+            continue;
         }
         ++content_count;
         advance();
@@ -460,6 +510,62 @@ auto lexer::lex_char_literal(std::size_t start, token_flags flags) -> token
 
     report(diagnostic_code::unterminated_char_literal, "unterminated char literal", start, offset_);
     return make_token(token_kind::invalid, start, offset_, flags | token_flags::unterminated | token_flags::recovered);
+}
+
+auto lexer::consume_escape_sequence(std::size_t literal_start, diagnostic_code unterminated_code)
+    -> escape_result
+{
+    auto const escape_start = offset_;
+    advance();
+
+    if (eof()) {
+        report(unterminated_code,
+            unterminated_code == diagnostic_code::unterminated_string_literal
+                ? "unterminated string literal"
+                : "unterminated char literal",
+            literal_start,
+            offset_);
+        return escape_result::unterminated;
+    }
+
+    if (current() == '\n') {
+        report(unterminated_code,
+            unterminated_code == diagnostic_code::unterminated_string_literal
+                ? "unterminated string literal"
+                : "unterminated char literal",
+            literal_start,
+            offset_);
+        return escape_result::unterminated;
+    }
+
+    if (detail::is_simple_escape(current())) {
+        advance();
+        return escape_result::valid;
+    }
+
+    if (detail::is_octal_digit(current())) {
+        advance();
+        for (auto count = 0; count < 2 && !eof() && detail::is_octal_digit(current()); ++count) {
+            advance();
+        }
+        return escape_result::valid;
+    }
+
+    if (current() == 'x') {
+        advance();
+        if (eof() || !detail::is_hex_digit(current())) {
+            report(diagnostic_code::invalid_escape_sequence, "invalid escape sequence", escape_start, offset_);
+            return escape_result::invalid;
+        }
+        while (!eof() && detail::is_hex_digit(current())) {
+            advance();
+        }
+        return escape_result::valid;
+    }
+
+    advance();
+    report(diagnostic_code::invalid_escape_sequence, "invalid escape sequence", escape_start, offset_);
+    return escape_result::invalid;
 }
 
 auto lexer::lex_invalid_after_number(std::size_t start, token_flags flags) -> token

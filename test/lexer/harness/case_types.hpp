@@ -50,6 +50,7 @@ inline constexpr auto all_token_kinds = std::array{
     front::token_kind::kw_struct,
     front::token_kind::kw_impl,
     front::token_kind::kw_trait,
+    front::token_kind::kw_as,
     front::token_kind::kw_true,
     front::token_kind::kw_false,
     front::token_kind::kw_and,
@@ -68,10 +69,15 @@ inline constexpr auto all_token_kinds = std::array{
     front::token_kind::dot,
     front::token_kind::arrow,
     front::token_kind::plus,
+    front::token_kind::plus_equal,
     front::token_kind::minus,
+    front::token_kind::minus_equal,
     front::token_kind::star,
+    front::token_kind::star_equal,
     front::token_kind::slash,
+    front::token_kind::slash_equal,
     front::token_kind::percent,
+    front::token_kind::percent_equal,
     front::token_kind::equal,
     front::token_kind::equal_equal,
     front::token_kind::bang_equal,
@@ -80,11 +86,16 @@ inline constexpr auto all_token_kinds = std::array{
     front::token_kind::greater,
     front::token_kind::greater_equal,
     front::token_kind::amp,
+    front::token_kind::amp_equal,
     front::token_kind::pipe,
+    front::token_kind::pipe_equal,
     front::token_kind::caret,
+    front::token_kind::caret_equal,
     front::token_kind::tilde,
     front::token_kind::less_less,
+    front::token_kind::less_less_equal,
     front::token_kind::greater_greater,
+    front::token_kind::greater_greater_equal,
     front::token_kind::plus_plus,
     front::token_kind::minus_minus,
     front::token_kind::question,
@@ -96,6 +107,7 @@ inline constexpr auto all_diagnostic_codes = std::array{
     front::diagnostic_code::unterminated_char_literal,
     front::diagnostic_code::unterminated_block_comment,
     front::diagnostic_code::invalid_char_literal,
+    front::diagnostic_code::invalid_escape_sequence,
     front::diagnostic_code::invalid_number_suffix,
 };
 
@@ -168,6 +180,7 @@ inline auto diagnostic_code_name(front::diagnostic_code code) -> std::string_vie
     case unterminated_char_literal: return "unterminated_char_literal";
     case unterminated_block_comment: return "unterminated_block_comment";
     case invalid_char_literal: return "invalid_char_literal";
+    case invalid_escape_sequence: return "invalid_escape_sequence";
     case invalid_number_suffix: return "invalid_number_suffix";
     }
 

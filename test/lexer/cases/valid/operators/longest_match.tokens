@@ -8,12 +8,18 @@ less_equal	<=	leading_space
 less	<	leading_space
 greater_equal	>=	leading_space
 greater	>	leading_space
+less_less_equal	<<=	leading_space
 less_less	<<	leading_space
-less	<	leading_space
+greater_greater_equal	>>=	leading_space
 greater_greater	>>	leading_space
-greater	>	leading_space
-plus_plus	++	leading_space
+plus_equal	+=	leading_space
 plus	+	leading_space
-minus_minus	--	leading_space
+minus_equal	-=	leading_space
 minus	-	leading_space
+amp_equal	&=	leading_space
+amp	&	leading_space
+pipe_equal	|=	leading_space
+pipe	|	leading_space
+caret_equal	^=	leading_space
+caret	^	leading_space
 eof		-

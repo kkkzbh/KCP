@@ -1,10 +1,4 @@
 export module types_demo;
-let flag = true;
-let other = false;
-let ptr = &flag;
-let raw = *ptr;
-let data = [1, 2];
-let seq = {3, 4};
-if(not flag or raw == 0) {
-    return;
-}
+let widened: f64 = count as f64;
+let seq: sequence<i32,3> = {1, 2, 3};
+let triple: tuple<i32,f64,char> = (count, 0.5, 'x');

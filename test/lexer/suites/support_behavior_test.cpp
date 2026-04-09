@@ -59,7 +59,7 @@ auto main() -> int
     concrete_sink->clear();
     test_lexer::assert_true(concrete_sink->diagnostics().empty(), "clear should remove diagnostics");
 
-    test_lexer::assert_true(test_lexer::all_token_kinds.size() == 61, "token list should stay exhaustive");
+    test_lexer::assert_true(test_lexer::all_token_kinds.size() == 72, "token list should stay exhaustive");
     auto const to_string_ptr = &front::to_string;
     test_lexer::assert_true(to_string_ptr(front::token_kind::kw_let) == "kw_let",
         "function pointer should call to_string");

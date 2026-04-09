@@ -12,6 +12,9 @@
 - `support/token.cppm` 定义 `token_kind`、`token_flags` 与 `token`。
 - `support/diagnostic.cppm` 定义词法阶段的错误类型与诊断收集接口。
 - `core/scanner.cppm` 是核心扫描器实现：跳过空白和注释，按最长匹配规则识别关键字、标识符、数字、字符串、字符字面量与运算符。
+- 当前词法规则把 `as` 视为保留关键字，支持复合赋值 `+= -= *= /= %= &= |= ^= <<= >>=`。
+- 字符串与字符字面量采用常见 C 风格转义，支持简单转义、八进制转义和十六进制转义。
+- 本语言不支持 C/C++ 风格的 `\` 加物理换行行拼接；该情况会在词法阶段直接报错。
 - 词法错误不会中止扫描；会生成 `invalid` token，同时通过 `diagnostic_sink` 报告错误。
 
 更细的正规式设计见 [docs/regex.md](/home/kkkzbh/code/cp/lexer/docs/regex.md)。

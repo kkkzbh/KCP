@@ -1,0 +1,6 @@
+identifier	value	start_of_line
+kw_as	as	leading_space
+identifier	type	leading_space
+identifier	as_value	leading_space
+identifier	value_as	leading_space
+eof		-

@@ -16,6 +16,7 @@ enum class diagnostic_code {
     unterminated_char_literal,
     unterminated_block_comment,
     invalid_char_literal,
+    invalid_escape_sequence,
     invalid_number_suffix,
 };
 

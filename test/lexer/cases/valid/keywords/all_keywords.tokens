@@ -14,6 +14,7 @@ kw_module	module	leading_space
 kw_struct	struct	leading_space
 kw_impl	impl	leading_space
 kw_trait	trait	leading_space
+kw_as	as	leading_space
 kw_true	true	leading_space
 kw_false	false	leading_space
 kw_and	and	leading_space

@@ -31,6 +31,7 @@ enum class token_kind {
     kw_struct,
     kw_impl,
     kw_trait,
+    kw_as,
     kw_true,
     kw_false,
     kw_and,
@@ -50,10 +51,15 @@ enum class token_kind {
     dot,
     arrow,
     plus,
+    plus_equal,
     minus,
+    minus_equal,
     star,
+    star_equal,
     slash,
+    slash_equal,
     percent,
+    percent_equal,
     equal,
     equal_equal,
     bang_equal,
@@ -62,11 +68,16 @@ enum class token_kind {
     greater,
     greater_equal,
     amp,
+    amp_equal,
     pipe,
+    pipe_equal,
     caret,
+    caret_equal,
     tilde,
     less_less,
+    less_less_equal,
     greater_greater,
+    greater_greater_equal,
     plus_plus,
     minus_minus,
     question,
@@ -139,6 +150,7 @@ auto to_string(token_kind kind) -> std::string_view
     case kw_struct: return "kw_struct";
     case kw_impl: return "kw_impl";
     case kw_trait: return "kw_trait";
+    case kw_as: return "kw_as";
     case kw_true: return "kw_true";
     case kw_false: return "kw_false";
     case kw_and: return "kw_and";
@@ -157,10 +169,15 @@ auto to_string(token_kind kind) -> std::string_view
     case dot: return "dot";
     case arrow: return "arrow";
     case plus: return "plus";
+    case plus_equal: return "plus_equal";
     case minus: return "minus";
+    case minus_equal: return "minus_equal";
     case star: return "star";
+    case star_equal: return "star_equal";
     case slash: return "slash";
+    case slash_equal: return "slash_equal";
     case percent: return "percent";
+    case percent_equal: return "percent_equal";
     case equal: return "equal";
     case equal_equal: return "equal_equal";
     case bang_equal: return "bang_equal";
@@ -169,11 +186,16 @@ auto to_string(token_kind kind) -> std::string_view
     case greater: return "greater";
     case greater_equal: return "greater_equal";
     case amp: return "amp";
+    case amp_equal: return "amp_equal";
     case pipe: return "pipe";
+    case pipe_equal: return "pipe_equal";
     case caret: return "caret";
+    case caret_equal: return "caret_equal";
     case tilde: return "tilde";
     case less_less: return "less_less";
+    case less_less_equal: return "less_less_equal";
     case greater_greater: return "greater_greater";
+    case greater_greater_equal: return "greater_greater_equal";
     case plus_plus: return "plus_plus";
     case minus_minus: return "minus_minus";
     case question: return "question";
