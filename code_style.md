@@ -36,3 +36,5 @@
 5. 局部变量修饰顺序 auto constexpr static inline name = type{ exp };
 
 6. 优先使用字面量，例如uz(size_t)和sv(string_view)
+
+7. 只读字符串参数优先使用 `std::string_view`，取代 `std::string const&`；只有在需要所有权或显式延长生命周期时才使用 `std::string`

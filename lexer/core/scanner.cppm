@@ -45,7 +45,7 @@ private:
     [[nodiscard]] auto make_token(token_kind kind, std::size_t start, std::size_t end,
                                   token_flags flags) const -> token;
 
-    auto report(diagnostic_code code, std::string const& message, std::size_t start, std::size_t end) const
+    auto report(diagnostic_code code, std::string_view message, std::size_t start, std::size_t end) const
         -> void;
 
     [[nodiscard]] auto skip_trivia() -> trivia_state;
@@ -306,13 +306,13 @@ auto lexer::make_token(token_kind kind, std::size_t start, std::size_t end, toke
     };
 }
 
-auto lexer::report(diagnostic_code code, std::string const& message, std::size_t start, std::size_t end) const
+auto lexer::report(diagnostic_code code, std::string_view message, std::size_t start, std::size_t end) const
     -> void
 {
     sink_.report(diagnostic{
         .severity = diagnostic_severity::error,
         .code = code,
-        .message = message,
+        .message = std::string{ message },
         .primary_span = span{ .file = file_,.start = start,.end = end },
     });
 }
