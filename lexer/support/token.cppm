@@ -3,9 +3,8 @@ export module lexer.token;
 import std;
 import lexer.source;
 
-export namespace front {
-
-enum class token_kind {
+export enum class token_kind
+{
     eof,
     invalid,
 
@@ -83,9 +82,10 @@ enum class token_kind {
     question,
 };
 
-[[nodiscard]] auto to_string(token_kind kind) -> std::string_view;
+export [[nodiscard]] auto to_string(token_kind kind) -> std::string_view;
 
-enum class token_flags : std::uint8_t {
+export enum class token_flags : std::uint8_t
+{
     none = 0,
     leading_space = 1 << 0,
     start_of_line = 1 << 1,
@@ -93,34 +93,31 @@ enum class token_flags : std::uint8_t {
     recovered = 1 << 3,
 };
 
-[[nodiscard]] constexpr auto operator|(token_flags lhs, token_flags rhs) -> token_flags
+export [[nodiscard]] constexpr auto operator|(token_flags lhs, token_flags rhs) -> token_flags
 {
     return static_cast<token_flags>(
         static_cast<std::uint8_t>(lhs) | static_cast<std::uint8_t>(rhs));
 }
 
-constexpr auto operator|=(token_flags& lhs, token_flags rhs) -> token_flags&
+export constexpr auto operator|=(token_flags& lhs, token_flags rhs) -> token_flags&
 {
     lhs = lhs | rhs;
     return lhs;
 }
 
-[[nodiscard]] constexpr auto has_flag(token_flags flags, token_flags bit) -> bool
+export [[nodiscard]] constexpr auto has_flag(token_flags flags, token_flags bit) -> bool
 {
     return (static_cast<std::uint8_t>(flags) & static_cast<std::uint8_t>(bit)) != 0;
 }
 
-struct token {
+export struct token
+{
     token_kind kind{};
     span source_span{};
     token_flags flags{token_flags::none};
 
     [[nodiscard]] constexpr auto operator==(token const&) const -> bool = default;
 };
-
-} // namespace front
-
-namespace front {
 
 auto to_string(token_kind kind) -> std::string_view
 {
@@ -203,5 +200,3 @@ auto to_string(token_kind kind) -> std::string_view
 
     return "unknown";
 }
-
-} // namespace front

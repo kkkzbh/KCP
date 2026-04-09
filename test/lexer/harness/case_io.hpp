@@ -40,7 +40,7 @@ namespace test_lexer {
     -> std::vector<std::string>
 {
     auto fields = std::vector<std::string>{};
-    auto start = std::size_t{0};
+    auto start = 0uz;
 
     for (;;) {
         auto const index = line.find(delimiter, start);
@@ -55,10 +55,10 @@ namespace test_lexer {
     return fields;
 }
 
-[[nodiscard]] inline auto parse_token_kind(std::string const& spelling) -> front::token_kind
+[[nodiscard]] inline auto parse_token_kind(std::string const& spelling) -> token_kind
 {
     for (auto const kind : all_token_kinds) {
-        if (front::to_string(kind) == spelling) {
+        if (to_string(kind) == spelling) {
             return kind;
         }
     }
@@ -66,7 +66,7 @@ namespace test_lexer {
     fail(std::format("unknown token kind '{}'", spelling));
 }
 
-[[nodiscard]] inline auto parse_diagnostic_code(std::string const& spelling) -> front::diagnostic_code
+[[nodiscard]] inline auto parse_diagnostic_code(std::string const& spelling) -> diagnostic_code
 {
     for (auto const code : all_diagnostic_codes) {
         if (diagnostic_code_name(code) == spelling) {
@@ -77,29 +77,29 @@ namespace test_lexer {
     fail(std::format("unknown diagnostic code '{}'", spelling));
 }
 
-[[nodiscard]] inline auto parse_flags(std::string const& field) -> front::token_flags
+[[nodiscard]] inline auto parse_flags(std::string const& field) -> token_flags
 {
     if (field == "-") {
-        return front::token_flags::none;
+        return token_flags::none;
     }
 
-    auto flags = front::token_flags::none;
+    auto flags = token_flags::none;
     auto const parts = split_exact(field, ',');
     for (auto const& part : parts) {
         if (part == "leading_space") {
-            flags |= front::token_flags::leading_space;
+            flags |= token_flags::leading_space;
             continue;
         }
         if (part == "start_of_line") {
-            flags |= front::token_flags::start_of_line;
+            flags |= token_flags::start_of_line;
             continue;
         }
         if (part == "unterminated") {
-            flags |= front::token_flags::unterminated;
+            flags |= token_flags::unterminated;
             continue;
         }
         if (part == "recovered") {
-            flags |= front::token_flags::recovered;
+            flags |= token_flags::recovered;
             continue;
         }
 
@@ -119,7 +119,7 @@ namespace test_lexer {
 
     auto result = std::vector<expected_token>{};
     auto line = std::string{};
-    auto line_number = std::size_t{0};
+    auto line_number = 0uz;
     while (std::getline(stream, line)) {
         ++line_number;
         if (line.empty()) {
@@ -143,7 +143,7 @@ namespace test_lexer {
     }
 
     assert_true(!result.empty(), std::format("{} should not be empty", path.string()));
-    assert_true(result.back().kind == front::token_kind::eof,
+    assert_true(result.back().kind == token_kind::eof,
         std::format("{} must end with eof token", path.string()));
     return result;
 }
@@ -162,7 +162,7 @@ namespace test_lexer {
 
     auto result = std::vector<expected_diagnostic>{};
     auto line = std::string{};
-    auto line_number = std::size_t{0};
+    auto line_number = 0uz;
     while (std::getline(stream, line)) {
         ++line_number;
         if (line.empty()) {

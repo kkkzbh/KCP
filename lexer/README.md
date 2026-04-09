@@ -29,16 +29,16 @@ import lexer;
 
 主要接口：
 
-- `front::source_manager`
+- `source_manager`
   - `add_source(name, text)`：注册源码并返回 `file_id`
   - `slice(span)` / `position(file, offset)`：取词素和位置
-- `front::token_kind` / `front::token_flags` / `front::token`
+- `token_kind` / `token_flags` / `token`
   - 描述 token 类型、附加标记和源码区间
-- `front::diagnostic_sink`
+- `diagnostic_sink`
   - 诊断输出抽象接口
-- `front::vector_diagnostic_sink`
+- `vector_diagnostic_sink`
   - 默认收集器，实现 `diagnostics()` / `clear()`
-- `front::lexer`
+- `lexer`
   - `lexer(sources, file, sink)`：构造扫描器
   - `peek()`：预读一个 token
   - `next()`：读取下一个 token

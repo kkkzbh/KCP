@@ -62,13 +62,13 @@ inline auto compare_diagnostics(
 
 inline auto run_case(lexer_case const& current_case) -> void
 {
-    auto sources = front::source_manager{};
-    auto diagnostics = front::vector_diagnostic_sink{};
+    auto sources = source_manager{};
+    auto diagnostics = vector_diagnostic_sink{};
     auto const file = sources.add_source(
         std::filesystem::relative(current_case.source_path, cases_root()).string(),
         current_case.source_text);
 
-    auto lex = front::lexer{sources, file, diagnostics};
+    auto lex = lexer{sources, file, diagnostics};
     auto const tokens = lex.tokenize_all();
 
     auto actual_tokens = std::vector<expected_token>{};

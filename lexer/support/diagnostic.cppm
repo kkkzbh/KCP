@@ -3,14 +3,14 @@ export module lexer.diagnostic;
 import std;
 import lexer.source;
 
-export namespace front {
-
-enum class diagnostic_severity {
+export enum class diagnostic_severity
+{
     error,
     warning,
 };
 
-enum class diagnostic_code {
+export enum class diagnostic_code
+{
     invalid_character,
     unterminated_string_literal,
     unterminated_char_literal,
@@ -20,21 +20,22 @@ enum class diagnostic_code {
     invalid_number_suffix,
 };
 
-struct diagnostic {
+export struct diagnostic
+{
     diagnostic_severity severity{diagnostic_severity::error};
     diagnostic_code code{};
     std::string message;
     span primary_span{};
 };
 
-class diagnostic_sink {
-public:
+export struct diagnostic_sink
+{
     virtual ~diagnostic_sink() = default;
     virtual auto report(diagnostic value) -> void = 0;
 };
 
-class vector_diagnostic_sink final : public diagnostic_sink {
-public:
+export struct vector_diagnostic_sink final : diagnostic_sink
+{
     auto report(diagnostic value) -> void override;
     [[nodiscard]] auto diagnostics() const -> std::vector<diagnostic> const&;
     auto clear() -> void;
@@ -42,10 +43,6 @@ public:
 private:
     std::vector<diagnostic> diagnostics_;
 };
-
-} // namespace front
-
-namespace front {
 
 auto vector_diagnostic_sink::report(diagnostic value) -> void
 {
@@ -61,5 +58,3 @@ auto vector_diagnostic_sink::clear() -> void
 {
     diagnostics_.clear();
 }
-
-} // namespace front

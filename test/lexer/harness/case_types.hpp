@@ -5,15 +5,15 @@ namespace test_lexer {
 using namespace std::literals;
 
 struct expected_token {
-    front::token_kind kind{};
+    token_kind kind{};
     std::string lexeme;
-    front::token_flags flags{front::token_flags::none};
+    token_flags flags{token_flags::none};
 
     [[nodiscard]] auto operator==(expected_token const&) const -> bool = default;
 };
 
 struct expected_diagnostic {
-    front::diagnostic_code code{};
+    diagnostic_code code{};
     std::string span_lexeme;
 
     [[nodiscard]] auto operator==(expected_diagnostic const&) const -> bool = default;
@@ -27,103 +27,103 @@ struct lexer_case {
 };
 
 inline constexpr auto all_token_kinds = std::array{
-    front::token_kind::eof,
-    front::token_kind::invalid,
-    front::token_kind::identifier,
-    front::token_kind::integer_literal,
-    front::token_kind::float_literal,
-    front::token_kind::char_literal,
-    front::token_kind::string_literal,
-    front::token_kind::kw_let,
-    front::token_kind::kw_const,
-    front::token_kind::kw_if,
-    front::token_kind::kw_else,
-    front::token_kind::kw_while,
-    front::token_kind::kw_do,
-    front::token_kind::kw_for,
-    front::token_kind::kw_break,
-    front::token_kind::kw_continue,
-    front::token_kind::kw_return,
-    front::token_kind::kw_import,
-    front::token_kind::kw_export,
-    front::token_kind::kw_module,
-    front::token_kind::kw_struct,
-    front::token_kind::kw_impl,
-    front::token_kind::kw_trait,
-    front::token_kind::kw_as,
-    front::token_kind::kw_true,
-    front::token_kind::kw_false,
-    front::token_kind::kw_and,
-    front::token_kind::kw_or,
-    front::token_kind::kw_not,
-    front::token_kind::l_paren,
-    front::token_kind::r_paren,
-    front::token_kind::l_brace,
-    front::token_kind::r_brace,
-    front::token_kind::l_bracket,
-    front::token_kind::r_bracket,
-    front::token_kind::comma,
-    front::token_kind::semicolon,
-    front::token_kind::colon,
-    front::token_kind::colon_colon,
-    front::token_kind::dot,
-    front::token_kind::arrow,
-    front::token_kind::plus,
-    front::token_kind::plus_equal,
-    front::token_kind::minus,
-    front::token_kind::minus_equal,
-    front::token_kind::star,
-    front::token_kind::star_equal,
-    front::token_kind::slash,
-    front::token_kind::slash_equal,
-    front::token_kind::percent,
-    front::token_kind::percent_equal,
-    front::token_kind::equal,
-    front::token_kind::equal_equal,
-    front::token_kind::bang_equal,
-    front::token_kind::less,
-    front::token_kind::less_equal,
-    front::token_kind::greater,
-    front::token_kind::greater_equal,
-    front::token_kind::amp,
-    front::token_kind::amp_equal,
-    front::token_kind::pipe,
-    front::token_kind::pipe_equal,
-    front::token_kind::caret,
-    front::token_kind::caret_equal,
-    front::token_kind::tilde,
-    front::token_kind::less_less,
-    front::token_kind::less_less_equal,
-    front::token_kind::greater_greater,
-    front::token_kind::greater_greater_equal,
-    front::token_kind::plus_plus,
-    front::token_kind::minus_minus,
-    front::token_kind::question,
+    token_kind::eof,
+    token_kind::invalid,
+    token_kind::identifier,
+    token_kind::integer_literal,
+    token_kind::float_literal,
+    token_kind::char_literal,
+    token_kind::string_literal,
+    token_kind::kw_let,
+    token_kind::kw_const,
+    token_kind::kw_if,
+    token_kind::kw_else,
+    token_kind::kw_while,
+    token_kind::kw_do,
+    token_kind::kw_for,
+    token_kind::kw_break,
+    token_kind::kw_continue,
+    token_kind::kw_return,
+    token_kind::kw_import,
+    token_kind::kw_export,
+    token_kind::kw_module,
+    token_kind::kw_struct,
+    token_kind::kw_impl,
+    token_kind::kw_trait,
+    token_kind::kw_as,
+    token_kind::kw_true,
+    token_kind::kw_false,
+    token_kind::kw_and,
+    token_kind::kw_or,
+    token_kind::kw_not,
+    token_kind::l_paren,
+    token_kind::r_paren,
+    token_kind::l_brace,
+    token_kind::r_brace,
+    token_kind::l_bracket,
+    token_kind::r_bracket,
+    token_kind::comma,
+    token_kind::semicolon,
+    token_kind::colon,
+    token_kind::colon_colon,
+    token_kind::dot,
+    token_kind::arrow,
+    token_kind::plus,
+    token_kind::plus_equal,
+    token_kind::minus,
+    token_kind::minus_equal,
+    token_kind::star,
+    token_kind::star_equal,
+    token_kind::slash,
+    token_kind::slash_equal,
+    token_kind::percent,
+    token_kind::percent_equal,
+    token_kind::equal,
+    token_kind::equal_equal,
+    token_kind::bang_equal,
+    token_kind::less,
+    token_kind::less_equal,
+    token_kind::greater,
+    token_kind::greater_equal,
+    token_kind::amp,
+    token_kind::amp_equal,
+    token_kind::pipe,
+    token_kind::pipe_equal,
+    token_kind::caret,
+    token_kind::caret_equal,
+    token_kind::tilde,
+    token_kind::less_less,
+    token_kind::less_less_equal,
+    token_kind::greater_greater,
+    token_kind::greater_greater_equal,
+    token_kind::plus_plus,
+    token_kind::minus_minus,
+    token_kind::question,
 };
 
 inline constexpr auto all_diagnostic_codes = std::array{
-    front::diagnostic_code::invalid_character,
-    front::diagnostic_code::unterminated_string_literal,
-    front::diagnostic_code::unterminated_char_literal,
-    front::diagnostic_code::unterminated_block_comment,
-    front::diagnostic_code::invalid_char_literal,
-    front::diagnostic_code::invalid_escape_sequence,
-    front::diagnostic_code::invalid_number_suffix,
+    diagnostic_code::invalid_character,
+    diagnostic_code::unterminated_string_literal,
+    diagnostic_code::unterminated_char_literal,
+    diagnostic_code::unterminated_block_comment,
+    diagnostic_code::invalid_char_literal,
+    diagnostic_code::invalid_escape_sequence,
+    diagnostic_code::invalid_number_suffix,
 };
 
-inline auto format_flags(front::token_flags flags) -> std::string
+inline auto format_flags(token_flags flags) -> std::string
 {
     auto names = std::vector<std::string_view>{};
-    if (front::has_flag(flags, front::token_flags::leading_space)) {
+    if (has_flag(flags, token_flags::leading_space)) {
         names.push_back("leading_space");
     }
-    if (front::has_flag(flags, front::token_flags::start_of_line)) {
+    if (has_flag(flags, token_flags::start_of_line)) {
         names.push_back("start_of_line");
     }
-    if (front::has_flag(flags, front::token_flags::unterminated)) {
+    if (has_flag(flags, token_flags::unterminated)) {
         names.push_back("unterminated");
     }
-    if (front::has_flag(flags, front::token_flags::recovered)) {
+    if (has_flag(flags, token_flags::recovered)) {
         names.push_back("recovered");
     }
 
@@ -131,17 +131,18 @@ inline auto format_flags(front::token_flags flags) -> std::string
         return "-";
     }
 
-    auto result = std::string{};
-    for (std::size_t index = 0; index < names.size(); ++index) {
-        if (index != 0) {
+    auto result = std::string{names.front()};
+    std::ranges::for_each(
+        names | std::views::drop(1),
+        [&](auto const name) {
             result += ',';
+            result += name;
         }
-        result += names[index];
-    }
+    );
     return result;
 }
 
-inline auto to_expected_token(front::source_manager const& sources, front::token const& value)
+inline auto to_expected_token(source_manager const& sources, token const& value)
     -> expected_token
 {
     return expected_token{
@@ -152,8 +153,8 @@ inline auto to_expected_token(front::source_manager const& sources, front::token
 }
 
 inline auto to_expected_diagnostic(
-    front::source_manager const& sources,
-    front::diagnostic const& value) -> expected_diagnostic
+    source_manager const& sources,
+    diagnostic const& value) -> expected_diagnostic
 {
     return expected_diagnostic{
         .code = value.code,
@@ -165,14 +166,14 @@ inline auto format_token(expected_token const& value) -> std::string
 {
     return std::format(
         "{}\t{}\t{}",
-        front::to_string(value.kind),
+        to_string(value.kind),
         value.lexeme,
         format_flags(value.flags));
 }
 
-inline auto diagnostic_code_name(front::diagnostic_code code) -> std::string_view
+inline auto diagnostic_code_name(diagnostic_code code) -> std::string_view
 {
-    using enum front::diagnostic_code;
+    using enum diagnostic_code;
 
     switch (code) {
     case invalid_character: return "invalid_character";
