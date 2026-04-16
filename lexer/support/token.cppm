@@ -3,119 +3,225 @@ export module lexer.token;
 import std;
 import lexer.source;
 
+/// 描述词法分析器能够产出的所有 token 类型。
 export enum class token_kind
 {
+    /// 输入结束。
     eof,
+    /// 无效或无法识别的输入片段。
     invalid,
 
+    /// 标识符。
     identifier,
+    /// 整数字面量。
     integer_literal,
+    /// 浮点数字面量。
     float_literal,
+    /// 字符字面量。
     char_literal,
+    /// 字符串字面量。
     string_literal,
 
+    /// `let` 关键字。
     kw_let,
+    /// `const` 关键字。
     kw_const,
+    /// `if` 关键字。
     kw_if,
+    /// `else` 关键字。
     kw_else,
+    /// `while` 关键字。
     kw_while,
+    /// `do` 关键字。
     kw_do,
+    /// `for` 关键字。
     kw_for,
+    /// `break` 关键字。
     kw_break,
+    /// `continue` 关键字。
     kw_continue,
+    /// `return` 关键字。
     kw_return,
+    /// `import` 关键字。
     kw_import,
+    /// `export` 关键字。
     kw_export,
+    /// `module` 关键字。
     kw_module,
+    /// `struct` 关键字。
     kw_struct,
+    /// `impl` 关键字。
     kw_impl,
+    /// `trait` 关键字。
     kw_trait,
+    /// `as` 关键字。
     kw_as,
+    /// `true` 关键字。
     kw_true,
+    /// `false` 关键字。
     kw_false,
+    /// `and` 关键字。
     kw_and,
+    /// `or` 关键字。
     kw_or,
+    /// `not` 关键字。
     kw_not,
 
+    /// 左圆括号 `(`。
     l_paren,
+    /// 右圆括号 `)`。
     r_paren,
+    /// 左花括号 `{`。
     l_brace,
+    /// 右花括号 `}`。
     r_brace,
+    /// 左方括号 `[`。
     l_bracket,
+    /// 右方括号 `]`。
     r_bracket,
+    /// 逗号 `,`。
     comma,
+    /// 分号 `;`。
     semicolon,
+    /// 冒号 `:`。
     colon,
+    /// 双冒号 `::`。
     colon_colon,
+    /// 点号 `.`。
     dot,
+    /// 箭头 `->`。
     arrow,
+    /// 加号 `+`。
     plus,
+    /// 加等号 `+=`。
     plus_equal,
+    /// 减号 `-`。
     minus,
+    /// 减等号 `-=`。
     minus_equal,
+    /// 星号 `*`。
     star,
+    /// 乘等号 `*=`。
     star_equal,
+    /// 斜杠 `/`。
     slash,
+    /// 除等号 `/=`。
     slash_equal,
+    /// 百分号 `%`。
     percent,
+    /// 取模等号 `%=`。
     percent_equal,
+    /// 赋值号 `=`。
     equal,
+    /// 相等比较 `==`。
     equal_equal,
+    /// 不等比较 `!=`。
     bang_equal,
+    /// 小于号 `<`。
     less,
+    /// 小于等于 `<=`。
     less_equal,
+    /// 大于号 `>`。
     greater,
+    /// 大于等于 `>=`。
     greater_equal,
+    /// 按位与 `&`。
     amp,
+    /// 按位与赋值 `&=`。
     amp_equal,
+    /// 按位或 `|`。
     pipe,
+    /// 按位或赋值 `|=`。
     pipe_equal,
+    /// 按位异或 `^`。
     caret,
+    /// 按位异或赋值 `^=`。
     caret_equal,
+    /// 波浪号 `~`。
     tilde,
+    /// 左移 `<<`。
     less_less,
+    /// 左移赋值 `<<=`。
     less_less_equal,
+    /// 右移 `>>`。
     greater_greater,
+    /// 右移赋值 `>>=`。
     greater_greater_equal,
+    /// 自增 `++`。
     plus_plus,
+    /// 自减 `--`。
     minus_minus,
+    /// 问号 `?`。
     question,
 };
 
+/// 将 `token_kind` 转为可读的稳定字符串名。
+///
+/// @param kind 要转换的 token 类型。
+/// @return 与枚举值对应的字符串名；未知值返回 `"unknown"`。
 export [[nodiscard]] auto to_string(token_kind kind) -> std::string_view;
 
+/// 描述 token 在扫描过程中附加的状态标记。
 export enum class token_flags : std::uint8_t
 {
+    /// 没有附加标记。
     none = 0,
+    /// 该 token 前存在空白。
     leading_space = 1 << 0,
+    /// 该 token 位于行首。
     start_of_line = 1 << 1,
+    /// 该 token 对应的输入片段未闭合。
     unterminated = 1 << 2,
+    /// 该 token 是错误恢复过程中生成的。
     recovered = 1 << 3,
 };
 
+/// 计算两个 token 标记集合的并集。
+///
+/// @param lhs 左操作数标记集合。
+/// @param rhs 右操作数标记集合。
+/// @return 合并后的标记集合。
 export [[nodiscard]] constexpr auto operator|(token_flags lhs, token_flags rhs) -> token_flags
 {
     return static_cast<token_flags>(
         static_cast<std::uint8_t>(lhs) | static_cast<std::uint8_t>(rhs));
 }
 
+/// 将右侧标记并入左侧标记集合。
+///
+/// @param lhs 需要被更新的标记集合。
+/// @param rhs 要并入的标记集合。
+/// @return 更新后的 `lhs`。
 export constexpr auto operator|=(token_flags& lhs, token_flags rhs) -> token_flags&
 {
     lhs = lhs | rhs;
     return lhs;
 }
 
+/// 判断某个标记位是否已设置。
+///
+/// @param flags 待检查的标记集合。
+/// @param bit 需要判断的单个标记位。
+/// @return 若 `flags` 中包含 `bit`，则返回 `true`，否则返回 `false`。
 export [[nodiscard]] constexpr auto has_flag(token_flags flags, token_flags bit) -> bool
 {
     return (static_cast<std::uint8_t>(flags) & static_cast<std::uint8_t>(bit)) != 0;
 }
 
+/// 表示词法分析器输出的一个 token。
 export struct token
 {
-    [[nodiscard]] constexpr auto operator==(token const&) const -> bool = default;
+    /// 比较两个 token 是否完全相等。
+    ///
+    /// @param other 待比较的 token。
+    /// @return 若两个 token 的所有字段都相同，则返回 `true`。
+    [[nodiscard]] constexpr auto operator==(token const& other) const -> bool = default;
 
+    /// token 的种类。
     token_kind kind{};
+    /// token 在原始源码中的区间。
     span source_span{};
+    /// token 的附加标记。
     token_flags flags{token_flags::none};
 };
 
