@@ -1,6 +1,6 @@
 import std;
 import lexer.source;
-import preprocessor.core;
+import preprocessor;
 
 #include "assert.hpp"
 
