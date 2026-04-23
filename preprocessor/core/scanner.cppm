@@ -14,61 +14,166 @@ export struct preprocessor_scanner
     /// @param sources 源文件管理器，用于读取输入文本。
     /// @param file 要预处理的文件编号。
     /// @return 无返回值。
-    preprocessor_scanner(source_manager const& sources, file_id file);
+    preprocessor_scanner(source_manager const& sources, file_id file)
+        : sources_(sources), file_(file), source_(sources.text(file)), normalized_(std::string{ source_ })
+    {}
 
     /// @brief 执行完整的预处理扫描。
     /// @return 规范化文本与问题列表。
     /// @note 该函数会消耗扫描器内部的中间状态，不应重复调用。
-    [[nodiscard]]
-    auto run() -> preprocessed_file;
+    auto run() -> preprocessed_file
+    {
+        while(!eof()) {
+            auto const ch = current();
+
+            if(ch == '"' || ch == '\'') {
+                skip_quoted_literal(ch);
+                continue;
+            }
+
+            if(ch == '/' && peek_char() == '/') {
+                skip_line_comment();
+                continue;
+            }
+
+            if(ch == '/' && peek_char() == '*') {
+                skip_block_comment();
+                continue;
+            }
+
+            advance();
+        }
+
+        return preprocessed_file {
+            .normalized_text = std::move(normalized_),
+            .issues = std::move(issues_),
+        };
+    }
 
 private:
     /// @brief 判断扫描位置是否已经到达输入末尾。
     /// @return 若当前偏移已越过或到达输入末尾，则返回 `true`。
-    [[nodiscard]]
-    auto eof() const -> bool;
+    auto eof() const -> bool
+    {
+        return index_ >= source_.size();
+    }
 
     /// @brief 返回当前位置的字符；到达末尾时返回 `\0`。
     /// @return 当前偏移对应的字符；若已到末尾则返回 `\0`。
-    [[nodiscard]]
-    auto current() const -> char;
+    auto current() const -> char
+    {
+        return eof() ? '\0' : source_[index_];
+    }
 
     /// @brief 返回下一个字符；到达末尾时返回 `\0`。
     /// @return 当前偏移后一个位置的字符；若不存在则返回 `\0`。
-    [[nodiscard]]
-    auto peek_char() const -> char;
+    auto peek_char() const -> char
+    {
+        auto const next = index_ + 1;
+        return next < source_.size() ? source_[next] : '\0';
+    }
 
     /// @brief 将扫描位置向前移动指定字符数。
     /// @param count 要前进的字符数，默认为 1。
     /// @return 无返回值。
-    auto advance(std::size_t count = 1) -> void;
+    auto advance(std::size_t count = 1) -> void
+    {
+        index_ += count;
+    }
 
     /// @brief 将规范化文本中指定偏移位置替换为空格。
     /// @param offset 要替换的目标偏移。
     /// @return 无返回值。
-    auto blank_at(std::size_t offset) -> void;
+    auto blank_at(std::size_t offset) -> void
+    {
+        normalized_[offset] = ' ';
+    }
 
     /// @brief 跳过一个引号包裹的字面量，保持其内部字符不被当作注释。
     /// @param delimiter 字面量使用的引号字符（`"` 或 `'`）。
     /// @return 无返回值。
     /// @note 该函数在遇到换行或文件末尾时提前返回，避免越界和误吞下一行。
-    auto skip_quoted_literal(char delimiter) -> void;
+    auto skip_quoted_literal(char delimiter) -> void
+    {
+        advance();
+
+        while(!eof()) {
+            auto const ch = current();
+
+            if(ch == '\\') {
+                advance();
+                if(!eof()) {
+                    advance();
+                }
+                continue;
+            }
+
+            if(ch == delimiter) {
+                advance();
+                return;
+            }
+
+            if(ch == '\n') {
+                return;
+            }
+
+            advance();
+        }
+    }
 
     /// @brief 消费一个 `//` 行注释并将其整段置为空格。
     /// @return 无返回值。
-    auto skip_line_comment() -> void;
+    auto skip_line_comment() -> void
+    {
+        blank_at(index_);
+        blank_at(index_ + 1);
+        advance(2);
+
+        while(!eof() && current() != '\n') {
+            blank_at(index_);
+            advance();
+        }
+    }
 
     /// @brief 消费一个 `/* */` 块注释；若未闭合则追加一条问题记录。
     /// @return 无返回值。
     /// @note 块注释中的换行会原样保留，以维持源码的行列对齐。
-    auto skip_block_comment() -> void;
+    auto skip_block_comment() -> void
+    {
+        auto const start = index_;
+        blank_at(index_);
+        blank_at(index_ + 1);
+        advance(2);
+
+        while(!eof()) {
+            if(current() == '*' && peek_char() == '/') {
+                blank_at(index_);
+                blank_at(index_ + 1);
+                advance(2);
+                return;
+            }
+
+            if(current() != '\n') {
+                blank_at(index_);
+            }
+            advance();
+        }
+
+        report(preprocess_issue_kind::unterminated_block_comment, start, source_.size());
+    }
 
     /// @brief 向问题列表追加一条预处理问题。
     /// @param kind 问题的具体类别。
     /// @param start 问题片段起始偏移。
     /// @param end 问题片段结束偏移。
     /// @return 无返回值。
-    auto report(preprocess_issue_kind kind, std::size_t start, std::size_t end) -> void;
+    auto report(preprocess_issue_kind kind, std::size_t start, std::size_t end) -> void
+    {
+        issues_.push_back(preprocess_issue{
+            .kind = kind,
+            .source_span = span{ .file = file_,.start = start,.end = end },
+        });
+    }
 
     source_manager const& sources_;       ///< 源文件管理器。
     file_id file_{};                      ///< 当前正在预处理的文件编号。
@@ -82,143 +187,7 @@ private:
 /// @param sources 源文件管理器，用于读取输入文本。
 /// @param file 要预处理的文件编号。
 /// @return 规范化文本与问题列表。
-export
-[[nodiscard]]
-auto preprocess(source_manager const& sources, file_id file) -> preprocessed_file;
-
-preprocessor_scanner::preprocessor_scanner(source_manager const& sources, file_id file)
-    : sources_(sources), file_(file), source_(sources.text(file)), normalized_(std::string{ source_ })
-{
-}
-
-auto preprocessor_scanner::run() -> preprocessed_file
-{
-    while(!eof()) {
-        auto const ch = current();
-
-        if(ch == '"' || ch == '\'') {
-            skip_quoted_literal(ch);
-            continue;
-        }
-
-        if(ch == '/' && peek_char() == '/') {
-            skip_line_comment();
-            continue;
-        }
-
-        if(ch == '/' && peek_char() == '*') {
-            skip_block_comment();
-            continue;
-        }
-
-        advance();
-    }
-
-    return preprocessed_file {
-        .normalized_text = std::move(normalized_),
-        .issues = std::move(issues_),
-    };
-}
-
-auto preprocessor_scanner::eof() const -> bool
-{
-    return index_ >= source_.size();
-}
-
-auto preprocessor_scanner::current() const -> char
-{
-    return eof() ? '\0' : source_[index_];
-}
-
-auto preprocessor_scanner::peek_char() const -> char
-{
-    auto const next = index_ + 1;
-    return next < source_.size() ? source_[next] : '\0';
-}
-
-auto preprocessor_scanner::advance(std::size_t count) -> void
-{
-    index_ += count;
-}
-
-auto preprocessor_scanner::blank_at(std::size_t offset) -> void
-{
-    normalized_[offset] = ' ';
-}
-
-auto preprocessor_scanner::skip_quoted_literal(char delimiter) -> void
-{
-    advance();
-
-    while(!eof()) {
-        auto const ch = current();
-
-        if(ch == '\\') {
-            advance();
-            if(!eof()) {
-                advance();
-            }
-            continue;
-        }
-
-        if(ch == delimiter) {
-            advance();
-            return;
-        }
-
-        if(ch == '\n') {
-            return;
-        }
-
-        advance();
-    }
-}
-
-auto preprocessor_scanner::skip_line_comment() -> void
-{
-    blank_at(index_);
-    blank_at(index_ + 1);
-    advance(2);
-
-    while(!eof() && current() != '\n') {
-        blank_at(index_);
-        advance();
-    }
-}
-
-auto preprocessor_scanner::skip_block_comment() -> void
-{
-    auto const start = index_;
-    blank_at(index_);
-    blank_at(index_ + 1);
-    advance(2);
-
-    while(!eof()) {
-        if(current() == '*' && peek_char() == '/') {
-            blank_at(index_);
-            blank_at(index_ + 1);
-            advance(2);
-            return;
-        }
-
-        if(current() != '\n') {
-            blank_at(index_);
-        }
-        advance();
-    }
-
-    report(preprocess_issue_kind::unterminated_block_comment, start, source_.size());
-}
-
-auto preprocessor_scanner::report(preprocess_issue_kind kind, std::size_t start, std::size_t end) -> void
-{
-    issues_.push_back(preprocess_issue{
-        .kind = kind,
-        .source_span = span{ .file = file_,.start = start,.end = end },
-    });
-}
-
-auto preprocess(source_manager const& sources, file_id file) -> preprocessed_file
+export auto preprocess(source_manager const& sources, file_id file) -> preprocessed_file
 {
     return preprocessor_scanner{ sources, file }.run();
 }
