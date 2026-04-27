@@ -41,3 +41,4 @@ add_parser_suite(parser_valid_cases_test suites/valid_cases_test.cpp parser_vali
 add_parser_suite(parser_invalid_cases_test suites/invalid_cases_test.cpp parser_invalid_cases)
 add_parser_suite(parser_api_behavior_test suites/api_behavior_test.cpp parser_api_behavior)
 add_parser_suite(parser_ll1_behavior_test suites/ll1_behavior_test.cpp parser_ll1_behavior)
+add_parser_suite(parser_op_precedence_test suites/op_precedence_test.cpp parser_op_precedence)

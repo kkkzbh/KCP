@@ -9,7 +9,7 @@ auto main() -> int
     auto const analysis = analyze_grammar(grammar);
     auto conflicts = std::string{};
     for(auto const& conflict : analysis.conflicts) {
-        if(!conflicts.empty()) {
+        if(not conflicts.empty()) {
             conflicts += '\n';
         }
         conflicts += conflict;
@@ -18,7 +18,7 @@ auto main() -> int
     test_parser::assert_true(
         analysis.select_sets.size() == grammar.productions.size(),
         "every production should have a select set");
-    if(!analysis.conflicts.empty()) {
+    if(not analysis.conflicts.empty()) {
         std::cerr << conflicts << '\n';
     }
     test_parser::assert_true(
@@ -37,8 +37,8 @@ auto main() -> int
         analysis.follow_sets.at("Expression").contains("r_paren"),
         "FOLLOW(Expression) should contain r_paren");
     test_parser::assert_true(
-        analysis.follow_sets.at("Type").contains("semicolon"),
-        "FOLLOW(Type) should contain semicolon");
+        analysis.follow_sets.at("Type").contains("equal"),
+        "FOLLOW(Type) should contain equal");
 
     auto const ambiguous = grammar_definition{
         .start_symbol = "S",

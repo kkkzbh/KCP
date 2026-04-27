@@ -51,10 +51,10 @@ auto main(int argc, char** argv) -> int
     auto name = std::string{ "<stdin>" };
     auto input = std::string{};
 
-    if(path.has_value() && *path != "-") {
+    if(path.has_value() and *path != "-") {
         name = *path;
         auto stream = std::ifstream{ *path };
-        if(!stream.is_open()) {
+        if(not stream.is_open()) {
             std::cerr << "failed to open " << *path << '\n';
             return 2;
         }

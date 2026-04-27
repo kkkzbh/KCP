@@ -6,6 +6,8 @@ set(PARSER_SUPPORT_MODULES
 
 set(PARSER_CORE_MODULES
     core/grammar.cppm
+    core/expression_precedence.cppm
+    core/operator_precedence.cppm
     core/recursive_descent.cppm
     core/parser.cppm
 )
@@ -66,6 +68,25 @@ target_link_libraries(parser_demo
 )
 
 set_target_properties(parser_demo PROPERTIES
+    CXX_STANDARD 26
+    CXX_EXTENSIONS OFF
+    CXX_MODULE_STD ON
+    CXX_SCAN_FOR_MODULES ON
+)
+
+add_executable(op_precedence_demo)
+
+target_sources(op_precedence_demo
+    PRIVATE
+        tool/op_precedence_demo.cpp
+)
+
+target_link_libraries(op_precedence_demo
+    PRIVATE
+        parser_core
+)
+
+set_target_properties(op_precedence_demo PROPERTIES
     CXX_STANDARD 26
     CXX_EXTENSIONS OFF
     CXX_MODULE_STD ON

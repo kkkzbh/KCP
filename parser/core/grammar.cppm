@@ -55,7 +55,7 @@ namespace {
 
     auto nullable_prefix = true;
     for(auto const& symbol : sequence) {
-        if(!is_nonterminal(nonterminals, symbol)) {
+        if(not is_nonterminal(nonterminals, symbol)) {
             result.insert(symbol);
             nullable_prefix = false;
             break;
@@ -68,7 +68,7 @@ namespace {
             }
         }
 
-        if(!first.contains(epsilon)) {
+        if(not first.contains(epsilon)) {
             nullable_prefix = false;
             break;
         }
@@ -180,12 +180,10 @@ auto cp_ll1_grammar() -> grammar_definition
             production{ "QualifiedNameTail", {} },
             production{ "Expression", { "Assignment" } },
             production{ "ExpressionNoBrace", { "AssignmentNoBrace" } },
-            production{ "Assignment", { "LogicalOr", "AssignmentTail" } },
-            production{ "AssignmentNoBrace", { "LogicalOrNoBrace", "AssignmentTailNoBrace" } },
+            production{ "Assignment", { "Unary", "AssignmentTail" } },
+            production{ "AssignmentNoBrace", { "UnaryNoBrace", "AssignmentTail" } },
             production{ "AssignmentTail", { "AssignmentOperator", "Assignment" } },
             production{ "AssignmentTail", {} },
-            production{ "AssignmentTailNoBrace", { "AssignmentOperator", "Assignment" } },
-            production{ "AssignmentTailNoBrace", {} },
             production{ "AssignmentOperator", { "equal" } },
             production{ "AssignmentOperator", { "plus_equal" } },
             production{ "AssignmentOperator", { "minus_equal" } },
@@ -197,58 +195,6 @@ auto cp_ll1_grammar() -> grammar_definition
             production{ "AssignmentOperator", { "caret_equal" } },
             production{ "AssignmentOperator", { "less_less_equal" } },
             production{ "AssignmentOperator", { "greater_greater_equal" } },
-            production{ "LogicalOr", { "LogicalAnd", "LogicalOrTail" } },
-            production{ "LogicalOrNoBrace", { "LogicalAndNoBrace", "LogicalOrTail" } },
-            production{ "LogicalOrTail", { "kw_or", "LogicalAnd", "LogicalOrTail" } },
-            production{ "LogicalOrTail", {} },
-            production{ "LogicalAnd", { "BitwiseOr", "LogicalAndTail" } },
-            production{ "LogicalAndNoBrace", { "BitwiseOrNoBrace", "LogicalAndTail" } },
-            production{ "LogicalAndTail", { "kw_and", "BitwiseOr", "LogicalAndTail" } },
-            production{ "LogicalAndTail", {} },
-            production{ "BitwiseOr", { "BitwiseXor", "BitwiseOrTail" } },
-            production{ "BitwiseOrNoBrace", { "BitwiseXorNoBrace", "BitwiseOrTail" } },
-            production{ "BitwiseOrTail", { "pipe", "BitwiseXor", "BitwiseOrTail" } },
-            production{ "BitwiseOrTail", {} },
-            production{ "BitwiseXor", { "BitwiseAnd", "BitwiseXorTail" } },
-            production{ "BitwiseXorNoBrace", { "BitwiseAndNoBrace", "BitwiseXorTail" } },
-            production{ "BitwiseXorTail", { "caret", "BitwiseAnd", "BitwiseXorTail" } },
-            production{ "BitwiseXorTail", {} },
-            production{ "BitwiseAnd", { "Equality", "BitwiseAndTail" } },
-            production{ "BitwiseAndNoBrace", { "EqualityNoBrace", "BitwiseAndTail" } },
-            production{ "BitwiseAndTail", { "amp", "Equality", "BitwiseAndTail" } },
-            production{ "BitwiseAndTail", {} },
-            production{ "Equality", { "Relational", "EqualityTail" } },
-            production{ "EqualityNoBrace", { "RelationalNoBrace", "EqualityTail" } },
-            production{ "EqualityTail", { "equal_equal", "Relational", "EqualityTail" } },
-            production{ "EqualityTail", { "bang_equal", "Relational", "EqualityTail" } },
-            production{ "EqualityTail", {} },
-            production{ "Relational", { "Shift", "RelationalTail" } },
-            production{ "RelationalNoBrace", { "ShiftNoBrace", "RelationalTail" } },
-            production{ "RelationalTail", { "less", "Shift", "RelationalTail" } },
-            production{ "RelationalTail", { "less_equal", "Shift", "RelationalTail" } },
-            production{ "RelationalTail", { "greater", "Shift", "RelationalTail" } },
-            production{ "RelationalTail", { "greater_equal", "Shift", "RelationalTail" } },
-            production{ "RelationalTail", {} },
-            production{ "Shift", { "Additive", "ShiftTail" } },
-            production{ "ShiftNoBrace", { "AdditiveNoBrace", "ShiftTail" } },
-            production{ "ShiftTail", { "less_less", "Additive", "ShiftTail" } },
-            production{ "ShiftTail", { "greater_greater", "Additive", "ShiftTail" } },
-            production{ "ShiftTail", {} },
-            production{ "Additive", { "Multiplicative", "AdditiveTail" } },
-            production{ "AdditiveNoBrace", { "MultiplicativeNoBrace", "AdditiveTail" } },
-            production{ "AdditiveTail", { "plus", "Multiplicative", "AdditiveTail" } },
-            production{ "AdditiveTail", { "minus", "Multiplicative", "AdditiveTail" } },
-            production{ "AdditiveTail", {} },
-            production{ "Multiplicative", { "Cast", "MultiplicativeTail" } },
-            production{ "MultiplicativeNoBrace", { "CastNoBrace", "MultiplicativeTail" } },
-            production{ "MultiplicativeTail", { "star", "Cast", "MultiplicativeTail" } },
-            production{ "MultiplicativeTail", { "slash", "Cast", "MultiplicativeTail" } },
-            production{ "MultiplicativeTail", { "percent", "Cast", "MultiplicativeTail" } },
-            production{ "MultiplicativeTail", {} },
-            production{ "Cast", { "Unary", "CastTail" } },
-            production{ "CastNoBrace", { "UnaryNoBrace", "CastTail" } },
-            production{ "CastTail", { "kw_as", "Type", "CastTail" } },
-            production{ "CastTail", {} },
             production{ "Unary", { "PrefixOperator", "Unary" } },
             production{ "Unary", { "Postfix" } },
             production{ "UnaryNoBrace", { "PrefixOperator", "UnaryNoBrace" } },
@@ -329,7 +275,7 @@ auto analyze_grammar(grammar_definition const& grammar) -> grammar_analysis
             auto const before = target.size();
             auto const first = first_of_sequence(grammar, analysis.first_sets, production.rhs);
             target.insert(first.begin(), first.end());
-            changed = changed || before != target.size();
+            changed = changed or before != target.size();
         }
     }
 
@@ -339,7 +285,7 @@ auto analyze_grammar(grammar_definition const& grammar) -> grammar_analysis
         for(auto const& production : grammar.productions) {
             for(auto const index : std::views::iota(0uz, production.rhs.size())) {
                 auto const& symbol = production.rhs[index];
-                if(!is_nonterminal(nonterminals, symbol)) {
+                if(not is_nonterminal(nonterminals, symbol)) {
                     continue;
                 }
 
@@ -356,12 +302,12 @@ auto analyze_grammar(grammar_definition const& grammar) -> grammar_analysis
                     }
                 }
 
-                if(beta.empty() || beta_first.contains(epsilon)) {
+                if(beta.empty() or beta_first.contains(epsilon)) {
                     auto const& lhs_follow = analysis.follow_sets[production.lhs];
                     follow.insert(lhs_follow.begin(), lhs_follow.end());
                 }
 
-                changed = changed || before != follow.size();
+                changed = changed or before != follow.size();
             }
         }
     }
@@ -395,7 +341,7 @@ auto analyze_grammar(grammar_definition const& grammar) -> grammar_analysis
                     items[left].second,
                     items[right].second,
                     std::back_inserter(overlap));
-                if(!overlap.empty()) {
+                if(not overlap.empty()) {
                     analysis.conflicts.push_back(std::format(
                         "{} conflict between production {} and {} on {}",
                         lhs,

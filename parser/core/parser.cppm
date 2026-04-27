@@ -7,4 +7,6 @@ export import parser.ast;
 export import parser.diagnostic;
 export import parser.trace;
 export import parser.grammar;
+export import parser.expression_precedence;
+export import parser.operator_precedence;
 export import parser.recursive_descent;

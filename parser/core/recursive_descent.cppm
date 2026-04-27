@@ -5,6 +5,7 @@ import lexer;
 import parser.ast;
 import parser.diagnostic;
 import parser.trace;
+import parser.expression_precedence;
 
 export struct parse_options
 {
@@ -39,7 +40,7 @@ struct recursive_descent_parser final
     [[nodiscard]] auto parse() -> parse_result
     {
         auto tree = parse_translation_unit_node();
-        auto const accepted = diagnostics_.empty() && tree != nullptr && peek().kind == token_kind::eof;
+        auto const accepted = diagnostics_.empty() and tree != nullptr and peek().kind == token_kind::eof;
 
         return parse_result{
             .accepted = accepted,
@@ -60,7 +61,7 @@ private:
 
         ~trace_scope()
         {
-            if(!completed) {
+            if(not completed) {
                 parser.record_trace(trace_event_kind::fail, label, parser.peek());
             }
         }
@@ -79,8 +80,6 @@ private:
         bool completed{};
     };
 
-    using expr_parser = std::unique_ptr<expr_syntax> (recursive_descent_parser::*)();
-
     [[nodiscard]] auto peek(std::size_t lookahead = 0uz) const -> token
     {
         if(lookahead < injected_.size()) {
@@ -97,7 +96,7 @@ private:
 
     [[nodiscard]] auto previous_token() const -> token
     {
-        if(!consumed_.has_value()) {
+        if(not consumed_.has_value()) {
             return tokens_.front();
         }
 
@@ -116,7 +115,7 @@ private:
 
     [[nodiscard]] auto is_unsupported_construct_token(token_kind kind) const -> bool
     {
-        return kind == token_kind::kw_struct || kind == token_kind::kw_impl || kind == token_kind::kw_trait;
+        return kind == token_kind::kw_struct or kind == token_kind::kw_impl or kind == token_kind::kw_trait;
     }
 
     auto report_unsupported_construct() -> void
@@ -128,7 +127,7 @@ private:
 
     auto record_trace(trace_event_kind kind, std::string_view label, token current) -> void
     {
-        if(!options_.trace_enabled) {
+        if(not options_.trace_enabled) {
             return;
         }
 
@@ -142,7 +141,7 @@ private:
     [[nodiscard]] auto consume() -> token
     {
         auto const current = peek();
-        if(!injected_.empty()) {
+        if(not injected_.empty()) {
             injected_.pop_front();
         } else if(index_ < tokens_.size()) {
             ++index_;
@@ -193,13 +192,13 @@ private:
 
     auto split_current_double_greater() -> bool
     {
-        if(!injected_.empty() || index_ >= tokens_.size()) {
+        if(not injected_.empty() or index_ >= tokens_.size()) {
             return false;
         }
 
         auto const current = tokens_[index_];
         if(current.kind != token_kind::greater_greater
-           && current.kind != token_kind::greater_greater_equal) {
+           and current.kind != token_kind::greater_greater_equal) {
             return false;
         }
 
@@ -238,7 +237,7 @@ private:
             return consume();
         }
 
-        if(split_current_double_greater() && at(token_kind::greater)) {
+        if(split_current_double_greater() and at(token_kind::greater)) {
             return consume();
         }
 
@@ -254,9 +253,9 @@ private:
         auto brace_depth = 0uz;
         auto bracket_depth = 0uz;
 
-        while(!at(token_kind::eof)) {
-            if(paren_depth == 0uz && brace_depth == 0uz && bracket_depth == 0uz
-               && at_any({ token_kind::semicolon, token_kind::r_brace })) {
+        while(not at(token_kind::eof)) {
+            if(paren_depth == 0uz and brace_depth == 0uz and bracket_depth == 0uz
+               and at_any({ token_kind::semicolon, token_kind::r_brace })) {
                 break;
             }
 
@@ -292,7 +291,7 @@ private:
 
     auto synchronize_top_level() -> void
     {
-        while(!at_any({
+        while(not at_any({
             token_kind::semicolon,
             token_kind::kw_import,
             token_kind::kw_export,
@@ -311,7 +310,7 @@ private:
     {
         auto brace_depth = 0uz;
 
-        while(!at(token_kind::eof)) {
+        while(not at(token_kind::eof)) {
             if(at(token_kind::l_brace)) {
                 ++brace_depth;
                 (void)consume();
@@ -331,7 +330,7 @@ private:
                 continue;
             }
 
-            if(brace_depth == 0uz && at(token_kind::semicolon)) {
+            if(brace_depth == 0uz and at(token_kind::semicolon)) {
                 (void)consume();
                 return;
             }
@@ -344,23 +343,23 @@ private:
     {
         using enum token_kind;
         return kind == identifier
-            || kind == integer_literal
-            || kind == float_literal
-            || kind == char_literal
-            || kind == string_literal
-            || kind == kw_true
-            || kind == kw_false
-            || kind == l_paren
-            || kind == l_bracket
-            || kind == l_brace
-            || kind == plus
-            || kind == minus
-            || kind == kw_not
-            || kind == tilde
-            || kind == amp
-            || kind == star
-            || kind == plus_plus
-            || kind == minus_minus;
+            or kind == integer_literal
+            or kind == float_literal
+            or kind == char_literal
+            or kind == string_literal
+            or kind == kw_true
+            or kind == kw_false
+            or kind == l_paren
+            or kind == l_bracket
+            or kind == l_brace
+            or kind == plus
+            or kind == minus
+            or kind == kw_not
+            or kind == tilde
+            or kind == amp
+            or kind == star
+            or kind == plus_plus
+            or kind == minus_minus;
     }
 
     [[nodiscard]] auto parse_translation_unit_node() -> std::unique_ptr<translation_unit_syntax>
@@ -369,7 +368,7 @@ private:
         auto unit = std::make_unique<translation_unit_syntax>();
         auto const start = peek().source_span;
 
-        if(at(token_kind::kw_export) && peek(1).kind == token_kind::kw_module) {
+        if(at(token_kind::kw_export) and peek(1).kind == token_kind::kw_module) {
             unit->module_header = parse_module_header();
         }
 
@@ -382,9 +381,9 @@ private:
             }
         }
 
-        while(!at(token_kind::eof)) {
+        while(not at(token_kind::eof)) {
             auto const before_index = index_;
-            if(at(token_kind::kw_export) && is_unsupported_construct_token(peek(1).kind)) {
+            if(at(token_kind::kw_export) and is_unsupported_construct_token(peek(1).kind)) {
                 (void)consume();
                 report_unsupported_construct();
                 skip_unsupported_top_level_construct();
@@ -405,7 +404,7 @@ private:
                     parser_diagnostic_code::unexpected_token,
                     std::format("unexpected top-level token {}", to_string(peek().kind)));
 
-                if(index_ == before_index && injected_.empty()) {
+                if(index_ == before_index and injected_.empty()) {
                     (void)consume();
                 }
                 synchronize_top_level();
@@ -424,7 +423,7 @@ private:
         auto const module_kw = expect(token_kind::kw_module, "'module'");
         auto name = parse_qualified_name();
         auto const semicolon = expect(token_kind::semicolon, "';'");
-        if(!export_kw.has_value() || !module_kw.has_value() || !name.has_value() || !semicolon.has_value()) {
+        if(not export_kw.has_value() or not module_kw.has_value() or not name.has_value() or not semicolon.has_value()) {
             return nullptr;
         }
 
@@ -442,7 +441,7 @@ private:
         auto const import_kw = expect(token_kind::kw_import, "'import'");
         auto name = parse_qualified_name();
         auto const semicolon = expect(token_kind::semicolon, "';'");
-        if(!import_kw.has_value() || !name.has_value() || !semicolon.has_value()) {
+        if(not import_kw.has_value() or not name.has_value() or not semicolon.has_value()) {
             return std::nullopt;
         }
 
@@ -473,14 +472,14 @@ private:
 
         auto const name = expect_identifier("function name");
         auto const l_paren = expect(token_kind::l_paren, "'('");
-        if(!name.has_value() || !l_paren.has_value()) {
+        if(not name.has_value() or not l_paren.has_value()) {
             return std::nullopt;
         }
 
         auto parameters = std::vector<parameter_syntax>{};
-        if(!at(token_kind::r_paren)) {
+        if(not at(token_kind::r_paren)) {
             auto parameter = parse_parameter();
-            if(!parameter.has_value()) {
+            if(not parameter.has_value()) {
                 return std::nullopt;
             }
             parameters.push_back(std::move(*parameter));
@@ -488,7 +487,7 @@ private:
             while(at(token_kind::comma)) {
                 (void)consume();
                 auto next = parse_parameter();
-                if(!next.has_value()) {
+                if(not next.has_value()) {
                     return std::nullopt;
                 }
                 parameters.push_back(std::move(*next));
@@ -496,7 +495,7 @@ private:
         }
 
         auto const r_paren = expect(token_kind::r_paren, "')'");
-        if(!r_paren.has_value()) {
+        if(not r_paren.has_value()) {
             return std::nullopt;
         }
 
@@ -539,7 +538,7 @@ private:
         auto const name = expect_identifier("parameter name");
         auto const colon = expect(token_kind::colon, "':'");
         auto type = parse_type();
-        if(!name.has_value() || !colon.has_value() || type == nullptr) {
+        if(not name.has_value() or not colon.has_value() or type == nullptr) {
             return std::nullopt;
         }
 
@@ -574,7 +573,7 @@ private:
             if(peek().kind == token_kind::l_brace) {
                 return nullptr;
             }
-            if(!starts_expression(peek().kind) || peek().kind == token_kind::l_brace) {
+            if(not starts_expression(peek().kind) or peek().kind == token_kind::l_brace) {
                 report_current(
                     parser_diagnostic_code::expected_statement,
                     std::format("expected statement, got {}", to_string(peek().kind)));
@@ -588,13 +587,13 @@ private:
     {
         auto frame = trace_scope{ *this, "block" };
         auto const open = expect(token_kind::l_brace, "'{'");
-        if(!open.has_value()) {
+        if(not open.has_value()) {
             return nullptr;
         }
 
         auto block = std::make_unique<statement_syntax>();
         block->kind = statement_syntax_kind::block;
-        while(!at_any({ token_kind::r_brace, token_kind::eof })) {
+        while(not at_any({ token_kind::r_brace, token_kind::eof })) {
             auto const before = index_;
             auto statement = parse_statement();
             if(statement != nullptr) {
@@ -602,14 +601,14 @@ private:
                 continue;
             }
 
-            if(index_ == before && injected_.empty() && !at_any({ token_kind::r_brace, token_kind::eof })) {
+            if(index_ == before and injected_.empty() and not at_any({ token_kind::r_brace, token_kind::eof })) {
                 (void)consume();
             }
             synchronize_statement();
         }
 
         auto const close = expect(token_kind::r_brace, "'}'");
-        if(!close.has_value()) {
+        if(not close.has_value()) {
             return nullptr;
         }
 
@@ -637,7 +636,7 @@ private:
             return nullptr;
         }
         auto const semicolon = expect(token_kind::semicolon, "';'");
-        if(!name.has_value() || !equal.has_value() || !semicolon.has_value()) {
+        if(not name.has_value() or not equal.has_value() or not semicolon.has_value()) {
             return nullptr;
         }
 
@@ -660,8 +659,8 @@ private:
         auto condition = parse_expression();
         auto const r_paren = expect(token_kind::r_paren, "')'");
         auto then_block = parse_block_statement();
-        if(!start.has_value() || !l_paren.has_value() || condition == nullptr || !r_paren.has_value()
-           || then_block == nullptr) {
+        if(not start.has_value() or not l_paren.has_value() or condition == nullptr or not r_paren.has_value()
+           or then_block == nullptr) {
             return nullptr;
         }
 
@@ -703,8 +702,8 @@ private:
         auto condition = parse_expression();
         auto const r_paren = expect(token_kind::r_paren, "')'");
         auto body = parse_block_statement();
-        if(!start.has_value() || !l_paren.has_value() || condition == nullptr || !r_paren.has_value()
-           || body == nullptr) {
+        if(not start.has_value() or not l_paren.has_value() or condition == nullptr or not r_paren.has_value()
+           or body == nullptr) {
             return nullptr;
         }
 
@@ -727,8 +726,8 @@ private:
         auto condition = parse_expression();
         auto const r_paren = expect(token_kind::r_paren, "')'");
         auto const semicolon = expect(token_kind::semicolon, "';'");
-        if(!start.has_value() || body == nullptr || !while_kw.has_value() || !l_paren.has_value()
-           || condition == nullptr || !r_paren.has_value() || !semicolon.has_value()) {
+        if(not start.has_value() or body == nullptr or not while_kw.has_value() or not l_paren.has_value()
+           or condition == nullptr or not r_paren.has_value() or not semicolon.has_value()) {
             return nullptr;
         }
 
@@ -745,7 +744,7 @@ private:
     {
         auto frame = trace_scope{ *this, "for_stmt" };
         auto const start = expect(token_kind::kw_for, "'for'");
-        if(!start.has_value()) {
+        if(not start.has_value()) {
             return nullptr;
         }
 
@@ -753,18 +752,18 @@ private:
         if(at(token_kind::colon)) {
             (void)consume();
             auto const label_token = expect_identifier("loop label");
-            if(!label_token.has_value()) {
+            if(not label_token.has_value()) {
                 return nullptr;
             }
             label = label_token->source_span;
         }
 
         auto const l_paren = expect(token_kind::l_paren, "'('");
-        if(!l_paren.has_value()) {
+        if(not l_paren.has_value()) {
             return nullptr;
         }
 
-        if(!at_any({ token_kind::kw_let, token_kind::kw_const })) {
+        if(not at_any({ token_kind::kw_let, token_kind::kw_const })) {
             report_current(
                 parser_diagnostic_code::expected_token,
                 "expected 'let' or 'const' in for binding");
@@ -776,8 +775,8 @@ private:
         auto range = parse_expression();
         auto const r_paren = expect(token_kind::r_paren, "')'");
         auto body = parse_block_statement();
-        if(!binding_name.has_value() || !colon.has_value() || range == nullptr || !r_paren.has_value()
-           || body == nullptr) {
+        if(not binding_name.has_value() or not colon.has_value() or range == nullptr or not r_paren.has_value()
+           or body == nullptr) {
             return nullptr;
         }
 
@@ -803,7 +802,7 @@ private:
             label = consume().source_span;
         }
         auto const semicolon = expect(token_kind::semicolon, "';'");
-        if(!semicolon.has_value()) {
+        if(not semicolon.has_value()) {
             return nullptr;
         }
 
@@ -819,13 +818,13 @@ private:
     {
         auto frame = trace_scope{ *this, "return_stmt" };
         auto const start = expect(token_kind::kw_return, "'return'");
-        if(!start.has_value()) {
+        if(not start.has_value()) {
             return nullptr;
         }
 
         auto statement = std::make_unique<statement_syntax>();
         statement->kind = statement_syntax_kind::return_stmt;
-        if(!at(token_kind::semicolon)) {
+        if(not at(token_kind::semicolon)) {
             auto value = parse_expression();
             if(value == nullptr) {
                 return nullptr;
@@ -834,7 +833,7 @@ private:
         }
 
         auto const semicolon = expect(token_kind::semicolon, "';'");
-        if(!semicolon.has_value()) {
+        if(not semicolon.has_value()) {
             return nullptr;
         }
 
@@ -851,7 +850,7 @@ private:
             return nullptr;
         }
         auto const semicolon = expect(token_kind::semicolon, "';'");
-        if(!semicolon.has_value()) {
+        if(not semicolon.has_value()) {
             return nullptr;
         }
 
@@ -866,7 +865,7 @@ private:
     [[nodiscard]] auto parse_type() -> std::unique_ptr<type_syntax>
     {
         auto frame = trace_scope{ *this, "type" };
-        if(!at(token_kind::identifier)) {
+        if(not at(token_kind::identifier)) {
             report_current(
                 parser_diagnostic_code::expected_type,
                 std::format("expected type, got {}", to_string(peek().kind)));
@@ -874,7 +873,7 @@ private:
         }
 
         auto name = parse_qualified_name();
-        if(!name.has_value()) {
+        if(not name.has_value()) {
             return nullptr;
         }
 
@@ -890,7 +889,7 @@ private:
             }
 
             auto argument = parse_type_argument();
-            if(!argument.has_value()) {
+            if(not argument.has_value()) {
                 return nullptr;
             }
 
@@ -899,14 +898,14 @@ private:
             while(at(token_kind::comma)) {
                 (void)consume();
                 auto next = parse_type_argument();
-                if(!next.has_value()) {
+                if(not next.has_value()) {
                     return nullptr;
                 }
                 append_type_argument(*type, std::move(*next));
             }
 
             auto const close = expect_closing_angle();
-            if(!close.has_value()) {
+            if(not close.has_value()) {
                 return nullptr;
             }
             type->full_span = combine_spans(type->full_span, close->source_span);
@@ -973,7 +972,7 @@ private:
         auto frame = trace_scope{ *this, "qualified_name" };
         auto result = qualified_name_syntax{};
         auto const first = expect_identifier("identifier");
-        if(!first.has_value()) {
+        if(not first.has_value()) {
             return std::nullopt;
         }
 
@@ -983,7 +982,7 @@ private:
         while(at(token_kind::colon_colon)) {
             (void)consume();
             auto const next = expect_identifier("qualified name component");
-            if(!next.has_value()) {
+            if(not next.has_value()) {
                 return std::nullopt;
             }
             result.components.push_back(next->source_span);
@@ -1007,12 +1006,12 @@ private:
     [[nodiscard]] auto parse_assignment() -> std::unique_ptr<expr_syntax>
     {
         auto frame = trace_scope{ *this, "assignment" };
-        auto left = parse_logical_or();
+        auto left = parse_expression_pratt(0);
         if(left == nullptr) {
             return nullptr;
         }
 
-        if(!is_assignment_operator(peek().kind)) {
+        if(not is_assignment_operator(peek().kind)) {
             frame.succeed();
             return left;
         }
@@ -1037,32 +1036,60 @@ private:
     {
         using enum token_kind;
         return kind == equal
-            || kind == plus_equal
-            || kind == minus_equal
-            || kind == star_equal
-            || kind == slash_equal
-            || kind == percent_equal
-            || kind == amp_equal
-            || kind == pipe_equal
-            || kind == caret_equal
-            || kind == less_less_equal
-            || kind == greater_greater_equal;
+            or kind == plus_equal
+            or kind == minus_equal
+            or kind == star_equal
+            or kind == slash_equal
+            or kind == percent_equal
+            or kind == amp_equal
+            or kind == pipe_equal
+            or kind == caret_equal
+            or kind == less_less_equal
+            or kind == greater_greater_equal;
     }
 
-    [[nodiscard]] auto parse_binary_chain(
-        std::string_view label,
-        expr_parser next,
-        std::initializer_list<token_kind> operators) -> std::unique_ptr<expr_syntax>
+    // Pratt-style binary expression parser. Prefix / call / postfix / primary
+    // continue to flow through recursive descent (parse_unary → parse_postfix
+    // → parse_primary). The shared cp_binary_operator_table from
+    // parser.expression_precedence is the single source of truth for binary
+    // operator precedence and is also consumed by the operator-precedence
+    // experiment module.
+    [[nodiscard]] auto parse_expression_pratt(int min_bp) -> std::unique_ptr<expr_syntax>
     {
-        auto frame = trace_scope{ *this, label };
-        auto left = (this->*next)();
+        auto left = parse_unary();
         if(left == nullptr) {
             return nullptr;
         }
 
-        while(at_any(operators)) {
+        while(true) {
+            auto const op_kind = peek().kind;
+            auto const entry = find_binary_operator(op_kind);
+            if(not entry.has_value() or entry->left_bp < min_bp) {
+                break;
+            }
+
+            if(op_kind == token_kind::kw_as) {
+                auto const cast_kw = consume();
+                record_trace(trace_event_kind::enter, "cast", cast_kw);
+                auto type = parse_type();
+                if(type == nullptr) {
+                    return nullptr;
+                }
+
+                auto cast = std::make_unique<expr_syntax>();
+                cast->kind = expr_syntax_kind::cast;
+                cast->operator_kind = cast_kw.kind;
+                cast->full_span = combine_spans(left->full_span, type->full_span);
+                cast->operands.push_back(std::move(left));
+                cast->type_operand = std::move(type);
+                left = std::move(cast);
+                record_trace(trace_event_kind::exit, "cast", peek());
+                continue;
+            }
+
             auto const operation = consume();
-            auto right = (this->*next)();
+            record_trace(trace_event_kind::enter, std::format("binary({})", to_string(op_kind)), operation);
+            auto right = parse_expression_pratt(entry->right_bp);
             if(right == nullptr) {
                 return nullptr;
             }
@@ -1074,103 +1101,10 @@ private:
             combined->operands.push_back(std::move(left));
             combined->operands.push_back(std::move(right));
             left = std::move(combined);
+            record_trace(trace_event_kind::exit, std::format("binary({})", to_string(op_kind)), peek());
         }
 
-        frame.succeed();
         return left;
-    }
-
-    [[nodiscard]] auto parse_logical_or() -> std::unique_ptr<expr_syntax>
-    {
-        return parse_binary_chain("logical_or", &recursive_descent_parser::parse_logical_and, { token_kind::kw_or });
-    }
-
-    [[nodiscard]] auto parse_logical_and() -> std::unique_ptr<expr_syntax>
-    {
-        return parse_binary_chain("logical_and", &recursive_descent_parser::parse_bitwise_or, { token_kind::kw_and });
-    }
-
-    [[nodiscard]] auto parse_bitwise_or() -> std::unique_ptr<expr_syntax>
-    {
-        return parse_binary_chain("bitwise_or", &recursive_descent_parser::parse_bitwise_xor, { token_kind::pipe });
-    }
-
-    [[nodiscard]] auto parse_bitwise_xor() -> std::unique_ptr<expr_syntax>
-    {
-        return parse_binary_chain("bitwise_xor", &recursive_descent_parser::parse_bitwise_and, { token_kind::caret });
-    }
-
-    [[nodiscard]] auto parse_bitwise_and() -> std::unique_ptr<expr_syntax>
-    {
-        return parse_binary_chain("bitwise_and", &recursive_descent_parser::parse_equality, { token_kind::amp });
-    }
-
-    [[nodiscard]] auto parse_equality() -> std::unique_ptr<expr_syntax>
-    {
-        return parse_binary_chain(
-            "equality",
-            &recursive_descent_parser::parse_relational,
-            { token_kind::equal_equal, token_kind::bang_equal });
-    }
-
-    [[nodiscard]] auto parse_relational() -> std::unique_ptr<expr_syntax>
-    {
-        return parse_binary_chain(
-            "relational",
-            &recursive_descent_parser::parse_shift,
-            { token_kind::less, token_kind::less_equal, token_kind::greater, token_kind::greater_equal });
-    }
-
-    [[nodiscard]] auto parse_shift() -> std::unique_ptr<expr_syntax>
-    {
-        return parse_binary_chain(
-            "shift",
-            &recursive_descent_parser::parse_additive,
-            { token_kind::less_less, token_kind::greater_greater });
-    }
-
-    [[nodiscard]] auto parse_additive() -> std::unique_ptr<expr_syntax>
-    {
-        return parse_binary_chain(
-            "additive",
-            &recursive_descent_parser::parse_multiplicative,
-            { token_kind::plus, token_kind::minus });
-    }
-
-    [[nodiscard]] auto parse_multiplicative() -> std::unique_ptr<expr_syntax>
-    {
-        return parse_binary_chain(
-            "multiplicative",
-            &recursive_descent_parser::parse_cast,
-            { token_kind::star, token_kind::slash, token_kind::percent });
-    }
-
-    [[nodiscard]] auto parse_cast() -> std::unique_ptr<expr_syntax>
-    {
-        auto frame = trace_scope{ *this, "cast" };
-        auto operand = parse_unary();
-        if(operand == nullptr) {
-            return nullptr;
-        }
-
-        while(at(token_kind::kw_as)) {
-            auto const cast_kw = consume();
-            auto type = parse_type();
-            if(type == nullptr) {
-                return nullptr;
-            }
-
-            auto cast = std::make_unique<expr_syntax>();
-            cast->kind = expr_syntax_kind::cast;
-            cast->operator_kind = cast_kw.kind;
-            cast->full_span = combine_spans(operand->full_span, type->full_span);
-            cast->operands.push_back(std::move(operand));
-            cast->type_operand = std::move(type);
-            operand = std::move(cast);
-        }
-
-        frame.succeed();
-        return operand;
     }
 
     [[nodiscard]] auto parse_unary() -> std::unique_ptr<expr_syntax>
@@ -1223,7 +1157,7 @@ private:
                 call->kind = expr_syntax_kind::call;
                 call->operands.push_back(std::move(operand));
 
-                if(!at(token_kind::r_paren)) {
+                if(not at(token_kind::r_paren)) {
                     auto argument = parse_expression();
                     if(argument == nullptr) {
                         return nullptr;
@@ -1241,7 +1175,7 @@ private:
                 }
 
                 auto const close = expect(token_kind::r_paren, "')'");
-                if(!close.has_value()) {
+                if(not close.has_value()) {
                     return nullptr;
                 }
 
@@ -1276,7 +1210,7 @@ private:
         switch(peek().kind) {
         case token_kind::identifier: {
             auto name = parse_qualified_name();
-            if(!name.has_value()) {
+            if(not name.has_value()) {
                 return nullptr;
             }
             expression = std::make_unique<expr_syntax>();
@@ -1323,13 +1257,13 @@ private:
         token_kind close_kind) -> std::unique_ptr<expr_syntax>
     {
         auto const open = expect(open_kind, open_kind == token_kind::l_bracket ? "'['" : "'{'");
-        if(!open.has_value()) {
+        if(not open.has_value()) {
             return nullptr;
         }
 
         auto expression = std::make_unique<expr_syntax>();
         expression->kind = kind;
-        if(!at(close_kind)) {
+        if(not at(close_kind)) {
             auto element = parse_expression();
             if(element == nullptr) {
                 return nullptr;
@@ -1347,7 +1281,7 @@ private:
         }
 
         auto const close = expect(close_kind, close_kind == token_kind::r_bracket ? "']'" : "'}'");
-        if(!close.has_value()) {
+        if(not close.has_value()) {
             return nullptr;
         }
 
@@ -1358,7 +1292,7 @@ private:
     [[nodiscard]] auto parse_paren_expression() -> std::unique_ptr<expr_syntax>
     {
         auto const open = expect(token_kind::l_paren, "'('");
-        if(!open.has_value()) {
+        if(not open.has_value()) {
             return nullptr;
         }
 
@@ -1386,7 +1320,7 @@ private:
         }
 
         auto const close = expect(token_kind::r_paren, "')'");
-        if(!close.has_value()) {
+        if(not close.has_value()) {
             return nullptr;
         }
 
@@ -1420,9 +1354,9 @@ auto parse_translation_unit(source_manager const& sources, file_id file, parse_o
         return value.kind == token_kind::invalid;
     });
 
-    if(!result.lexer_diagnostics.empty() || has_invalid_token) {
+    if(not result.lexer_diagnostics.empty() or has_invalid_token) {
         auto const lexical_failure_span = [&]() -> span {
-            if(!result.lexer_diagnostics.empty()) {
+            if(not result.lexer_diagnostics.empty()) {
                 return result.lexer_diagnostics.front().primary_span;
             }
 
