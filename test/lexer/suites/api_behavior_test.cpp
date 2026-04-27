@@ -10,7 +10,7 @@ auto main() -> int
     auto const first = sources.add_source("peek.lex", "let value = 1;");
     auto const second = sources.add_source("reset.lex", "return value;");
 
-    auto lex = lexer{sources, first, diagnostics};
+    auto lex = lexer{ sources, first, diagnostics };
 
     auto const peeked_once = lex.peek();
     auto const peeked_twice = lex.peek();

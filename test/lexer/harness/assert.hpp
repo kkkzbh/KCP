@@ -10,7 +10,7 @@ namespace test_lexer {
 
 inline auto assert_true(bool condition, std::string_view message) -> void
 {
-    if (!condition) {
+    if (not condition) {
         fail("assertion failed: " + std::string(message));
     }
 }

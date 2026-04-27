@@ -28,13 +28,17 @@ struct token_record
     bool recovered{};
 };
 
-[[nodiscard]] auto analyze(std::string_view filename, std::string_view text) -> std::vector<diagnostic_record>;
+[[nodiscard]]
+auto analyze(std::string_view filename, std::string_view text) -> std::vector<diagnostic_record>;
 
-[[nodiscard]] auto tokenize(std::string_view filename, std::string_view text) -> std::vector<token_record>;
+[[nodiscard]]
+auto tokenize(std::string_view filename, std::string_view text) -> std::vector<token_record>;
 
-[[nodiscard]] auto diagnostics_to_json(std::span<diagnostic_record const> diagnostics) -> std::string;
+[[nodiscard]]
+auto diagnostics_to_json(std::span<diagnostic_record const> diagnostics) -> std::string;
 
-[[nodiscard]] auto tokens_to_json(std::span<token_record const> tokens) -> std::string;
+[[nodiscard]]
+auto tokens_to_json(std::span<token_record const> tokens) -> std::string;
 
 auto run_cli(std::span<std::string_view const> args, std::istream& input, std::ostream& output,
              std::ostream& error) -> int;
@@ -158,7 +162,7 @@ auto parse_cli(std::span<std::string_view const> args, std::ostream& error) -> s
             request.filename = std::string(args[++index]);
             continue;
         }
-        if(arg == "--help" || arg == "-h") {
+        if(arg == "--help" or arg == "-h") {
             usage(error);
             return std::nullopt;
         }
@@ -168,10 +172,10 @@ auto parse_cli(std::span<std::string_view const> args, std::ostream& error) -> s
         return std::nullopt;
     }
 
-    if((request.command != "analyze" && request.command != "tokens")
-       || !request.read_stdin
-       || request.filename.empty()
-       || !request.json) {
+    if((request.command != "analyze" and request.command != "tokens")
+       or not request.read_stdin
+       or request.filename.empty()
+       or not request.json) {
         usage(error);
         return std::nullopt;
     }
@@ -283,7 +287,7 @@ auto run_cli(std::span<std::string_view const> args, std::istream& input, std::o
              std::ostream& error) -> int
 {
     auto const request = parse_cli(args, error);
-    if(!request) {
+    if(not request) {
         return 2;
     }
 

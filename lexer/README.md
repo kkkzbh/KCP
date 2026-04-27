@@ -11,13 +11,13 @@
 - `core/lexer.cppm` 是入口模块，它重新导出 `source`、`token`、`diagnostic`、`scanner` 四个子模块。
 - `support/source.cppm` 管理源码文件、切片与行列位置。
 - `support/token.cppm` 定义 `token_kind`、`token_flags` 与 `token`。
-- `support/diagnostic.cppm` 定义词法阶段的错误类型与诊断收集接口。
+- `support/diagnostic.cppm` 定义词法阶段的错误类型、诊断接收 concept 与默认收集器。
 - `core/scanner.cppm` 是核心扫描器实现：基于预处理后的规范化源码跳过空白，并按最长匹配规则识别关键字、标识符、数字、字符串、字符字面量与运算符。
 - 当前词法规则把 `as` 视为保留关键字，支持复合赋值 `+= -= *= /= %= &= |= ^= <<= >>=`。
 - 字符串与字符字面量采用常见 C 风格转义，支持简单转义、八进制转义和十六进制转义。
 - 本语言不支持 C/C++ 风格的 `\` 加物理换行行拼接；该情况会在词法阶段直接报错。
 - 注释预处理保持输入长度不变，因此 `token.source_span` 仍始终指向原始源码。
-- 词法错误不会中止扫描；会生成 `invalid` token，同时通过 `diagnostic_sink` 报告错误。
+- 词法错误不会中止扫描；会生成 `invalid` token，同时通过满足 `diagnostic_sink` concept 的接收器报告错误。
 
 更细的正规式设计见 [docs/regex.md](/home/kkkzbh/code/cp/lexer/docs/regex.md)。
 
@@ -37,11 +37,12 @@ import lexer;
 - `token_kind` / `token_flags` / `token`
   - 描述 token 类型、附加标记和源码区间
 - `diagnostic_sink`
-  - 诊断输出抽象接口
+  - 诊断接收 concept，要求提供 `report(diagnostic)` 且返回 `void`
 - `vector_diagnostic_sink`
   - 默认收集器，实现 `diagnostics()` / `clear()`
 - `lexer`
-  - `lexer(sources, file, sink)`：构造扫描器
+  - `lexer<Sink>`：受 `diagnostic_sink` 约束的扫描器类模板
+  - `lexer(sources, file, sink)`：依赖 CTAD 的常用构造形式
   - `peek()`：预读一个 token
   - `next()`：读取下一个 token
   - `tokenize_all()`：一次性扫描完整 token 流
