@@ -2,8 +2,8 @@ export module preprocessor.scanner;
 
 import std;
 import lexer.source;
-import preprocessor.issue;
-import preprocessor.output;
+import preprocessor.diagnostic;
+import preprocessor.preprocessed;
 
 /// @brief 预处理扫描器，负责剥离注释并保留源码偏移。
 /// @details 扫描器在不改变源文本长度的前提下，把注释位置替换为空格，同时保留换行字符，
@@ -23,20 +23,20 @@ export struct preprocessor_scanner
     /// @note 该函数会消耗扫描器内部的中间状态，不应重复调用。
     auto run() -> preprocessed_file
     {
-        while(!eof()) {
+        while(not eof()) {
             auto const ch = current();
 
-            if(ch == '"' || ch == '\'') {
+            if(ch == '"' or ch == '\'') {
                 skip_quoted_literal(ch);
                 continue;
             }
 
-            if(ch == '/' && peek_char() == '/') {
+            if(ch == '/' and peek_char() == '/') {
                 skip_line_comment();
                 continue;
             }
 
-            if(ch == '/' && peek_char() == '*') {
+            if(ch == '/' and peek_char() == '*') {
                 skip_block_comment();
                 continue;
             }
@@ -97,12 +97,15 @@ private:
     {
         advance();
 
-        while(!eof()) {
+        while(not eof()) {
             auto const ch = current();
 
             if(ch == '\\') {
                 advance();
-                if(!eof()) {
+                if(current() == '\n') {
+                    return;
+                }
+                if(not eof()) {
                     advance();
                 }
                 continue;
@@ -129,7 +132,7 @@ private:
         blank_at(index_ + 1);
         advance(2);
 
-        while(!eof() && current() != '\n') {
+        while(not eof() and current() != '\n') {
             blank_at(index_);
             advance();
         }
@@ -145,8 +148,8 @@ private:
         blank_at(index_ + 1);
         advance(2);
 
-        while(!eof()) {
-            if(current() == '*' && peek_char() == '/') {
+        while(not eof()) {
+            if(current() == '*' and peek_char() == '/') {
                 blank_at(index_);
                 blank_at(index_ + 1);
                 advance(2);
@@ -159,17 +162,17 @@ private:
             advance();
         }
 
-        report(preprocess_issue_kind::unterminated_block_comment, start, source_.size());
+        report(preprocess_diagnostic_kind::unterminated_block_comment, start, source_.size());
     }
 
-    /// @brief 向问题列表追加一条预处理问题。
-    /// @param kind 问题的具体类别。
-    /// @param start 问题片段起始偏移。
-    /// @param end 问题片段结束偏移。
+    /// @brief 向诊断列表追加一条预处理诊断。
+    /// @param kind 诊断的具体类别。
+    /// @param start 诊断片段起始偏移。
+    /// @param end 诊断片段结束偏移。
     /// @return 无返回值。
-    auto report(preprocess_issue_kind kind, std::size_t start, std::size_t end) -> void
+    auto report(preprocess_diagnostic_kind kind, std::size_t start, std::size_t end) -> void
     {
-        issues_.push_back(preprocess_issue{
+        issues_.push_back(preprocess_diagnostic{
             .kind = kind,
             .source_span = span{ .file = file_,.start = start,.end = end },
         });
@@ -179,7 +182,7 @@ private:
     file_id file_{};                      ///< 当前正在预处理的文件编号。
     std::string_view source_;             ///< 原始源码只读视图。
     std::string normalized_;              ///< 正在构建的规范化文本，初始化为源码副本。
-    std::vector<preprocess_issue> issues_;///< 已记录的问题列表。
+    std::vector<preprocess_diagnostic> issues_;///< 已记录的诊断列表。
     std::size_t index_{};                 ///< 当前扫描偏移。
 };
 

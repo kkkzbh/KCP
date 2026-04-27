@@ -1,11 +1,16 @@
-/// `lexer` 模块的公共入口，负责统一转发词法分析相关子模块。
+/// @brief `lexer` 模块的公共入口。
+/// @details 该聚合模块统一转发词法分析相关的基础类型、表、诊断设施与扫描器实现。
 export module lexer;
 
-/// 源码位置与源文本切片支持。
+/// @brief 源码位置与源文本切片支持。
 export import lexer.source;
-/// 词法单元类型、标志和文本转换支持。
+/// @brief 词法单元类型、标志、字符串名与相等比较支持。
 export import lexer.token;
-/// 词法分析诊断支持。
+/// @brief 词法分析诊断数据结构与接收器。
 export import lexer.diagnostic;
-/// 词法分析器实现。
+/// @brief 字符分类原语。
+export import lexer.charset;
+/// @brief 标点与关键字识别表。
+export import lexer.tables;
+/// @brief 词法分析器实现。
 export import lexer.scanner;

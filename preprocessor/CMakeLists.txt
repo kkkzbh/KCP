@@ -1,6 +1,6 @@
 set(PREPROCESSOR_SUPPORT_MODULES
-    support/issue.cppm
-    support/output.cppm
+    support/diagnostic.cppm
+    support/preprocessed.cppm
 )
 
 set(PREPROCESSOR_CORE_MODULES
@@ -41,7 +41,6 @@ target_sources(preprocessor_core
 target_link_libraries(preprocessor_core
     PUBLIC
         preprocessor_support
-        lexer_support
 )
 
 set_target_properties(preprocessor_core PROPERTIES

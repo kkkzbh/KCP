@@ -2,6 +2,8 @@ set(LEXER_SUPPORT_MODULES
     support/source.cppm
     support/token.cppm
     support/diagnostic.cppm
+    support/charset.cppm
+    support/tables.cppm
 )
 
 set(LEXER_CORE_MODULES
