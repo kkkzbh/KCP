@@ -1,7 +1,0 @@
-invalid	2A	start_of_line,recovered
-kw_let	let	leading_space
-identifier	x	leading_space
-equal	=	leading_space
-integer_literal	1	leading_space
-semicolon	;	-
-eof		-

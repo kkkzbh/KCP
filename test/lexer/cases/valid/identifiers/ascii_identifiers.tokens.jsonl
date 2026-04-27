@@ -1,0 +1,6 @@
+{"kind":"identifier","lexeme":"_","start":0,"end":1,"line":1,"column":1,"flags":"start_of_line"}
+{"kind":"identifier","lexeme":"snake_case","start":2,"end":12,"line":1,"column":3,"flags":"leading_space"}
+{"kind":"identifier","lexeme":"A1","start":13,"end":15,"line":1,"column":14,"flags":"leading_space"}
+{"kind":"identifier","lexeme":"keyword_prefix","start":16,"end":30,"line":1,"column":17,"flags":"leading_space"}
+{"kind":"identifier","lexeme":"_x2","start":31,"end":34,"line":1,"column":32,"flags":"leading_space"}
+{"kind":"eof","lexeme":"","start":34,"end":34,"line":1,"column":35,"flags":"-"}

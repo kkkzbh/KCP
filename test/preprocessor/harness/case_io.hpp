@@ -2,6 +2,7 @@
 
 #include "assert.hpp"
 #include "case_types.hpp"
+#include "jsonl.hpp"
 
 namespace test_preprocessor {
 
@@ -13,7 +14,7 @@ namespace test_preprocessor {
 [[nodiscard]] inline auto read_text(std::filesystem::path const& path) -> std::string
 {
     auto stream = std::ifstream{path};
-    if (!stream.is_open()) {
+    if (not stream.is_open()) {
         fail(std::format("failed to open {}", path.string()));
     }
 
@@ -57,7 +58,7 @@ namespace test_preprocessor {
 
     for (auto index = 0uz; index < text.size(); ++index) {
         auto const ch = text[index];
-        if (ch != '\\' || index + 1 >= text.size()) {
+        if (ch != '\\' or index + 1 >= text.size()) {
             result.push_back(ch);
             continue;
         }
@@ -94,36 +95,15 @@ namespace test_preprocessor {
 [[nodiscard]] inline auto parse_expected_issues(std::filesystem::path const& path)
     -> std::vector<expected_issue>
 {
-    if (!std::filesystem::exists(path)) {
-        return {};
-    }
-
-    auto stream = std::ifstream{path};
-    if (!stream.is_open()) {
-        fail(std::format("failed to open {}", path.string()));
-    }
-
     auto result = std::vector<expected_issue>{};
-    auto line = std::string{};
-    auto line_number = 0uz;
-    while (std::getline(stream, line)) {
-        ++line_number;
-        if (line.empty()) {
-            continue;
-        }
-
-        auto const fields = split_exact(line, '\t');
-        if (fields.size() != 2) {
-            fail(std::format(
-                "{}:{} expected 2 tab-separated fields, got {}",
-                path.string(),
-                line_number,
-                fields.size()));
-        }
-
+    for (auto const& record : test_support::read_jsonl(path, false)) {
         result.push_back(expected_issue{
-            .kind = parse_issue_kind(fields[0]),
-            .span_lexeme = unescape_field(fields[1]),
+            .kind = parse_issue_kind(test_support::required_string(record, path, "kind")),
+            .span_lexeme = test_support::required_string(record, path, "span"),
+            .start = test_support::required_size(record, path, "start"),
+            .end = test_support::required_size(record, path, "end"),
+            .line = test_support::required_size(record, path, "line"),
+            .column = test_support::required_size(record, path, "column"),
         });
     }
 
@@ -138,20 +118,20 @@ namespace test_preprocessor {
 
     auto paths = std::vector<std::filesystem::path>{};
     for (auto const& entry : std::filesystem::recursive_directory_iterator{root}) {
-        if (entry.is_regular_file() && entry.path().extension() == ".cp") {
+        if (entry.is_regular_file() and entry.path().extension() == ".cp") {
             paths.push_back(entry.path());
         }
     }
 
     std::ranges::sort(paths);
-    assert_true(!paths.empty(), std::format("{} should contain cases", root.string()));
+    assert_true(not paths.empty(), std::format("{} should contain cases", root.string()));
 
     auto result = std::vector<preprocessor_case>{};
     result.reserve(paths.size());
 
     for (auto const& source_path : paths) {
         auto const output_path = source_path.parent_path() / (source_path.stem().string() + ".out");
-        auto const issues_path = source_path.parent_path() / (source_path.stem().string() + ".issues");
+        auto const issues_path = source_path.parent_path() / (source_path.stem().string() + ".issues.jsonl");
 
         assert_true(std::filesystem::exists(output_path),
             std::format("missing normalized output file {}", output_path.string()));

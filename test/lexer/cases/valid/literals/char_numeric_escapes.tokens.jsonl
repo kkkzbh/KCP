@@ -1,0 +1,5 @@
+{"kind":"char_literal","lexeme":"'\\101'","start":0,"end":6,"line":1,"column":1,"flags":"start_of_line"}
+{"kind":"char_literal","lexeme":"'\\x41'","start":7,"end":13,"line":1,"column":8,"flags":"leading_space"}
+{"kind":"char_literal","lexeme":"'\\?'","start":14,"end":18,"line":1,"column":15,"flags":"leading_space"}
+{"kind":"char_literal","lexeme":"'\\a'","start":19,"end":23,"line":1,"column":20,"flags":"leading_space"}
+{"kind":"eof","lexeme":"","start":23,"end":23,"line":1,"column":24,"flags":"-"}

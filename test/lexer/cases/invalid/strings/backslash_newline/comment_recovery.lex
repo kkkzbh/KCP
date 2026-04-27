@@ -1,0 +1,3 @@
+"abc\
+// comment
+let x;

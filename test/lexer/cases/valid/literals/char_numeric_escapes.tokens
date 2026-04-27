@@ -1,5 +1,0 @@
-char_literal	'\101'	start_of_line
-char_literal	'\x41'	leading_space
-char_literal	'\?'	leading_space
-char_literal	'\a'	leading_space
-eof		-

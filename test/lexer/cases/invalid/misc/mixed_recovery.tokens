@@ -1,5 +1,0 @@
-invalid	@	start_of_line,recovered
-invalid	2A	leading_space,start_of_line,recovered
-invalid	"oops	leading_space,start_of_line,unterminated,recovered
-invalid	'ab'	leading_space,start_of_line,recovered
-eof		-

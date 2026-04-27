@@ -12,11 +12,14 @@ function(add_parser_suite target_name source_name test_name)
     target_link_libraries(${target_name}
         PRIVATE
             parser_core
+            test_jsonl_support
+            nlohmann_json::nlohmann_json
     )
 
     target_include_directories(${target_name}
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/harness
+            ${CMAKE_SOURCE_DIR}/test/harness
     )
 
     target_compile_definitions(${target_name}

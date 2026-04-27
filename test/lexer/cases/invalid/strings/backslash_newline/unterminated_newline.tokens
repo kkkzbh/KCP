@@ -1,2 +1,0 @@
-invalid	"abc\	start_of_line,unterminated,recovered
-eof		leading_space,start_of_line

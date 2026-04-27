@@ -12,11 +12,14 @@ function(add_lexer_suite target_name source_name test_name)
     target_link_libraries(${target_name}
         PRIVATE
             lexer_core
+            test_jsonl_support
+            nlohmann_json::nlohmann_json
     )
 
     target_include_directories(${target_name}
         PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/harness
+            ${CMAKE_SOURCE_DIR}/test/harness
     )
 
     target_compile_definitions(${target_name}
@@ -38,3 +41,4 @@ add_lexer_suite(lexer_valid_cases_test suites/valid_cases_test.cpp lexer_valid_c
 add_lexer_suite(lexer_invalid_cases_test suites/invalid_cases_test.cpp lexer_invalid_cases)
 add_lexer_suite(lexer_api_behavior_test suites/api_behavior_test.cpp lexer_api_behavior)
 add_lexer_suite(lexer_support_behavior_test suites/support_behavior_test.cpp lexer_support_behavior)
+add_lexer_suite(lexer_tables_test suites/tables_test.cpp lexer_tables)

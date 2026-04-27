@@ -1,0 +1,5 @@
+{"kind":"invalid","lexeme":"'\\","start":0,"end":2,"line":1,"column":1,"flags":"start_of_line,unterminated,recovered"}
+{"kind":"kw_let","lexeme":"let","start":17,"end":20,"line":3,"column":1,"flags":"leading_space,start_of_line"}
+{"kind":"identifier","lexeme":"c","start":21,"end":22,"line":3,"column":5,"flags":"leading_space"}
+{"kind":"semicolon","lexeme":";","start":22,"end":23,"line":3,"column":6,"flags":"-"}
+{"kind":"eof","lexeme":"","start":23,"end":23,"line":3,"column":7,"flags":"-"}

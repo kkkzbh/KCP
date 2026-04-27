@@ -1,5 +1,0 @@
-float_literal	0.5	start_of_line
-float_literal	2.5e+1	leading_space
-float_literal	3E8	leading_space
-float_literal	10e-23	leading_space
-eof		-

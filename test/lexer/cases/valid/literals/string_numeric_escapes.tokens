@@ -1,4 +1,0 @@
-string_literal	"octal:\101"	start_of_line
-string_literal	"hex:\x41"	leading_space
-string_literal	"bell:\a"	leading_space
-eof		-

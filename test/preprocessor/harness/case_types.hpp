@@ -1,10 +1,16 @@
 #pragma once
 
+#include "jsonl.hpp"
+
 namespace test_preprocessor {
 
 struct expected_issue {
     preprocess_issue_kind kind{};
     std::string span_lexeme;
+    std::size_t start{};
+    std::size_t end{};
+    std::size_t line{};
+    std::size_t column{};
 
     [[nodiscard]] auto operator==(expected_issue const&) const -> bool = default;
 };
@@ -54,18 +60,27 @@ inline auto escape_field(std::string_view text) -> std::string
 inline auto to_expected_issue(source_manager const& sources, preprocess_issue const& value)
     -> expected_issue
 {
+    auto const position = sources.position(value.source_span.file, value.source_span.start);
     return expected_issue{
         .kind = value.kind,
         .span_lexeme = std::string(sources.slice(value.source_span)),
+        .start = value.source_span.start,
+        .end = value.source_span.end,
+        .line = position.line,
+        .column = position.column,
     };
 }
 
 inline auto format_issue(expected_issue const& value) -> std::string
 {
-    return std::format(
-        "{}\t{}",
-        issue_kind_name(value.kind),
-        escape_field(value.span_lexeme));
+    return test_support::dump_jsonl_record(test_support::jsonl_record{
+        {"kind", std::string(issue_kind_name(value.kind))},
+        {"span", value.span_lexeme},
+        {"start", value.start},
+        {"end", value.end},
+        {"line", value.line},
+        {"column", value.column},
+    });
 }
 
 inline auto join_lines(std::vector<std::string> const& lines) -> std::string

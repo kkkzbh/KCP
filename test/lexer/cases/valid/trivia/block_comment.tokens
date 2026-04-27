@@ -1,9 +1,0 @@
-kw_let	let	start_of_line
-identifier	value	leading_space
-equal	=	leading_space
-integer_literal	1	leading_space
-semicolon	;	-
-kw_return	return	leading_space,start_of_line
-identifier	value	leading_space
-semicolon	;	-
-eof		-

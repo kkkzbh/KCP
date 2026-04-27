@@ -1,0 +1,3 @@
+{"kind":"kw_let","lexeme":"let","start":0,"end":3,"line":1,"column":1,"flags":"start_of_line"}
+{"kind":"identifier","lexeme":"x","start":4,"end":5,"line":2,"column":1,"flags":"leading_space,start_of_line"}
+{"kind":"eof","lexeme":"","start":5,"end":5,"line":2,"column":2,"flags":"-"}

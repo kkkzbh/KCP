@@ -1,0 +1,6 @@
+{"kind":"identifier","lexeme":"letx","start":0,"end":4,"line":1,"column":1,"flags":"start_of_line"}
+{"kind":"identifier","lexeme":"true_value","start":5,"end":15,"line":1,"column":6,"flags":"leading_space"}
+{"kind":"identifier","lexeme":"notable","start":16,"end":23,"line":1,"column":17,"flags":"leading_space"}
+{"kind":"identifier","lexeme":"andor","start":24,"end":29,"line":1,"column":25,"flags":"leading_space"}
+{"kind":"identifier","lexeme":"return1","start":30,"end":37,"line":1,"column":31,"flags":"leading_space"}
+{"kind":"eof","lexeme":"","start":37,"end":37,"line":1,"column":38,"flags":"-"}

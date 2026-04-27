@@ -1,0 +1,2 @@
+{"kind":"invalid","lexeme":"/* comment","start":0,"end":10,"line":1,"column":1,"flags":"leading_space,start_of_line,unterminated,recovered"}
+{"kind":"eof","lexeme":"","start":10,"end":10,"line":1,"column":11,"flags":"-"}

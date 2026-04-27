@@ -1,5 +1,7 @@
 #pragma once
 
+#include "jsonl.hpp"
+
 namespace test_lexer {
 
 using namespace std::literals;
@@ -7,16 +9,26 @@ using namespace std::literals;
 struct expected_token {
     token_kind kind{};
     std::string lexeme;
+    std::size_t start{};
+    std::size_t end{};
+    std::size_t line{};
+    std::size_t column{};
     token_flags flags{token_flags::none};
 
-    [[nodiscard]] auto operator==(expected_token const&) const -> bool = default;
+    [[nodiscard]]
+    auto operator==(expected_token const&) const -> bool = default;
 };
 
 struct expected_diagnostic {
     diagnostic_code code{};
     std::string span_lexeme;
+    std::size_t start{};
+    std::size_t end{};
+    std::size_t line{};
+    std::size_t column{};
 
-    [[nodiscard]] auto operator==(expected_diagnostic const&) const -> bool = default;
+    [[nodiscard]]
+    auto operator==(expected_diagnostic const&) const -> bool = default;
 };
 
 struct lexer_case {
@@ -145,9 +157,14 @@ inline auto format_flags(token_flags flags) -> std::string
 inline auto to_expected_token(source_manager const& sources, token const& value)
     -> expected_token
 {
+    auto const position = sources.position(value.source_span.file, value.source_span.start);
     return expected_token{
         .kind = value.kind,
         .lexeme = std::string(sources.slice(value.source_span)),
+        .start = value.source_span.start,
+        .end = value.source_span.end,
+        .line = position.line,
+        .column = position.column,
         .flags = value.flags,
     };
 }
@@ -156,19 +173,28 @@ inline auto to_expected_diagnostic(
     source_manager const& sources,
     diagnostic const& value) -> expected_diagnostic
 {
+    auto const position = sources.position(value.primary_span.file, value.primary_span.start);
     return expected_diagnostic{
         .code = value.code,
         .span_lexeme = std::string(sources.slice(value.primary_span)),
+        .start = value.primary_span.start,
+        .end = value.primary_span.end,
+        .line = position.line,
+        .column = position.column,
     };
 }
 
 inline auto format_token(expected_token const& value) -> std::string
 {
-    return std::format(
-        "{}\t{}\t{}",
-        to_string(value.kind),
-        value.lexeme,
-        format_flags(value.flags));
+    return test_support::dump_jsonl_record(test_support::jsonl_record{
+        {"kind", std::string(to_string(value.kind))},
+        {"lexeme", value.lexeme},
+        {"start", value.start},
+        {"end", value.end},
+        {"line", value.line},
+        {"column", value.column},
+        {"flags", format_flags(value.flags)},
+    });
 }
 
 inline auto diagnostic_code_name(diagnostic_code code) -> std::string_view
@@ -190,7 +216,14 @@ inline auto diagnostic_code_name(diagnostic_code code) -> std::string_view
 
 inline auto format_diagnostic(expected_diagnostic const& value) -> std::string
 {
-    return std::format("{}\t{}", diagnostic_code_name(value.code), value.span_lexeme);
+    return test_support::dump_jsonl_record(test_support::jsonl_record{
+        {"code", std::string(diagnostic_code_name(value.code))},
+        {"span", value.span_lexeme},
+        {"start", value.start},
+        {"end", value.end},
+        {"line", value.line},
+        {"column", value.column},
+    });
 }
 
 inline auto join_lines(std::vector<std::string> const& lines) -> std::string

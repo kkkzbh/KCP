@@ -6,6 +6,28 @@ import lexer;
 
 using namespace std::literals;
 
+namespace {
+struct recording_diagnostic_sink
+{
+    auto report(diagnostic value) -> void
+    {
+        diagnostics_.push_back(std::move(value));
+    }
+
+    [[nodiscard]]
+    auto diagnostics() const -> std::vector<diagnostic> const&
+    {
+        return diagnostics_;
+    }
+
+private:
+    std::vector<diagnostic> diagnostics_{};
+};
+
+static_assert(diagnostic_sink<vector_diagnostic_sink>);
+static_assert(diagnostic_sink<recording_diagnostic_sink>);
+} // namespace
+
 auto main() -> int
 {
     auto sources = source_manager{};
@@ -45,21 +67,29 @@ auto main() -> int
     auto default_diagnostic = diagnostic{};
     test_lexer::assert_true(default_diagnostic.message.empty(), "diagnostic message should default construct");
 
-    auto* deleted_through_base = static_cast<diagnostic_sink*>(new vector_diagnostic_sink{});
-    delete deleted_through_base;
-
-    std::unique_ptr<diagnostic_sink> sink = std::make_unique<vector_diagnostic_sink>();
-    sink->report(diagnostic{
+    auto sink = vector_diagnostic_sink{};
+    sink.report(diagnostic{
         .code = diagnostic_code::invalid_character,
         .message = "invalid character",
         .primary_span = return_span,
     });
 
-    auto* concrete_sink = dynamic_cast<vector_diagnostic_sink*>(sink.get());
-    test_lexer::assert_true(concrete_sink != nullptr, "diagnostic sink should downcast to concrete type");
-    test_lexer::assert_true(concrete_sink->diagnostics().size() == 1, "diagnostic sink should collect entries");
-    concrete_sink->clear();
-    test_lexer::assert_true(concrete_sink->diagnostics().empty(), "clear should remove diagnostics");
+    test_lexer::assert_true(sink.diagnostics().size() == 1, "diagnostic sink should collect entries");
+    sink.clear();
+    test_lexer::assert_true(sink.diagnostics().empty(), "clear should remove diagnostics");
+
+    auto custom_sink = recording_diagnostic_sink{};
+    auto const invalid = sources.add_source("invalid.lex", "@");
+    auto custom_lexer = lexer{ sources, invalid, custom_sink };
+    static_assert(std::same_as<decltype(custom_lexer), lexer<recording_diagnostic_sink>>);
+
+    auto const invalid_token = custom_lexer.next();
+    test_lexer::assert_true(invalid_token.kind == token_kind::invalid,
+        "custom diagnostic sink should allow lexer ctad construction");
+    test_lexer::assert_true(custom_sink.diagnostics().size() == 1,
+        "custom diagnostic sink should receive diagnostics");
+    test_lexer::assert_true(custom_sink.diagnostics().front().code == diagnostic_code::invalid_character,
+        "custom diagnostic sink should observe invalid character diagnostics");
 
     test_lexer::assert_true(test_lexer::all_token_kinds.size() == 72, "token list should stay exhaustive");
     auto const to_string_ptr = &to_string;

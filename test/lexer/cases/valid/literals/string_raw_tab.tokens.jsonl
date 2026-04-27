@@ -1,0 +1,2 @@
+{"kind":"string_literal","lexeme":"\"a\tb\"","start":0,"end":5,"line":1,"column":1,"flags":"start_of_line"}
+{"kind":"eof","lexeme":"","start":5,"end":5,"line":1,"column":6,"flags":"-"}
