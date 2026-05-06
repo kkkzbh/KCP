@@ -34,10 +34,14 @@ auto main() -> int
         "issue_at should not match inside an issue span");
     test_preprocessor::assert_true(invalid_result.issue_at(invalid_text.size()) == nullptr,
         "issue_at should return nullptr at eof");
+    auto const invalid_start = sources.file_start(invalid_file);
     test_preprocessor::assert_true(
-        issue->source_span == span{.file = invalid_file, .start = comment_start, .end = invalid_text.size()},
+        issue->span == source_span{
+            .start = invalid_start + static_cast<byte_pos>(comment_start),
+            .end = invalid_start + static_cast<byte_pos>(invalid_text.size()),
+        },
         "issue span should cover unterminated block comment");
-    test_preprocessor::assert_true(std::string(sources.slice(issue->source_span))
+    test_preprocessor::assert_true(std::string(sources.slice(issue->span))
             == std::string(invalid_text.substr(comment_start)),
         "issue span should slice original unterminated comment text");
 

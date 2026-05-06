@@ -60,12 +60,14 @@ inline auto escape_field(std::string_view text) -> std::string
 inline auto to_expected_issue(source_manager const& sources, preprocess_issue const& value)
     -> expected_issue
 {
-    auto const position = sources.position(value.source_span.file, value.source_span.start);
+    auto const position = sources.position(value.span.start);
+    auto const [file, local_start] = sources.locate(value.span.start);
+    auto const file_start = sources.file_start(file);
     return expected_issue{
         .kind = value.kind,
-        .span_lexeme = std::string(sources.slice(value.source_span)),
-        .start = value.source_span.start,
-        .end = value.source_span.end,
+        .span_lexeme = std::string(sources.slice(value.span)),
+        .start = local_start,
+        .end = value.span.end - file_start,
         .line = position.line,
         .column = position.column,
     };

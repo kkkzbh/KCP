@@ -22,7 +22,7 @@ export struct preprocess_diagnostic
     auto constexpr operator==(preprocess_diagnostic const&) const -> bool = default;
 
     preprocess_diagnostic_kind kind{}; ///< 诊断的具体类别。
-    span source_span{};                ///< 诊断对应的原始源码区间。
+    source_span span{};                ///< 诊断对应的原始源码区间。
 };
 
 /// @brief 将 `preprocess_diagnostic_kind` 转为稳定的可读字符串名。

@@ -4,13 +4,14 @@
 
 ## 实现与设计
 
-- `core/` 放预处理入口与核心扫描逻辑。
-- `support/` 放通用基础模块，包括诊断类型与预处理产出结构。
+- `diagnostic/` 放预处理阶段的诊断类型。
+- `preprocessed/` 放预处理产物结构。
+- `scanner/` 放预处理扫描逻辑。
 - `docs/` 放设计说明文档。
-- `core/preprocessor.cppm` 是入口模块，它重新导出 `diagnostic`、`preprocessed`、`scanner` 三个子模块。
-- `support/diagnostic.cppm` 定义 `preprocess_diagnostic_kind` 与 `preprocess_diagnostic`，并提供 `to_string`；同时导出兼容别名 `preprocess_issue_kind` / `preprocess_issue`。
-- `support/preprocessed.cppm` 定义 `preprocessed_file` 结构和按偏移查询诊断的方法。
-- `core/scanner.cppm` 是核心扫描器实现：按顺序跳过引号字面量并把注释位置替换为空格，同时原样保留换行。
+- `preprocessor.cppm` 是入口模块，它重新导出 `diagnostic`、`preprocessed`、`scanner` 三个子模块。
+- `diagnostic/diagnostic.cppm` 定义 `preprocess_diagnostic_kind` 与 `preprocess_diagnostic`，并提供 `to_string`；同时导出兼容别名 `preprocess_issue_kind` / `preprocess_issue`。
+- `preprocessed/preprocessed.cppm` 定义 `preprocessed_file` 结构和按偏移查询诊断的方法。
+- `scanner/scanner.cppm` 是核心扫描器实现：按顺序跳过引号字面量并把注释位置替换为空格，同时原样保留换行。
 - 规范化文本与原始源码长度一致，后续阶段可以直接复用原始偏移进行诊断定位。
 - 未闭合的块注释不会中止扫描；会追加一条 `unterminated_block_comment` 问题，供词法阶段重放为 `invalid` token。
 
@@ -41,8 +42,8 @@ import preprocessor;
 
 ## 阅读顺序
 
-1. [core/preprocessor.cppm](/home/kkkzbh/code/cp/preprocessor/core/preprocessor.cppm)
-2. [support/diagnostic.cppm](/home/kkkzbh/code/cp/preprocessor/support/diagnostic.cppm)
-3. [support/preprocessed.cppm](/home/kkkzbh/code/cp/preprocessor/support/preprocessed.cppm)
-4. [core/scanner.cppm](/home/kkkzbh/code/cp/preprocessor/core/scanner.cppm)
+1. [preprocessor.cppm](/home/kkkzbh/code/cp/preprocessor/preprocessor.cppm)
+2. [diagnostic/diagnostic.cppm](/home/kkkzbh/code/cp/preprocessor/diagnostic/diagnostic.cppm)
+3. [preprocessed/preprocessed.cppm](/home/kkkzbh/code/cp/preprocessor/preprocessed/preprocessed.cppm)
+4. [scanner/scanner.cppm](/home/kkkzbh/code/cp/preprocessor/scanner/scanner.cppm)
 5. [docs/pipeline.md](/home/kkkzbh/code/cp/preprocessor/docs/pipeline.md)

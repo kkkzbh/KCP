@@ -11,7 +11,7 @@ function(add_preprocessor_suite target_name source_name test_name)
 
     target_link_libraries(${target_name}
         PRIVATE
-            preprocessor_core
+            preprocessor
             test_jsonl_support
             nlohmann_json::nlohmann_json
     )

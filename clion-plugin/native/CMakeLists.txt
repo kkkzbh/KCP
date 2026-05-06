@@ -21,7 +21,7 @@ target_sources(cp_lexer_helper_lib
 target_link_libraries(cp_lexer_helper_lib
     PUBLIC
         lexer_core
-        preprocessor_core
+        preprocessor
 )
 
 configure_cp_plugin_native_target(cp_lexer_helper_lib)
