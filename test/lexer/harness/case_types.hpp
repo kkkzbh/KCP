@@ -157,12 +157,14 @@ inline auto format_flags(token_flags flags) -> std::string
 inline auto to_expected_token(source_manager const& sources, token const& value)
     -> expected_token
 {
-    auto const position = sources.position(value.source_span.file, value.source_span.start);
+    auto const position = sources.position(value.span.start);
+    auto const [file, local_start] = sources.locate(value.span.start);
+    auto const file_start = sources.file_start(file);
     return expected_token{
         .kind = value.kind,
-        .lexeme = std::string(sources.slice(value.source_span)),
-        .start = value.source_span.start,
-        .end = value.source_span.end,
+        .lexeme = std::string(sources.slice(value.span)),
+        .start = local_start,
+        .end = value.span.end - file_start,
         .line = position.line,
         .column = position.column,
         .flags = value.flags,
@@ -173,12 +175,14 @@ inline auto to_expected_diagnostic(
     source_manager const& sources,
     diagnostic const& value) -> expected_diagnostic
 {
-    auto const position = sources.position(value.primary_span.file, value.primary_span.start);
+    auto const position = sources.position(value.primary_span.start);
+    auto const [file, local_start] = sources.locate(value.primary_span.start);
+    auto const file_start = sources.file_start(file);
     return expected_diagnostic{
         .code = value.code,
         .span_lexeme = std::string(sources.slice(value.primary_span)),
-        .start = value.primary_span.start,
-        .end = value.primary_span.end,
+        .start = local_start,
+        .end = value.primary_span.end - file_start,
         .line = position.line,
         .column = position.column,
     };

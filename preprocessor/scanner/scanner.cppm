@@ -1,7 +1,7 @@
 export module preprocessor.scanner;
 
 import std;
-import lexer.source;
+import source;
 import preprocessor.diagnostic;
 import preprocessor.preprocessed;
 

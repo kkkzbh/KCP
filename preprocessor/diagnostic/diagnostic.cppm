@@ -1,7 +1,7 @@
 export module preprocessor.diagnostic;
 
 import std;
-import lexer.source;
+import source;
 
 using namespace std::string_view_literals;
 

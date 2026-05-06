@@ -152,7 +152,7 @@ private:
         return current;
     }
 
-    auto report(parser_diagnostic_code code, std::string message, span location) -> void
+    auto report(parser_diagnostic_code code, std::string message, source_span location) -> void
     {
         diagnostics_.push_back(parser_diagnostic{
             .code = code,
@@ -163,7 +163,7 @@ private:
 
     auto report_current(parser_diagnostic_code code, std::string message) -> void
     {
-        report(code, std::move(message), peek().source_span);
+        report(code, std::move(message), peek().span);
     }
 
     [[nodiscard]] auto expect(token_kind kind, std::string_view what) -> std::optional<token>
@@ -204,10 +204,9 @@ private:
 
         auto const first = token{
             .kind = token_kind::greater,
-            .source_span = span{
-                .file = current.source_span.file,
-                .start = current.source_span.start,
-                .end = current.source_span.start + 1,
+            .span = source_span{
+                .start = current.span.start,
+                .end = current.span.start + 1,
             },
             .flags = current.flags,
         };
@@ -217,10 +216,9 @@ private:
 
         auto const second = token{
             .kind = second_kind,
-            .source_span = span{
-                .file = current.source_span.file,
-                .start = current.source_span.start + 1,
-                .end = current.source_span.end,
+            .span = source_span{
+                .start = current.span.start + 1,
+                .end = current.span.end,
             },
             .flags = current.flags,
         };
@@ -366,7 +364,7 @@ private:
     {
         auto frame = trace_scope{ *this, "translation_unit" };
         auto unit = std::make_unique<translation_unit_syntax>();
-        auto const start = peek().source_span;
+        auto const start = peek().span;
 
         if(at(token_kind::kw_export) and peek(1).kind == token_kind::kw_module) {
             unit->module_header = parse_module_header();
@@ -411,7 +409,7 @@ private:
             }
         }
 
-        unit->full_span = combine_spans(start, peek().source_span);
+        unit->full_span = combine_spans(start, peek().span);
         frame.succeed();
         return unit;
     }
@@ -430,7 +428,7 @@ private:
         auto result = std::make_unique<module_header_syntax>();
         result->exported = true;
         result->name = std::move(*name);
-        result->full_span = combine_spans(export_kw->source_span, semicolon->source_span);
+        result->full_span = combine_spans(export_kw->span, semicolon->span);
         frame.succeed();
         return result;
     }
@@ -447,7 +445,7 @@ private:
 
         frame.succeed();
         return import_syntax{
-            .full_span = combine_spans(import_kw->source_span, semicolon->source_span),
+            .full_span = combine_spans(import_kw->span, semicolon->span),
             .name = std::move(*name),
         };
     }
@@ -515,12 +513,12 @@ private:
 
         auto function = function_syntax{
             .exported = exported,
-            .name = name->source_span,
+            .name = name->span,
             .parameters = std::move(parameters),
             .return_type = std::move(return_type),
             .body = std::move(body),
         };
-        function.full_span = combine_spans(exported ? start.source_span : name->source_span, function.body->full_span);
+        function.full_span = combine_spans(exported ? start.span : name->span, function.body->full_span);
         frame.succeed();
         return function;
     }
@@ -544,9 +542,9 @@ private:
 
         frame.succeed();
         return parameter_syntax{
-            .full_span = combine_spans(is_const ? start.source_span : name->source_span, type->full_span),
+            .full_span = combine_spans(is_const ? start.span : name->span, type->full_span),
             .is_const = is_const,
-            .name = name->source_span,
+            .name = name->span,
             .type = std::move(type),
         };
     }
@@ -612,7 +610,7 @@ private:
             return nullptr;
         }
 
-        block->full_span = combine_spans(open->source_span, close->source_span);
+        block->full_span = combine_spans(open->span, close->span);
         frame.succeed();
         return block;
     }
@@ -643,10 +641,10 @@ private:
         auto statement = std::make_unique<statement_syntax>();
         statement->kind = statement_syntax_kind::declaration;
         statement->is_const = start.kind == token_kind::kw_const;
-        statement->name = name->source_span;
+        statement->name = name->span;
         statement->declared_type = std::move(type);
         statement->expressions.push_back(std::move(initializer));
-        statement->full_span = combine_spans(start.source_span, semicolon->source_span);
+        statement->full_span = combine_spans(start.span, semicolon->span);
         frame.succeed();
         return statement;
     }
@@ -669,7 +667,7 @@ private:
         statement->expressions.push_back(std::move(condition));
         statement->statements.push_back(std::move(then_block));
 
-        span end = statement->statements.back()->full_span;
+        source_span end = statement->statements.back()->full_span;
         if(at(token_kind::kw_else)) {
             (void)consume();
             if(at(token_kind::kw_if)) {
@@ -689,7 +687,7 @@ private:
             }
         }
 
-        statement->full_span = combine_spans(start->source_span, end);
+        statement->full_span = combine_spans(start->span, end);
         frame.succeed();
         return statement;
     }
@@ -711,7 +709,7 @@ private:
         statement->kind = statement_syntax_kind::while_stmt;
         statement->expressions.push_back(std::move(condition));
         statement->statements.push_back(std::move(body));
-        statement->full_span = combine_spans(start->source_span, statement->statements.front()->full_span);
+        statement->full_span = combine_spans(start->span, statement->statements.front()->full_span);
         frame.succeed();
         return statement;
     }
@@ -735,7 +733,7 @@ private:
         statement->kind = statement_syntax_kind::do_while_stmt;
         statement->expressions.push_back(std::move(condition));
         statement->statements.push_back(std::move(body));
-        statement->full_span = combine_spans(start->source_span, semicolon->source_span);
+        statement->full_span = combine_spans(start->span, semicolon->span);
         frame.succeed();
         return statement;
     }
@@ -748,14 +746,14 @@ private:
             return nullptr;
         }
 
-        std::optional<span> label{};
+        std::optional<source_span> label{};
         if(at(token_kind::colon)) {
             (void)consume();
             auto const label_token = expect_identifier("loop label");
             if(not label_token.has_value()) {
                 return nullptr;
             }
-            label = label_token->source_span;
+            label = label_token->span;
         }
 
         auto const l_paren = expect(token_kind::l_paren, "'('");
@@ -783,11 +781,11 @@ private:
         auto statement = std::make_unique<statement_syntax>();
         statement->kind = statement_syntax_kind::for_stmt;
         statement->is_const = binding_kw.kind == token_kind::kw_const;
-        statement->name = binding_name->source_span;
+        statement->name = binding_name->span;
         statement->label = label;
         statement->expressions.push_back(std::move(range));
         statement->statements.push_back(std::move(body));
-        statement->full_span = combine_spans(start->source_span, statement->statements.front()->full_span);
+        statement->full_span = combine_spans(start->span, statement->statements.front()->full_span);
         frame.succeed();
         return statement;
     }
@@ -797,9 +795,9 @@ private:
     {
         auto frame = trace_scope{ *this, kind == statement_syntax_kind::break_stmt ? "break_stmt" : "continue_stmt" };
         auto const start = consume();
-        std::optional<span> label{};
+        std::optional<source_span> label{};
         if(at(token_kind::identifier)) {
-            label = consume().source_span;
+            label = consume().span;
         }
         auto const semicolon = expect(token_kind::semicolon, "';'");
         if(not semicolon.has_value()) {
@@ -809,7 +807,7 @@ private:
         auto statement = std::make_unique<statement_syntax>();
         statement->kind = kind;
         statement->label = label;
-        statement->full_span = combine_spans(start.source_span, semicolon->source_span);
+        statement->full_span = combine_spans(start.span, semicolon->span);
         frame.succeed();
         return statement;
     }
@@ -837,7 +835,7 @@ private:
             return nullptr;
         }
 
-        statement->full_span = combine_spans(start->source_span, semicolon->source_span);
+        statement->full_span = combine_spans(start->span, semicolon->span);
         frame.succeed();
         return statement;
     }
@@ -856,7 +854,7 @@ private:
 
         auto statement = std::make_unique<statement_syntax>();
         statement->kind = statement_syntax_kind::expr_stmt;
-        statement->full_span = combine_spans(expression->full_span, semicolon->source_span);
+        statement->full_span = combine_spans(expression->full_span, semicolon->span);
         statement->expressions.push_back(std::move(expression));
         frame.succeed();
         return statement;
@@ -908,19 +906,19 @@ private:
             if(not close.has_value()) {
                 return nullptr;
             }
-            type->full_span = combine_spans(type->full_span, close->source_span);
+            type->full_span = combine_spans(type->full_span, close->span);
         }
 
         if(at(token_kind::kw_const)) {
             type->const_qualified = true;
             auto const qualifier = consume();
-            type->full_span = combine_spans(type->full_span, qualifier.source_span);
+            type->full_span = combine_spans(type->full_span, qualifier.span);
         }
 
         while(at_any({ token_kind::amp, token_kind::star })) {
             auto const suffix = consume();
             type->suffix_operators.push_back(suffix.kind);
-            type->full_span = combine_spans(type->full_span, suffix.source_span);
+            type->full_span = combine_spans(type->full_span, suffix.span);
         }
 
         frame.succeed();
@@ -930,7 +928,7 @@ private:
     struct parsed_type_argument
     {
         std::unique_ptr<type_syntax> type{};
-        std::optional<span> literal{};
+        std::optional<source_span> literal{};
     };
 
     auto append_type_argument(type_syntax& target, parsed_type_argument value) -> void
@@ -946,7 +944,7 @@ private:
     {
         if(at(token_kind::integer_literal)) {
             return parsed_type_argument{
-                .literal = consume().source_span,
+                .literal = consume().span,
             };
         }
 
@@ -976,8 +974,8 @@ private:
             return std::nullopt;
         }
 
-        result.components.push_back(first->source_span);
-        result.full_span = first->source_span;
+        result.components.push_back(first->span);
+        result.full_span = first->span;
 
         while(at(token_kind::colon_colon)) {
             (void)consume();
@@ -985,8 +983,8 @@ private:
             if(not next.has_value()) {
                 return std::nullopt;
             }
-            result.components.push_back(next->source_span);
-            result.full_span = combine_spans(result.full_span, next->source_span);
+            result.components.push_back(next->span);
+            result.full_span = combine_spans(result.full_span, next->span);
         }
 
         frame.succeed();
@@ -1129,7 +1127,7 @@ private:
             auto expression = std::make_unique<expr_syntax>();
             expression->kind = expr_syntax_kind::unary;
             expression->operator_kind = operation.kind;
-            expression->full_span = combine_spans(operation.source_span, operand->full_span);
+            expression->full_span = combine_spans(operation.span, operand->full_span);
             expression->operands.push_back(std::move(operand));
             frame.succeed();
             return expression;
@@ -1179,7 +1177,7 @@ private:
                     return nullptr;
                 }
 
-                call->full_span = combine_spans(call->operands.front()->full_span, close->source_span);
+                call->full_span = combine_spans(call->operands.front()->full_span, close->span);
                 operand = std::move(call);
                 continue;
             }
@@ -1189,7 +1187,7 @@ private:
                 auto unary = std::make_unique<expr_syntax>();
                 unary->kind = expr_syntax_kind::unary;
                 unary->operator_kind = operation.kind;
-                unary->full_span = combine_spans(operand->full_span, operation.source_span);
+                unary->full_span = combine_spans(operand->full_span, operation.span);
                 unary->operands.push_back(std::move(operand));
                 operand = std::move(unary);
                 continue;
@@ -1228,7 +1226,7 @@ private:
             auto const literal = consume();
             expression = std::make_unique<expr_syntax>();
             expression->kind = expr_syntax_kind::literal;
-            expression->full_span = literal.source_span;
+            expression->full_span = literal.span;
             break;
         }
         case token_kind::l_bracket:
@@ -1285,7 +1283,7 @@ private:
             return nullptr;
         }
 
-        expression->full_span = combine_spans(open->source_span, close->source_span);
+        expression->full_span = combine_spans(open->span, close->span);
         return expression;
     }
 
@@ -1324,7 +1322,7 @@ private:
             return nullptr;
         }
 
-        expression->full_span = combine_spans(open->source_span, close->source_span);
+        expression->full_span = combine_spans(open->span, close->span);
         return expression;
     }
 
@@ -1355,7 +1353,7 @@ auto parse_translation_unit(source_manager const& sources, file_id file, parse_o
     });
 
     if(not result.lexer_diagnostics.empty() or has_invalid_token) {
-        auto const lexical_failure_span = [&]() -> span {
+        auto const lexical_failure_span = [&]() -> source_span {
             if(not result.lexer_diagnostics.empty()) {
                 return result.lexer_diagnostics.front().primary_span;
             }
@@ -1364,10 +1362,10 @@ auto parse_translation_unit(source_manager const& sources, file_id file, parse_o
                 return value.kind == token_kind::invalid;
             });
             if(invalid != tokens.end()) {
-                return invalid->source_span;
+                return invalid->span;
             }
 
-            return tokens.empty() ? span{} : tokens.front().source_span;
+            return tokens.empty() ? source_span{} : tokens.front().span;
         }();
 
         result.diagnostics.push_back(parser_diagnostic{

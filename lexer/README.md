@@ -4,19 +4,19 @@
 
 ## 实现与设计
 
-- `core/` 放词法入口与核心扫描逻辑。
-- `support/` 放通用基础模块，包括源码管理、token 定义与诊断接口。
+- 顶层 `source/` 放前端共享的源码管理、切片与行列定位模块。
+- `token/` 放词法单元类型、标志与字符串名。
+- `diagnostic/` 放词法阶段的错误类型、诊断接收 concept 与默认收集器。
+- `charset/` 放 ASCII 字符分类原语。
+- `scanner/` 放词法扫描逻辑。
 - 顶层 `preprocessor/` 提供注释预处理阶段，负责把注释归一化为空格和换行，并保留原始偏移。
 - `docs/` 放设计说明文档。
-- `core/lexer.cppm` 是入口模块，它重新导出 `source`、`token`、`diagnostic`、`scanner` 四个子模块。
-- `support/source.cppm` 管理源码文件、切片与行列位置。
-- `support/token.cppm` 定义 `token_kind`、`token_flags` 与 `token`。
-- `support/diagnostic.cppm` 定义词法阶段的错误类型、诊断接收 concept 与默认收集器。
-- `core/scanner.cppm` 是核心扫描器实现：基于预处理后的规范化源码跳过空白，并按最长匹配规则识别关键字、标识符、数字、字符串、字符字面量与运算符。
+- `lexer.cppm` 是入口模块，它重新导出 `source`、`token`、`diagnostic`、`charset`、`scanner`。
+- `scanner/scanner.cppm` 是核心扫描器实现：基于预处理后的规范化源码跳过空白，并按最长匹配规则识别关键字、标识符、数字、字符串、字符字面量与运算符。
 - 当前词法规则把 `as` 视为保留关键字，支持复合赋值 `+= -= *= /= %= &= |= ^= <<= >>=`。
 - 字符串与字符字面量采用常见 C 风格转义，支持简单转义、八进制转义和十六进制转义。
 - 本语言不支持 C/C++ 风格的 `\` 加物理换行行拼接；该情况会在词法阶段直接报错。
-- 注释预处理保持输入长度不变，因此 `token.source_span` 仍始终指向原始源码。
+- 注释预处理保持输入长度不变，因此 `token.span` 仍始终指向原始源码。
 - 词法错误不会中止扫描；会生成 `invalid` token，同时通过满足 `diagnostic_sink` concept 的接收器报告错误。
 
 更细的正规式设计见 [docs/regex.md](/home/kkkzbh/code/cp/lexer/docs/regex.md)。
@@ -33,7 +33,7 @@ import lexer;
 
 - `source_manager`
   - `add_source(name, text)`：注册源码并返回 `file_id`
-  - `slice(span)` / `position(file, offset)`：取词素和位置
+  - `slice(source_span)` / `position(byte_pos)`：取词素和位置
 - `token_kind` / `token_flags` / `token`
   - 描述 token 类型、附加标记和源码区间
 - `diagnostic_sink`
@@ -41,8 +41,7 @@ import lexer;
 - `vector_diagnostic_sink`
   - 默认收集器，实现 `diagnostics()` / `clear()`
 - `lexer`
-  - `lexer<Sink>`：受 `diagnostic_sink` 约束的扫描器类模板
-  - `lexer(sources, file, sink)`：依赖 CTAD 的常用构造形式
+  - `lexer(sources, file, sink)`：构造函数模板受 `diagnostic_sink` 约束
   - `peek()`：预读一个 token
   - `next()`：读取下一个 token
   - `tokenize_all()`：一次性扫描完整 token 流
@@ -50,9 +49,10 @@ import lexer;
 
 ## 阅读顺序
 
-1. [core/lexer.cppm](/home/kkkzbh/code/cp/lexer/core/lexer.cppm)
-2. [support/source.cppm](/home/kkkzbh/code/cp/lexer/support/source.cppm)
-3. [support/token.cppm](/home/kkkzbh/code/cp/lexer/support/token.cppm)
-4. [support/diagnostic.cppm](/home/kkkzbh/code/cp/lexer/support/diagnostic.cppm)
-5. [core/scanner.cppm](/home/kkkzbh/code/cp/lexer/core/scanner.cppm)
-6. [docs/regex.md](/home/kkkzbh/code/cp/lexer/docs/regex.md)
+1. [lexer.cppm](/home/kkkzbh/code/cp/lexer/lexer.cppm)
+2. [source.cppm](/home/kkkzbh/code/cp/source/source.cppm)
+3. [token/token.cppm](/home/kkkzbh/code/cp/lexer/token/token.cppm)
+4. [diagnostic/diagnostic.cppm](/home/kkkzbh/code/cp/lexer/diagnostic/diagnostic.cppm)
+5. [charset/charset.cppm](/home/kkkzbh/code/cp/lexer/charset/charset.cppm)
+6. [scanner/scanner.cppm](/home/kkkzbh/code/cp/lexer/scanner/scanner.cppm)
+7. [docs/regex.md](/home/kkkzbh/code/cp/lexer/docs/regex.md)

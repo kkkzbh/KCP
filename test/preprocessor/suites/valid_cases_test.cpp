@@ -1,5 +1,5 @@
 import std;
-import lexer.source;
+import source;
 import preprocessor;
 
 #include "runner.hpp"

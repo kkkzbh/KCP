@@ -1,7 +1,7 @@
 export module lexer.token;
 
 import std;
-import lexer.source;
+import source;
 
 /// @brief 描述词法分析器能够产出的所有 token 类型。
 /// @details 这些枚举值既用于词法阶段输出，也作为后续语法分析阶段的稳定终结符集合。
@@ -224,6 +224,6 @@ export struct token
     constexpr auto operator==(token const& other) const -> bool = default;
 
     token_kind kind{};                        ///< token 的种类。
-    span source_span{};                       ///< token 在原始源码中的区间。
+    source_span span{};                       ///< token 在原始源码中的区间。
     token_flags flags{ token_flags::none };     ///< token 的附加标记。
 };

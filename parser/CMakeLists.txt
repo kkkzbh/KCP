@@ -23,7 +23,8 @@ target_sources(parser_support
 
 target_link_libraries(parser_support
     PUBLIC
-        lexer_support
+        source
+        lexer
 )
 
 set_target_properties(parser_support PROPERTIES
@@ -45,7 +46,7 @@ target_sources(parser_core
 target_link_libraries(parser_core
     PUBLIC
         parser_support
-        lexer_core
+        lexer
 )
 
 set_target_properties(parser_core PROPERTIES

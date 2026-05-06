@@ -1,7 +1,7 @@
 export module lexer.diagnostic;
 
 import std;
-import lexer.source;
+import source;
 
 /// @brief 表示诊断消息严重级别的枚举。
 /// @details 词法阶段目前仅区分会阻止正常继续处理的错误和可保留处理结果的警告。
@@ -31,7 +31,7 @@ export struct diagnostic
     diagnostic_severity severity{ diagnostic_severity::error }; ///< 诊断的严重级别。
     diagnostic_code code{};                                    ///< 诊断的具体类别。
     std::string message;                                       ///< 用于向用户展示的诊断消息。
-    span primary_span{};                                       ///< 诊断对应的主要源码范围。
+    source_span primary_span{};                                ///< 诊断对应的主要源码范围。
 };
 
 /// @brief 约束可作为词法诊断接收器使用的类型。

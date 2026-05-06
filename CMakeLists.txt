@@ -17,9 +17,9 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(nlohmann_json)
 
 include(CTest)
-add_subdirectory(lexer)
+add_subdirectory(source)
 add_subdirectory(preprocessor)
-target_link_libraries(lexer_core PRIVATE preprocessor)
+add_subdirectory(lexer)
 add_subdirectory(parser)
 add_subdirectory(test/module)
 add_subdirectory(test/harness)

@@ -1,23 +1,23 @@
 export module parser.ast;
 
 import std;
-import lexer.source;
+import source;
 import lexer.token;
 
-export [[nodiscard]] auto combine_spans(span left, span right) -> span;
+export [[nodiscard]] auto combine_spans(source_span left, source_span right) -> source_span;
 
 export struct qualified_name_syntax
 {
-    span full_span{};
-    std::vector<span> components{};
+    source_span full_span{};
+    std::vector<source_span> components{};
 };
 
 export struct type_syntax
 {
-    span full_span{};
+    source_span full_span{};
     qualified_name_syntax name{};
     std::vector<std::unique_ptr<type_syntax>> type_arguments{};
-    std::vector<span> literal_arguments{};
+    std::vector<source_span> literal_arguments{};
     bool const_qualified{};
     std::vector<token_kind> suffix_operators{};
 };
@@ -39,7 +39,7 @@ export enum class expr_syntax_kind
 
 export struct expr_syntax
 {
-    span full_span{};
+    source_span full_span{};
     expr_syntax_kind kind{};
     token_kind operator_kind{ token_kind::eof };
     qualified_name_syntax name{};
@@ -63,11 +63,11 @@ export enum class statement_syntax_kind
 
 export struct statement_syntax
 {
-    span full_span{};
+    source_span full_span{};
     statement_syntax_kind kind{};
     bool is_const{};
-    std::optional<span> name{};
-    std::optional<span> label{};
+    std::optional<source_span> name{};
+    std::optional<source_span> label{};
     std::unique_ptr<type_syntax> declared_type{};
     std::vector<std::unique_ptr<expr_syntax>> expressions{};
     std::vector<std::unique_ptr<statement_syntax>> statements{};
@@ -75,17 +75,17 @@ export struct statement_syntax
 
 export struct parameter_syntax
 {
-    span full_span{};
+    source_span full_span{};
     bool is_const{};
-    span name{};
+    source_span name{};
     std::unique_ptr<type_syntax> type{};
 };
 
 export struct function_syntax
 {
-    span full_span{};
+    source_span full_span{};
     bool exported{};
-    span name{};
+    source_span name{};
     std::vector<parameter_syntax> parameters{};
     std::unique_ptr<type_syntax> return_type{};
     std::unique_ptr<statement_syntax> body{};
@@ -93,33 +93,28 @@ export struct function_syntax
 
 export struct import_syntax
 {
-    span full_span{};
+    source_span full_span{};
     qualified_name_syntax name{};
 };
 
 export struct module_header_syntax
 {
-    span full_span{};
+    source_span full_span{};
     bool exported{};
     qualified_name_syntax name{};
 };
 
 export struct translation_unit_syntax
 {
-    span full_span{};
+    source_span full_span{};
     std::unique_ptr<module_header_syntax> module_header{};
     std::vector<import_syntax> imports{};
     std::vector<function_syntax> functions{};
 };
 
-auto combine_spans(span left, span right) -> span
+auto combine_spans(source_span left, source_span right) -> source_span
 {
-    if(left.file != right.file) {
-        return left;
-    }
-
-    return span{
-        .file = left.file,
+    return source_span{
         .start = std::min(left.start, right.start),
         .end = std::max(left.end, right.end),
     };

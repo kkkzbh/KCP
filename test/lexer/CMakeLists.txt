@@ -11,7 +11,7 @@ function(add_lexer_suite target_name source_name test_name)
 
     target_link_libraries(${target_name}
         PRIVATE
-            lexer_core
+            lexer
             test_jsonl_support
             nlohmann_json::nlohmann_json
     )
@@ -41,4 +41,4 @@ add_lexer_suite(lexer_valid_cases_test suites/valid_cases_test.cpp lexer_valid_c
 add_lexer_suite(lexer_invalid_cases_test suites/invalid_cases_test.cpp lexer_invalid_cases)
 add_lexer_suite(lexer_api_behavior_test suites/api_behavior_test.cpp lexer_api_behavior)
 add_lexer_suite(lexer_support_behavior_test suites/support_behavior_test.cpp lexer_support_behavior)
-add_lexer_suite(lexer_tables_test suites/tables_test.cpp lexer_tables)
+add_lexer_suite(lexer_classification_test suites/classification_test.cpp lexer_classification)

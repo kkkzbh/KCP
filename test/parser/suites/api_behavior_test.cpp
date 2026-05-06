@@ -43,10 +43,9 @@ auto main() -> int
                 .label = "eof",
                 .current = token{
                     .kind = token_kind::eof,
-                    .source_span = span{
-                        .file = valid,
-                        .start = 0,
-                        .end = 0,
+                    .span = source_span{
+                        .start = sources.file_start(valid),
+                        .end = sources.file_start(valid),
                     },
                 },
             })

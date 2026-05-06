@@ -1,7 +1,7 @@
 export module preprocessor.preprocessed;
 
 import std;
-import lexer.source;
+import source;
 import preprocessor.diagnostic;
 
 /// @brief 预处理阶段生成的规范化源码与诊断列表。

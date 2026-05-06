@@ -1,7 +1,7 @@
 export module parser.diagnostic;
 
 import std;
-import lexer.source;
+import source;
 
 export enum class parser_diagnostic_severity
 {
@@ -26,7 +26,7 @@ export struct parser_diagnostic
     parser_diagnostic_severity severity{ parser_diagnostic_severity::error };
     parser_diagnostic_code code{};
     std::string message;
-    span primary_span{};
+    source_span primary_span{};
 };
 
 export [[nodiscard]] auto to_string(parser_diagnostic_code code) -> std::string_view;

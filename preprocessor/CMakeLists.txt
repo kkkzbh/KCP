@@ -12,7 +12,7 @@ target_sources(preprocessor
 
 target_link_libraries(preprocessor
     PUBLIC
-        lexer_support
+        source
 )
 
 set_target_properties(preprocessor PROPERTIES

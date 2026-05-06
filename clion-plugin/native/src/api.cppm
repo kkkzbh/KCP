@@ -190,6 +190,7 @@ auto analyze(std::string_view filename, std::string_view text) -> std::vector<di
     auto sources = source_manager{};
     auto sink = vector_diagnostic_sink{};
     auto const file = sources.add_source(std::string(filename), std::string(text));
+    auto const file_start = sources.file_start(file);
     auto lex = lexer{sources, file, sink};
     static_cast<void>(lex.tokenize_all());
 
@@ -197,13 +198,13 @@ auto analyze(std::string_view filename, std::string_view text) -> std::vector<di
     result.reserve(sink.diagnostics().size());
 
     for(auto const& diagnostic : sink.diagnostics()) {
-        auto const position = sources.position(file, diagnostic.primary_span.start);
+        auto const position = sources.position(diagnostic.primary_span.start);
         result.push_back(diagnostic_record{
             .code = std::string(diagnostic_code_name(diagnostic.code)),
             .message = diagnostic.message,
             .severity = std::string(diagnostic_severity_name(diagnostic.severity)),
-            .start_offset = diagnostic.primary_span.start,
-            .end_offset = diagnostic.primary_span.end,
+            .start_offset = diagnostic.primary_span.start - file_start,
+            .end_offset = diagnostic.primary_span.end - file_start,
             .line = position.line,
             .column = position.column,
         });
@@ -217,15 +218,16 @@ auto tokenize(std::string_view filename, std::string_view text) -> std::vector<t
     auto sources = source_manager{};
     auto sink = vector_diagnostic_sink{};
     auto const file = sources.add_source(std::string(filename), std::string(text));
+    auto const file_start = sources.file_start(file);
     auto lex = lexer{sources, file, sink};
 
     auto result = std::vector<token_record>{};
     for(auto const& token : lex.tokenize_all()) {
         result.push_back(token_record{
             .kind = std::string(to_string(token.kind)),
-            .lexeme = std::string(sources.slice(token.source_span)),
-            .start_offset = token.source_span.start,
-            .end_offset = token.source_span.end,
+            .lexeme = std::string(sources.slice(token.span)),
+            .start_offset = token.span.start - file_start,
+            .end_offset = token.span.end - file_start,
             .leading_space = has_flag(token.flags, token_flags::leading_space),
             .start_of_line = has_flag(token.flags, token_flags::start_of_line),
             .unterminated = has_flag(token.flags, token_flags::unterminated),

@@ -1,7 +1,7 @@
 export module parser.trace;
 
 import std;
-import lexer.source;
+import source;
 import lexer.token;
 
 export enum class trace_event_kind
@@ -39,8 +39,8 @@ auto to_string(trace_event_kind kind) -> std::string_view
 
 auto format_trace_event(source_manager const& sources, trace_event const& value) -> std::string
 {
-    auto const lexeme = value.current.source_span.end > value.current.source_span.start
-        ? std::string(sources.slice(value.current.source_span))
+    auto const lexeme = value.current.span.end > value.current.span.start
+        ? std::string(sources.slice(value.current.span))
         : std::string{};
 
     return std::format(

@@ -1,6 +1,6 @@
 export module parser;
 
-export import lexer.source;
+export import source;
 export import lexer.token;
 export import lexer.diagnostic;
 export import parser.ast;

@@ -1,47 +1,28 @@
-set(LEXER_SUPPORT_MODULES
-    support/source.cppm
-    support/token.cppm
-    support/diagnostic.cppm
-    support/charset.cppm
-    support/tables.cppm
-)
+add_library(lexer)
 
-set(LEXER_CORE_MODULES
-    core/lexer.cppm
-    core/scanner.cppm
-)
-
-add_library(lexer_support)
-
-target_sources(lexer_support
+target_sources(lexer
     PUBLIC
         FILE_SET CXX_MODULES
         FILES
-            ${LEXER_SUPPORT_MODULES}
+            token/token.cppm
+            diagnostic/diagnostic.cppm
+            charset/charset.cppm
+            scanner/reporter.cppm
+            scanner/keyword.cppm
+            scanner/punctuation.cppm
+            scanner/literal.cppm
+            scanner/engine.cppm
+            scanner/scanner.cppm
+            lexer.cppm
 )
 
-set_target_properties(lexer_support PROPERTIES
-    CXX_STANDARD 26
-    CXX_EXTENSIONS OFF
-    CXX_MODULE_STD ON
-    CXX_SCAN_FOR_MODULES ON
-)
-
-add_library(lexer_core)
-
-target_sources(lexer_core
+target_link_libraries(lexer
     PUBLIC
-        FILE_SET CXX_MODULES
-        FILES
-            ${LEXER_CORE_MODULES}
+        source
+        preprocessor
 )
 
-target_link_libraries(lexer_core
-    PUBLIC
-        lexer_support
-)
-
-set_target_properties(lexer_core PROPERTIES
+set_target_properties(lexer PROPERTIES
     CXX_STANDARD 26
     CXX_EXTENSIONS OFF
     CXX_MODULE_STD ON

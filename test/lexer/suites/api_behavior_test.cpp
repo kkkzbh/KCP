@@ -24,7 +24,7 @@ auto main() -> int
 
     auto const second_token = lex.next();
     test_lexer::assert_true(second_token.kind == token_kind::identifier, "second token should be identifier");
-    test_lexer::assert_true(std::string(sources.slice(second_token.source_span)) == "value",
+    test_lexer::assert_true(std::string(sources.slice(second_token.span)) == "value",
         "identifier lexeme should match");
     test_lexer::assert_true(has_flag(second_token.flags, token_flags::leading_space),
         "identifier after whitespace should record leading_space");
@@ -34,7 +34,7 @@ auto main() -> int
     test_lexer::assert_true(reset_first.kind == token_kind::kw_return, "reset should restart from new file");
     test_lexer::assert_true(has_flag(reset_first.flags, token_flags::start_of_line),
         "reset should restore line-start state");
-    test_lexer::assert_true(std::string(sources.slice(reset_first.source_span)) == "return",
+    test_lexer::assert_true(std::string(sources.slice(reset_first.span)) == "return",
         "reset token span should point to new file text");
 
     auto const after_reset = lex.next();
@@ -76,7 +76,7 @@ auto main() -> int
         "token before block comment should still lex correctly");
     test_lexer::assert_true(second_after_comment.kind == token_kind::identifier,
         "token after block comment should still lex correctly");
-    test_lexer::assert_true(std::string(sources.slice(second_after_comment.source_span)) == "value",
+    test_lexer::assert_true(std::string(sources.slice(second_after_comment.span)) == "value",
         "token span after block comment should slice original source text");
     test_lexer::assert_true(has_flag(second_after_comment.flags, token_flags::leading_space),
         "token after block comment should still observe synthesized separating whitespace");

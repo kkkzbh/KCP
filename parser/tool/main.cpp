@@ -11,7 +11,7 @@ namespace {
 
 auto print_lexer_diagnostic(source_manager const& sources, diagnostic const& value) -> void
 {
-    auto const position = sources.position(value.primary_span.file, value.primary_span.start);
+    auto const position = sources.position(value.primary_span.start);
     std::cout
         << "lexer:" << position.line << ':' << position.column << ": "
         << value.message << '\n';
@@ -19,7 +19,7 @@ auto print_lexer_diagnostic(source_manager const& sources, diagnostic const& val
 
 auto print_parser_diagnostic(source_manager const& sources, parser_diagnostic const& value) -> void
 {
-    auto const position = sources.position(value.primary_span.file, value.primary_span.start);
+    auto const position = sources.position(value.primary_span.start);
     std::cout
         << "parser:" << position.line << ':' << position.column << ": "
         << value.message << '\n';

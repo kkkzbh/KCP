@@ -41,26 +41,25 @@ auto main() -> int
     auto const return_offset = file_text.find("return");
     auto const x_offset = file_text.rfind('x');
 
+    auto const alpha_start = sources.file_start(alpha);
+    auto const to_global = [&](std::size_t local) { return alpha_start + static_cast<byte_pos>(local); };
+
     test_lexer::assert_true(
-        sources.position(alpha, 0) == source_position{.line = 1, .column = 1},
+        sources.position(to_global(0)) == source_position{.line = 1, .column = 1},
         "position should report first character");
     test_lexer::assert_true(
-        sources.position(alpha, return_offset) == source_position{.line = 2, .column = 3},
+        sources.position(to_global(return_offset)) == source_position{.line = 2, .column = 3},
         "position should track multi-line offsets");
     test_lexer::assert_true(
-        sources.position(alpha, x_offset) == source_position{.line = 2, .column = 10},
+        sources.position(to_global(x_offset)) == source_position{.line = 2, .column = 10},
         "position should report later columns");
     test_lexer::assert_true(
-        sources.position(alpha, file_text.size()) == source_position{.line = 3, .column = 1},
-        "position should allow eof");
-    test_lexer::assert_true(
-        sources.position(alpha, file_text.size() + 4) == source_position{.line = 3, .column = 1},
-        "position should clamp offsets past eof");
+        sources.position(to_global(file_text.size())) == source_position{.line = 3, .column = 1},
+        "position should resolve eof sentinel back to its owning file");
 
-    auto const return_span = span{
-        .file = alpha,
-        .start = return_offset,
-        .end = return_offset + "return"sv.size(),
+    auto const return_span = source_span{
+        .start = to_global(return_offset),
+        .end = to_global(return_offset + "return"sv.size()),
     };
     test_lexer::assert_true(sources.slice(return_span) == "return", "slice should extract substrings");
 
@@ -81,11 +80,11 @@ auto main() -> int
     auto custom_sink = recording_diagnostic_sink{};
     auto const invalid = sources.add_source("invalid.lex", "@");
     auto custom_lexer = lexer{ sources, invalid, custom_sink };
-    static_assert(std::same_as<decltype(custom_lexer), lexer<recording_diagnostic_sink>>);
+    static_assert(std::same_as<decltype(custom_lexer), lexer>);
 
     auto const invalid_token = custom_lexer.next();
     test_lexer::assert_true(invalid_token.kind == token_kind::invalid,
-        "custom diagnostic sink should allow lexer ctad construction");
+        "custom diagnostic sink should allow lexer construction");
     test_lexer::assert_true(custom_sink.diagnostics().size() == 1,
         "custom diagnostic sink should receive diagnostics");
     test_lexer::assert_true(custom_sink.diagnostics().front().code == diagnostic_code::invalid_character,
