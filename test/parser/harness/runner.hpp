@@ -52,7 +52,7 @@ auto inline run_case(parser_case const& current_case) -> void
         result.lexer_diagnostics.empty(),
         std::format("{} should not emit lexer diagnostics", current_case.source_path.string()));
     if(current_case.accepted) {
-        assert_true(result.root.valid(), "accepted case should produce syntax tree");
+        assert_true(result.root != std::nullopt, "accepted case should produce syntax tree");
     }
 
     auto actual = std::vector<expected_diagnostic>{};

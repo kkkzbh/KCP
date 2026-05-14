@@ -36,7 +36,7 @@ export auto parse_translation_unit(source_manager const& sources, file_id file) 
     auto parsed = parse_result {
         .accepted = accepted,
         .ast = std::move(context.arena),
-        .root = root.value_or(translation_unit_id{}),
+        .root = std::move(root),
         .parser_diagnostics = std::move(context.diagnostics),
         .lexer_diagnostics = std::move(result.lexer_diagnostics),
     };

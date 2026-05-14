@@ -10,7 +10,7 @@ namespace {
 auto run(std::vector<std::string> input) -> op_parse_result
 {
     auto const grammar = cp_expression_op_grammar();
-    auto const table = build_op_precedence_table(grammar);
+    auto table = build_op_precedence_table(grammar);
     return parse_with_op_precedence(grammar, table, input);
 }
 
@@ -28,7 +28,7 @@ auto names(std::initializer_list<std::string_view> items) -> std::vector<std::st
 auto check_construction() -> void
 {
     auto const grammar = cp_expression_op_grammar();
-    auto const table = build_op_precedence_table(grammar);
+    auto table = build_op_precedence_table(grammar);
 
     test_parser::assert_true (
         table.is_operator_grammar,
@@ -40,7 +40,7 @@ auto check_construction() -> void
         table.conflicts.empty(),
         "no conflicts should be reported for cp_expression_op_grammar");
 
-    auto const& start_firstvt = table.firstvt.at(grammar.start_symbol);
+    auto const& start_firstvt = table.firstvt[grammar.start_symbol];
     test_parser::assert_true (
         start_firstvt.contains("plus"),
         "FIRSTVT(start) should contain plus");

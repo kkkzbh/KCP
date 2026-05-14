@@ -246,7 +246,7 @@ auto build_matrix(grammar_definition const& grammar, std::set<std::string> const
 
             if(not xi_is_nt and xi1_is_nt)
             {
-                for(auto const& b : table.firstvt.at(xi1))
+                for(auto const& b : table.firstvt[xi1])
                 {
                     record_relation(table, xi, b, op_precedence_relation::kind::lt);
                 }
@@ -254,7 +254,7 @@ auto build_matrix(grammar_definition const& grammar, std::set<std::string> const
 
             if(xi_is_nt and not xi1_is_nt)
             {
-                for(auto const& a : table.lastvt.at(xi))
+                for(auto const& a : table.lastvt[xi])
                 {
                     record_relation(table, a, xi1, op_precedence_relation::kind::gt);
                 }
@@ -272,12 +272,12 @@ auto build_matrix(grammar_definition const& grammar, std::set<std::string> const
     }
 
     auto end_marker = std::string{end_marker_symbol()};
-    auto const& start_firstvt = table.firstvt.at(grammar.start_symbol);
+    auto const& start_firstvt = table.firstvt[grammar.start_symbol];
     for(auto const& a : start_firstvt)
     {
         record_relation(table, end_marker, a, op_precedence_relation::kind::lt);
     }
-    auto const& start_lastvt = table.lastvt.at(grammar.start_symbol);
+    auto const& start_lastvt = table.lastvt[grammar.start_symbol];
     for(auto const& a : start_lastvt)
     {
         record_relation(table, a, end_marker, op_precedence_relation::kind::gt);

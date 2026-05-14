@@ -71,7 +71,7 @@ auto first_of_sequence(grammar_definition const& grammar,
             break;
         }
 
-        auto const& first = first_sets.at(symbol);
+        auto const& first = first_sets.find(symbol)->second;
         for(auto const& item : first)
         {
             if(item != epsilon)

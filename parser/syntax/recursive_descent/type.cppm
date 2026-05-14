@@ -39,14 +39,14 @@ struct type_parser
             return std::nullopt;
         }
 
-        auto name = parse_name("type name");
+        auto name = context.expect_identifier("type name");
         if(not name) {
             return std::nullopt;
         }
 
         auto type = type_syntax{};
-        type.name = std::move(*name);
-        type.full_span = type.name.full_span;
+        type.name = name->span;
+        type.full_span = type.name;
 
         if(context.check(token_kind::less)) {
             context.consume();
@@ -88,7 +88,7 @@ struct type_parser
         }
 
         if(context.check(token_kind::kw_const)) {
-            type.const_qualified = true;
+            type.is_const = true;
             auto qualifier = context.consume();
             type.full_span = combine_spans(type.full_span, qualifier.span);
         }
@@ -157,19 +157,6 @@ struct type_parser
                 .type = *nested,
             }
         };
-    }
-
-    auto parse_name(std::string_view what) -> std::optional<qualified_name_syntax>
-    {
-        auto result = qualified_name_syntax{};
-        auto first = context.expect_identifier(what);
-        if(not first) {
-            return std::nullopt;
-        }
-
-        result.components.emplace_back(first->span);
-        result.full_span = first->span;
-        return result;
     }
 
     parser_context& context;

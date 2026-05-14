@@ -4,7 +4,6 @@ import std;
 import source;
 import lexer.token;
 import parser.ast.ids;
-import parser.ast.name;
 
 export struct type_argument_type_syntax
 {
@@ -29,8 +28,8 @@ export struct type_syntax
     auto constexpr operator==(type_syntax const& other) const -> bool = default;
 
     source_span full_span{};
-    qualified_name_syntax name{};
+    source_span name{};
     std::vector<type_argument_syntax> arguments{};
-    bool const_qualified{};
+    bool is_const{};
     std::vector<token_kind> suffix_operators{};
 };

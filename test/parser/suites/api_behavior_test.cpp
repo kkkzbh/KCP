@@ -7,7 +7,7 @@ namespace {
 [[nodiscard]]
 auto first_function(parse_result const& parsed) -> function_syntax const&
 {
-    auto const& unit = parsed.ast.translation_unit(parsed.root);
+    auto const& unit = *parsed.root;
     return parsed.ast.function(unit.functions.front());
 }
 
@@ -42,6 +42,28 @@ auto type_argument_type(type_argument_syntax const& argument) -> type_id
 auto main() -> int
 {
     auto sources = source_manager{};
+    auto const ast_source = ast_source_view{ sources };
+
+    auto const module_source = sources.add_source (
+        "api_module.cp",
+        R"(export module math.core;
+import std.io;
+
+main()
+{
+    return;
+})");
+    auto module_parsed = parse_translation_unit(sources, module_source);
+    test_parser::assert_true(module_parsed.accepted, "module source should parse");
+    test_parser::assert_true(module_parsed.root != std::nullopt, "module source should produce syntax tree");
+    test_parser::assert_true(module_parsed.root->module_header != std::nullopt, "module source should keep module header");
+    test_parser::assert_true (
+        ast_source.module_name(module_parsed.root->module_header->name) == "math.core",
+        "ast_source_view should normalize module names");
+    test_parser::assert_true(module_parsed.root->imports.size() == 1, "module source should keep import declaration");
+    test_parser::assert_true (
+        ast_source.module_name(module_parsed.root->imports.front().name) == "std.io",
+        "ast_source_view should normalize import names");
 
     auto const valid = sources.add_source (
         "api_valid.cp",
@@ -55,16 +77,16 @@ auto main() -> int
     auto parsed = parse_translation_unit(sources, valid);
 
     test_parser::assert_true(parsed.accepted, "valid source should parse");
-    test_parser::assert_true(parsed.root.valid(), "valid source should produce syntax tree");
+    test_parser::assert_true(parsed.root != std::nullopt, "valid source should produce syntax tree");
     test_parser::assert_true(parsed.lexer_diagnostics.empty(), "valid source should not emit lexer diagnostics");
     test_parser::assert_true(parsed.parser_diagnostics.empty(), "valid source should not emit parser diagnostics");
     test_parser::assert_true (
-        parsed.ast.translation_unit(parsed.root).functions.size() == 1,
+        parsed.root->functions.size() == 1,
         "valid source should contain one function");
 
     auto const& function = first_function(parsed);
     auto const& body = function_body(parsed, function);
-    test_parser::assert_true(std::string(sources.slice(function.name)) == "main", "function name should be main");
+    test_parser::assert_true(ast_source.slice(function.name) == "main", "function name should be main");
     test_parser::assert_true(function.body.valid(), "function should have a body");
     test_parser::assert_true(body.statements.size() == 3, "function body should contain three statements");
 
@@ -72,7 +94,7 @@ auto main() -> int
     test_parser::assert_true(rows.declared_type != std::nullopt, "first declaration should preserve its explicit type");
     auto const& rows_type = parsed.ast.type(*rows.declared_type);
     test_parser::assert_true (
-        std::string(sources.slice(rows_type.name.components.front())) == "array",
+        ast_source.identifier(rows_type.name) == "array",
         "first declaration type should be array");
     test_parser::assert_true(rows_type.arguments.size() == 2, "outer array type should contain two arguments");
     test_parser::assert_true (
@@ -103,7 +125,7 @@ auto main() -> int
 
     auto shaped = parse_translation_unit(sources, shapes);
     test_parser::assert_true(shaped.accepted, "shape-focused source should parse");
-    test_parser::assert_true(shaped.root.valid(), "shape-focused source should produce syntax tree");
+    test_parser::assert_true(shaped.root != std::nullopt, "shape-focused source should produce syntax tree");
     test_parser::assert_true(shaped.parser_diagnostics.empty(), "shape-focused source should not emit parser diagnostics");
 
     auto const& shaped_function = first_function(shaped);
@@ -113,9 +135,7 @@ auto main() -> int
     auto const& pointer = declaration(shaped, shaped_body.statements[0]);
     test_parser::assert_true(pointer.declared_type != std::nullopt, "pointer declaration should keep explicit type");
     auto const& pointer_type = shaped.ast.type(*pointer.declared_type);
-    test_parser::assert_true (
-        pointer_type.const_qualified,
-        "pointer declaration should keep const-qualified type information");
+    test_parser::assert_true(pointer_type.is_const, "pointer declaration should keep final pointee const information");
     test_parser::assert_true (
         pointer_type.suffix_operators.size() == 3
             and pointer_type.suffix_operators.front() == token_kind::star
@@ -127,7 +147,7 @@ auto main() -> int
     test_parser::assert_true(nested.declared_type != std::nullopt, "nested generic declaration should keep explicit type");
     auto const& outer_type = shaped.ast.type(*nested.declared_type);
     test_parser::assert_true (
-        std::string(sources.slice(outer_type.name.components.front())) == "outer",
+        ast_source.identifier(outer_type.name) == "outer",
         "nested generic declaration should preserve the outer type name");
     auto const inner_type_id = type_argument_type(outer_type.arguments.front());
     auto const& inner_type = shaped.ast.type(inner_type_id);
@@ -145,6 +165,7 @@ auto main() -> int
 })");
     auto recovered = parse_translation_unit(sources, recovered_source);
     test_parser::assert_true(not recovered.accepted, "recovery-focused source should be rejected");
+    test_parser::assert_true(recovered.root != std::nullopt, "recovery-focused source should still produce syntax tree");
     test_parser::assert_true (
         not recovered.parser_diagnostics.empty(),
         "recovery-focused source should emit parser diagnostics");
@@ -164,6 +185,7 @@ auto main() -> int
 })");
     auto unclosed = parse_translation_unit(sources, unclosed_source);
     test_parser::assert_true(not unclosed.accepted, "unclosed recovery source should be rejected");
+    test_parser::assert_true(unclosed.root != std::nullopt, "unclosed recovery source should still produce syntax tree");
     test_parser::assert_true (
         not unclosed.parser_diagnostics.empty(),
         "unclosed recovery source should emit parser diagnostics");
@@ -211,6 +233,7 @@ auto main() -> int
     auto rejected = parse_translation_unit(sources, invalid);
     contract_assert(not rejected.lexer_diagnostics.empty());
     test_parser::assert_true(not rejected.accepted, "lexically invalid source should be rejected");
+    test_parser::assert_true(not rejected.root, "lexically invalid source should not produce syntax tree");
     test_parser::assert_true(not rejected.lexer_diagnostics.empty(), "lexically invalid source should keep lexer diagnostics");
     test_parser::assert_true(
         rejected.parser_diagnostics.size() == 1,

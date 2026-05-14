@@ -6,7 +6,7 @@ import parser;
 auto main() -> int
 {
     auto const grammar = cp_ll1_grammar();
-    auto const analysis = analyze_grammar(grammar);
+    auto analysis = analyze_grammar(grammar);
     auto conflicts = std::string{};
     for(auto const& conflict : analysis.conflicts) {
         if(not conflicts.empty()) {
@@ -25,19 +25,19 @@ auto main() -> int
         analysis.conflicts.empty(),
         conflicts.empty() ? "cp LL(1) grammar should not contain select conflicts" : conflicts);
     test_parser::assert_true (
-        analysis.first_sets.at("Statement").contains("kw_if"),
+        analysis.first_sets["Statement"].contains("kw_if"),
         "FIRST(Statement) should contain kw_if");
     test_parser::assert_true (
-        analysis.first_sets.at("Statement").contains("identifier"),
+        analysis.first_sets["Statement"].contains("identifier"),
         "FIRST(Statement) should contain identifier");
     test_parser::assert_true (
-        analysis.follow_sets.at("Expression").contains("semicolon"),
+        analysis.follow_sets["Expression"].contains("semicolon"),
         "FOLLOW(Expression) should contain semicolon");
     test_parser::assert_true (
-        analysis.follow_sets.at("Expression").contains("r_paren"),
+        analysis.follow_sets["Expression"].contains("r_paren"),
         "FOLLOW(Expression) should contain r_paren");
     test_parser::assert_true (
-        analysis.follow_sets.at("Type").contains("equal"),
+        analysis.follow_sets["Type"].contains("equal"),
         "FOLLOW(Type) should contain equal");
 
     auto const ambiguous = grammar_definition {

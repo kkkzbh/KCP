@@ -7,7 +7,7 @@
 - 顶层：可选 `export module` 文件头、若干 `import`、若干函数定义
 - 语句：块、`let/const` 声明、`if / else if / else`、`while`、`do while`、范围 `for`、带标签 `break/continue`、`return`、表达式语句
 - 模块：`export module` 文件头、点分隔模块名、若干 `import`
-- 类型：标识符类型、`array/sequence/tuple` 泛型形态、多级指针与可选单级引用后缀、`type const&` / `type const*`
+- 类型：标识符类型、`array/sequence/tuple` 泛型形态、多级指针与可选单级引用后缀
 - 表达式：标识符、字面量、数组/序列/元组字面量、函数调用、`as` cast、赋值、逻辑/位运算/比较/移位/算术、前后缀一元运算
 
 本次明确不纳入：

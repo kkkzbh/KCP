@@ -2,6 +2,7 @@ export module parser.ast;
 
 export import parser.ast.ids;
 export import parser.ast.name;
+export import parser.ast.source;
 export import parser.ast.type;
 export import parser.ast.expr;
 export import parser.ast.stmt;

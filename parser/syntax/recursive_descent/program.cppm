@@ -13,7 +13,7 @@ struct program_parser
     explicit program_parser(parser_context& context) :
         context(context) {}
 
-    auto parse_translation_unit_node() -> std::optional<translation_unit_id>
+    auto parse_translation_unit_node() -> std::optional<translation_unit_syntax>
     {
         auto unit = translation_unit_syntax{};
         auto start = context.peek().span;
@@ -71,7 +71,7 @@ struct program_parser
         }
 
         unit.full_span = combine_spans(start, context.peek().span);
-        return context.arena.add(std::move(unit));
+        return std::move(unit);
     }
 
     auto parse_module_header() -> std::optional<module_header_syntax>
@@ -106,9 +106,9 @@ struct program_parser
         };
     }
 
-    auto parse_module_name() -> std::optional<qualified_name_syntax>
+    auto parse_module_name() -> std::optional<module_name_syntax>
     {
-        auto result = qualified_name_syntax{};
+        auto result = module_name_syntax{};
         auto first = context.expect_identifier("module name");
         if(not first) {
             return std::nullopt;

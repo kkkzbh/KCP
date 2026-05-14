@@ -7,14 +7,9 @@ import parser.diagnostic;
 
 export struct [[nodiscard]] parse_result
 {
-    auto has_root() const -> bool
-    {
-        return root.valid();
-    }
-
     bool accepted{};
     ast_arena ast{};
-    translation_unit_id root{};
+    std::optional<translation_unit_syntax> root{};
     std::vector<parser_diagnostic> parser_diagnostics{};
     std::vector<lexer_diagnostic> lexer_diagnostics{};
 };

@@ -267,13 +267,13 @@ struct expression_parser
 
         switch(context.peek().kind) {
             case token_kind::identifier: {
-                auto name = type_parser{ context }.parse_name("expression name");
+                auto name = context.expect_identifier("expression name");
                 if(not name) {
                     return std::nullopt;
                 }
                 auto node = name_expr_syntax {
-                    .full_span = name->full_span,
-                    .name = std::move(*name),
+                    .full_span = name->span,
+                    .name = name->span,
                 };
                 expression = context.arena.add(expr_syntax{ std::move(node) });
                 break;

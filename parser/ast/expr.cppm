@@ -4,14 +4,13 @@ import std;
 import source;
 import lexer.token;
 import parser.ast.ids;
-import parser.ast.name;
 
 export struct name_expr_syntax
 {
     auto constexpr operator==(name_expr_syntax const& other) const -> bool = default;
 
     source_span full_span{};
-    qualified_name_syntax name{};
+    source_span name{};
 };
 
 export struct literal_expr_syntax

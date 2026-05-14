@@ -38,61 +38,44 @@ export struct ast_arena
         return id;
     }
 
-    auto add(translation_unit_syntax node) -> translation_unit_id
-    {
-        auto id = translation_unit_id{static_cast<std::uint32_t>(translation_units.size())};
-        translation_units.emplace_back(std::move(node));
-        return id;
-    }
-
     auto expression(expr_id id) -> expr_syntax&
     {
-        return expressions.at(id.value);
+        return expressions[id.value];
     }
 
     auto expression(expr_id id) const -> expr_syntax const&
     {
-        return expressions.at(id.value);
+        return expressions[id.value];
     }
 
     auto statement(stmt_id id) -> statement_syntax&
     {
-        return statements.at(id.value);
+        return statements[id.value];
     }
 
     auto statement(stmt_id id) const -> statement_syntax const&
     {
-        return statements.at(id.value);
+        return statements[id.value];
     }
 
     auto type(type_id id) -> type_syntax&
     {
-        return types.at(id.value);
+        return types[id.value];
     }
 
     auto type(type_id id) const -> type_syntax const&
     {
-        return types.at(id.value);
+        return types[id.value];
     }
 
     auto function(function_id id) -> function_syntax&
     {
-        return functions.at(id.value);
+        return functions[id.value];
     }
 
     auto function(function_id id) const -> function_syntax const&
     {
-        return functions.at(id.value);
-    }
-
-    auto translation_unit(translation_unit_id id) -> translation_unit_syntax&
-    {
-        return translation_units.at(id.value);
-    }
-
-    auto translation_unit(translation_unit_id id) const -> translation_unit_syntax const&
-    {
-        return translation_units.at(id.value);
+        return functions[id.value];
     }
 
     auto span(type_id id) const -> source_span
@@ -109,16 +92,10 @@ export struct ast_arena
         return function(id).full_span;
     }
 
-    auto span(translation_unit_id id) const -> source_span
-    {
-        return translation_unit(id).full_span;
-    }
-
     std::vector<expr_syntax> expressions{};
     std::vector<statement_syntax> statements{};
     std::vector<type_syntax> types{};
     std::vector<function_syntax> functions{};
-    std::vector<translation_unit_syntax> translation_units{};
 };
 
 auto ast_arena::span(expr_id id) const -> source_span

@@ -135,7 +135,6 @@ std::optional<translation_unit_id>
 | `Block` | `parse_block_statement()` |
 | `Type` | `parse_type()` |
 | `ModuleName` | `parse_module_name()` |
-| `Name` | `parse_name()` |
 | `Expression` | `parse_expression()` |
 | `Assignment` | `parse_assignment()` |
 | `Unary` | `parse_unary()` |
@@ -584,7 +583,7 @@ array<array<i32,3>,2>
 关键步骤：
 
 ```cpp
-auto name = parse_name("type name");
+auto name = context.expect_identifier("type name");
 
 if(at(token_kind::less)) {
     consume();
@@ -1087,7 +1086,7 @@ AST -> symbol table / type table / semantic diagnostics / IR
 
 - `parse_type()`
 - `parse_type_argument()`
-- `parse_name()`
+- `expect_identifier("type name")`
 - `expect_closing_angle()`
 
 配合例子：
@@ -1097,7 +1096,7 @@ AST -> symbol table / type table / semantic diagnostics / IR
 目标：
 
 ```text
-理解类型名、泛型参数、const、引用/指针后缀如何落到 type_syntax。
+理解类型名、泛型参数、const 最终目标标记、引用/指针后缀如何落到 type_syntax。
 ```
 
 ### 第五步：读表达式

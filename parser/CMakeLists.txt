@@ -6,6 +6,7 @@ target_sources(parser
         FILES
             ast/ids.cppm
             ast/name.cppm
+            ast/source.cppm
             ast/type.cppm
             ast/expr.cppm
             ast/stmt.cppm

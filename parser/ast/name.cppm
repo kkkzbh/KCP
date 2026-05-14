@@ -5,9 +5,9 @@ import source;
 
 export auto combine_spans(source_span left, source_span right) -> source_span;
 
-export struct qualified_name_syntax
+export struct module_name_syntax
 {
-    auto constexpr operator==(qualified_name_syntax const& other) const -> bool = default;
+    auto constexpr operator==(module_name_syntax const& other) const -> bool = default;
 
     source_span full_span{};
     std::vector<source_span> components{};

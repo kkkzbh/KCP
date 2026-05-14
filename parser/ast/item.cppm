@@ -32,7 +32,7 @@ export struct import_syntax
     auto constexpr operator==(import_syntax const& other) const -> bool = default;
 
     source_span full_span{};
-    qualified_name_syntax name{};
+    module_name_syntax name{};
 };
 
 export struct module_header_syntax
@@ -41,7 +41,7 @@ export struct module_header_syntax
 
     source_span full_span{};
     bool exported{};
-    qualified_name_syntax name{};
+    module_name_syntax name{};
 };
 
 export struct translation_unit_syntax
