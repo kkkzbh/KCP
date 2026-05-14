@@ -28,11 +28,11 @@ private:
         return index_ >= source_.size();
     }
 
-    /// @brief 返回当前位置的字符；到达末尾时返回 `\0`。
-    /// @return 当前偏移对应的字符；若已到末尾则返回 `\0`。
+    /// @brief 返回当前位置的字符。
+    /// @return 当前偏移对应的字符。
     auto current() const -> char
     {
-        return eof() ? '\0' : source_[index_];
+        return source_[index_];
     }
 
     /// @brief 返回下一个字符；到达末尾时返回 `\0`。
@@ -119,12 +119,13 @@ auto preprocessor_scanner::skip_quoted_literal(char delimiter) -> void
 
         if(ch == '\\') {
             advance();
+            if(eof()) {
+                return;
+            }
             if(current() == '\n') {
                 return;
             }
-            if(not eof()) {
-                advance();
-            }
+            advance();
             continue;
         }
 
@@ -179,13 +180,12 @@ auto preprocessor_scanner::skip_block_comment() -> void
 
 auto preprocessor_scanner::report(preprocess_diagnostic_kind kind, std::size_t start, std::size_t end) -> void
 {
-    issues_.push_back(preprocess_diagnostic{
-        .kind = kind,
-        .span = source_span{
+    issues_.emplace_back (
+        kind,
+        source_span{
             .start = file_start_ + static_cast<byte_pos>(start),
             .end = file_start_ + static_cast<byte_pos>(end),
-        },
-    });
+        });
 }
 
 /// @brief 预处理指定文件，剥离注释并收集结构性问题。

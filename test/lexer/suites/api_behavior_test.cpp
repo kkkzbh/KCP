@@ -6,7 +6,7 @@ import lexer;
 auto main() -> int
 {
     auto sources = source_manager{};
-    auto diagnostics = vector_diagnostic_sink{};
+    auto diagnostics = std::vector<lexer_diagnostic>{};
     auto const first = sources.add_source("peek.lex", "let value = 1;");
     auto const second = sources.add_source("reset.lex", "return value;");
 
@@ -24,7 +24,7 @@ auto main() -> int
 
     auto const second_token = lex.next();
     test_lexer::assert_true(second_token.kind == token_kind::identifier, "second token should be identifier");
-    test_lexer::assert_true(std::string(sources.slice(second_token.span)) == "value",
+    test_lexer::assert_true(std::string{sources.slice(second_token.span)} == "value",
         "identifier lexeme should match");
     test_lexer::assert_true(has_flag(second_token.flags, token_flags::leading_space),
         "identifier after whitespace should record leading_space");
@@ -34,7 +34,7 @@ auto main() -> int
     test_lexer::assert_true(reset_first.kind == token_kind::kw_return, "reset should restart from new file");
     test_lexer::assert_true(has_flag(reset_first.flags, token_flags::start_of_line),
         "reset should restore line-start state");
-    test_lexer::assert_true(std::string(sources.slice(reset_first.span)) == "return",
+    test_lexer::assert_true(std::string{sources.slice(reset_first.span)} == "return",
         "reset token span should point to new file text");
 
     auto const after_reset = lex.next();
@@ -51,8 +51,8 @@ auto main() -> int
         "dangling escape should produce invalid token");
     test_lexer::assert_true(has_flag(dangling_token.flags, token_flags::unterminated),
         "dangling escape should be unterminated");
-    test_lexer::assert_true(
-        diagnostics.diagnostics().back().code == diagnostic_code::unterminated_char_literal,
+    test_lexer::assert_true (
+        diagnostics.back().code == lexer_diagnostic_code::unterminated_char_literal,
         "dangling escape should diagnose unterminated char");
 
     auto const unterminated_block = sources.add_source("unterminated_block_runtime.lex", "/* block\ncomment");
@@ -63,8 +63,8 @@ auto main() -> int
         "unterminated block comment should produce invalid token");
     test_lexer::assert_true(has_flag(block_token.flags, token_flags::unterminated),
         "unterminated block comment should be unterminated");
-    test_lexer::assert_true(
-        diagnostics.diagnostics().back().code == diagnostic_code::unterminated_block_comment,
+    test_lexer::assert_true (
+        diagnostics.back().code == lexer_diagnostic_code::unterminated_block_comment,
         "unterminated block comment should diagnose correctly");
 
     auto const comment_span = sources.add_source("comment_span.lex", "let/* inner */value;");
@@ -76,12 +76,12 @@ auto main() -> int
         "token before block comment should still lex correctly");
     test_lexer::assert_true(second_after_comment.kind == token_kind::identifier,
         "token after block comment should still lex correctly");
-    test_lexer::assert_true(std::string(sources.slice(second_after_comment.span)) == "value",
+    test_lexer::assert_true(std::string{sources.slice(second_after_comment.span)} == "value",
         "token span after block comment should slice original source text");
     test_lexer::assert_true(has_flag(second_after_comment.flags, token_flags::leading_space),
         "token after block comment should still observe synthesized separating whitespace");
 
     diagnostics.clear();
-    test_lexer::assert_true(diagnostics.diagnostics().empty(), "api behavior test should not emit diagnostics");
+    test_lexer::assert_true(diagnostics.empty(), "api behavior test should not emit diagnostics");
     return 0;
 }

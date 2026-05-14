@@ -15,7 +15,7 @@ export using byte_pos = std::uint32_t;
 export struct source_span
 {
     /// @brief 判断两个 `source_span` 是否表示同一段全局范围。
-    constexpr auto operator==(source_span const& other) const -> bool = default;
+    auto constexpr operator==(source_span const& other) const -> bool = default;
 
     byte_pos start{}; ///< 全局起点，包含该位置。
     byte_pos end{};   ///< 全局终点，不包含该位置。
@@ -26,7 +26,7 @@ export struct source_span
 export struct source_position
 {
     /// @brief 判断两个 `source_position` 是否相等。
-    constexpr auto operator==(source_position const& other) const -> bool = default;
+    auto constexpr operator==(source_position const& other) const -> bool = default;
 
     std::size_t line{};   ///< 行号，从 `1` 开始。
     std::size_t column{}; ///< 列号，从 `1` 开始。
@@ -86,23 +86,24 @@ export struct source_manager
     {
         auto const [id, local] = locate(value.start);
         auto const length = static_cast<std::size_t>(value.end - value.start);
-        return std::string_view(files_[id].text).substr(local, length);
+        auto const text = std::string_view(files_[id].text);
+        return { text.data() + local, length };
     }
 
     /// @brief 将全局位置转换为行列。
-    /// @note 若位置越过对应文件文本末尾，会先被截断到 EOF 再计算位置。
+    /// @note EOF 哨兵位按该文件文本末尾计算位置。
     auto position(byte_pos pos) const -> source_position
     {
         auto const [id, local] = locate(pos);
         auto const& file = files_[id];
-        auto const safe = std::min(static_cast<std::size_t>(local), file.text.size());
-        auto const it = std::ranges::upper_bound(file.line_starts, safe);
+        auto const offset = static_cast<std::size_t>(local);
+        auto const it = std::ranges::upper_bound(file.line_starts, offset);
         auto const line_index = static_cast<std::size_t>(std::distance(file.line_starts.begin(), it) - 1);
         auto const line_start = file.line_starts[line_index];
 
         return source_position {
             .line = line_index + 1,
-            .column = safe - line_start + 1,
+            .column = offset - line_start + 1,
         };
     }
 

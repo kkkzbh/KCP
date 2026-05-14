@@ -75,9 +75,9 @@ auto escape_json(std::string_view value) -> std::string
     return result;
 }
 
-auto diagnostic_code_name(diagnostic_code code) -> std::string_view
+auto lexer_diagnostic_code_name(lexer_diagnostic_code code) -> std::string_view
 {
-    using enum diagnostic_code;
+    using enum lexer_diagnostic_code;
 
     switch(code) {
     case invalid_character: return "invalid_character";
@@ -89,19 +89,19 @@ auto diagnostic_code_name(diagnostic_code code) -> std::string_view
     case invalid_number_suffix: return "invalid_number_suffix";
     }
 
-    return "unknown";
+    std::unreachable();
 }
 
-auto diagnostic_severity_name(diagnostic_severity severity) -> std::string_view
+auto lexer_diagnostic_severity_name(lexer_diagnostic_severity severity) -> std::string_view
 {
-    using enum diagnostic_severity;
+    using enum lexer_diagnostic_severity;
 
     switch(severity) {
     case error: return "error";
     case warning: return "warning";
     }
 
-    return "unknown";
+    std::unreachable();
 }
 
 auto bool_json(bool value) -> std::string_view
@@ -111,9 +111,9 @@ auto bool_json(bool value) -> std::string_view
 
 auto read_all(std::istream& input) -> std::string
 {
-    return std::string(
+    return std::string {
         std::istreambuf_iterator<char>(input),
-        std::istreambuf_iterator<char>());
+        std::istreambuf_iterator<char>()};
 }
 
 auto usage(std::ostream& error) -> void
@@ -137,7 +137,7 @@ auto parse_cli(std::span<std::string_view const> args, std::ostream& error) -> s
     }
 
     auto request = cli_request{
-        .command = std::string(args.front()),
+        .command = std::string{args.front()},
     };
 
     for(auto index = std::size_t{1}; index < args.size(); ++index) {
@@ -159,7 +159,7 @@ auto parse_cli(std::span<std::string_view const> args, std::ostream& error) -> s
                 usage(error);
                 return std::nullopt;
             }
-            request.filename = std::string(args[++index]);
+            request.filename = std::string{args[++index]};
             continue;
         }
         if(arg == "--help" or arg == "-h") {
@@ -188,26 +188,25 @@ auto parse_cli(std::span<std::string_view const> args, std::ostream& error) -> s
 auto analyze(std::string_view filename, std::string_view text) -> std::vector<diagnostic_record>
 {
     auto sources = source_manager{};
-    auto sink = vector_diagnostic_sink{};
-    auto const file = sources.add_source(std::string(filename), std::string(text));
+    auto sink = std::vector<lexer_diagnostic>{};
+    auto const file = sources.add_source(std::string{filename}, std::string{text});
     auto const file_start = sources.file_start(file);
     auto lex = lexer{sources, file, sink};
     static_cast<void>(lex.tokenize_all());
 
     auto result = std::vector<diagnostic_record>{};
-    result.reserve(sink.diagnostics().size());
+    result.reserve(sink.size());
 
-    for(auto const& diagnostic : sink.diagnostics()) {
+    for(auto const& diagnostic : sink) {
         auto const position = sources.position(diagnostic.primary_span.start);
-        result.push_back(diagnostic_record{
-            .code = std::string(diagnostic_code_name(diagnostic.code)),
-            .message = diagnostic.message,
-            .severity = std::string(diagnostic_severity_name(diagnostic.severity)),
-            .start_offset = diagnostic.primary_span.start - file_start,
-            .end_offset = diagnostic.primary_span.end - file_start,
-            .line = position.line,
-            .column = position.column,
-        });
+        result.emplace_back (
+            std::string{lexer_diagnostic_code_name(diagnostic.code)},
+            diagnostic.message,
+            std::string{lexer_diagnostic_severity_name(diagnostic.severity)},
+            diagnostic.primary_span.start - file_start,
+            diagnostic.primary_span.end - file_start,
+            position.line,
+            position.column);
     }
 
     return result;
@@ -216,23 +215,22 @@ auto analyze(std::string_view filename, std::string_view text) -> std::vector<di
 auto tokenize(std::string_view filename, std::string_view text) -> std::vector<token_record>
 {
     auto sources = source_manager{};
-    auto sink = vector_diagnostic_sink{};
-    auto const file = sources.add_source(std::string(filename), std::string(text));
+    auto sink = std::vector<lexer_diagnostic>{};
+    auto const file = sources.add_source(std::string{filename}, std::string{text});
     auto const file_start = sources.file_start(file);
     auto lex = lexer{sources, file, sink};
 
     auto result = std::vector<token_record>{};
     for(auto const& token : lex.tokenize_all()) {
-        result.push_back(token_record{
-            .kind = std::string(to_string(token.kind)),
-            .lexeme = std::string(sources.slice(token.span)),
-            .start_offset = token.span.start - file_start,
-            .end_offset = token.span.end - file_start,
-            .leading_space = has_flag(token.flags, token_flags::leading_space),
-            .start_of_line = has_flag(token.flags, token_flags::start_of_line),
-            .unterminated = has_flag(token.flags, token_flags::unterminated),
-            .recovered = has_flag(token.flags, token_flags::recovered),
-        });
+        result.emplace_back (
+            std::string{to_string(token.kind)},
+            std::string{sources.slice(token.span)},
+            token.span.start - file_start,
+            token.span.end - file_start,
+            has_flag(token.flags, token_flags::leading_space),
+            has_flag(token.flags, token_flags::start_of_line),
+            has_flag(token.flags, token_flags::unterminated),
+            has_flag(token.flags, token_flags::recovered));
     }
 
     return result;
@@ -246,7 +244,7 @@ auto diagnostics_to_json(std::span<diagnostic_record const> diagnostics) -> std:
         if(index != 0) {
             json += ',';
         }
-        json += std::format(
+        json += std::format (
             "{{\"code\":\"{}\",\"message\":\"{}\",\"severity\":\"{}\",\"startOffset\":{},\"endOffset\":{},"
             "\"line\":{},\"column\":{}}}",
             escape_json(diagnostic.code),
@@ -269,7 +267,7 @@ auto tokens_to_json(std::span<token_record const> tokens) -> std::string
         if(index != 0) {
             json += ',';
         }
-        json += std::format(
+        json += std::format (
             "{{\"kind\":\"{}\",\"lexeme\":\"{}\",\"startOffset\":{},\"endOffset\":{},"
             "\"leadingSpace\":{},\"startOfLine\":{},\"unterminated\":{},\"recovered\":{}}}",
             escape_json(token.kind),

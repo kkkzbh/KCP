@@ -7,13 +7,13 @@
 namespace test_lexer {
 
 [[nodiscard]]
-inline auto cases_root() -> std::filesystem::path
+auto inline cases_root() -> std::filesystem::path
 {
     return std::filesystem::path{TEST_LEXER_CASES_DIR};
 }
 
 [[nodiscard]]
-inline auto read_text(std::filesystem::path const& path) -> std::string
+auto inline read_text(std::filesystem::path const& path) -> std::string
 {
     auto stream = std::ifstream{path};
     if (not stream.is_open()) {
@@ -26,7 +26,7 @@ inline auto read_text(std::filesystem::path const& path) -> std::string
 }
 
 [[nodiscard]]
-inline auto normalize_source_text(
+auto inline normalize_source_text(
     std::filesystem::path const& path,
     std::string text) -> std::string
 {
@@ -41,7 +41,7 @@ inline auto normalize_source_text(
 }
 
 [[nodiscard]]
-inline auto parse_token_kind(std::string const& spelling) -> token_kind
+auto inline parse_token_kind(std::string const& spelling) -> token_kind
 {
     for (auto const kind : all_token_kinds) {
         if (to_string(kind) == spelling) {
@@ -53,10 +53,10 @@ inline auto parse_token_kind(std::string const& spelling) -> token_kind
 }
 
 [[nodiscard]]
-inline auto parse_diagnostic_code(std::string const& spelling) -> diagnostic_code
+auto inline parse_diagnostic_code(std::string const& spelling) -> lexer_diagnostic_code
 {
     for (auto const code : all_diagnostic_codes) {
-        if (diagnostic_code_name(code) == spelling) {
+        if (lexer_diagnostic_code_name(code) == spelling) {
             return code;
         }
     }
@@ -65,7 +65,7 @@ inline auto parse_diagnostic_code(std::string const& spelling) -> diagnostic_cod
 }
 
 [[nodiscard]]
-inline auto parse_flags(std::string const& field) -> token_flags
+auto inline parse_flags(std::string const& field) -> token_flags
 {
     if (field == "-") {
         return token_flags::none;
@@ -101,20 +101,19 @@ inline auto parse_flags(std::string const& field) -> token_flags
 }
 
 [[nodiscard]]
-inline auto parse_expected_tokens(std::filesystem::path const& path)
+auto inline parse_expected_tokens(std::filesystem::path const& path)
     -> std::vector<expected_token>
 {
     auto result = std::vector<expected_token>{};
     for (auto const& record : test_support::read_jsonl(path, true)) {
-        result.push_back(expected_token{
-            .kind = parse_token_kind(test_support::required_string(record, path, "kind")),
-            .lexeme = test_support::required_string(record, path, "lexeme"),
-            .start = test_support::required_size(record, path, "start"),
-            .end = test_support::required_size(record, path, "end"),
-            .line = test_support::required_size(record, path, "line"),
-            .column = test_support::required_size(record, path, "column"),
-            .flags = parse_flags(test_support::required_string(record, path, "flags")),
-        });
+        result.emplace_back (
+            parse_token_kind(test_support::required_string(record, path, "kind")),
+            test_support::required_string(record, path, "lexeme"),
+            test_support::required_size(record, path, "start"),
+            test_support::required_size(record, path, "end"),
+            test_support::required_size(record, path, "line"),
+            test_support::required_size(record, path, "column"),
+            parse_flags(test_support::required_string(record, path, "flags")));
     }
 
     assert_true(not result.empty(), std::format("{} should not be empty", path.string()));
@@ -124,26 +123,25 @@ inline auto parse_expected_tokens(std::filesystem::path const& path)
 }
 
 [[nodiscard]]
-inline auto parse_expected_diagnostics(std::filesystem::path const& path)
+auto inline parse_expected_diagnostics(std::filesystem::path const& path)
     -> std::vector<expected_diagnostic>
 {
     auto result = std::vector<expected_diagnostic>{};
     for (auto const& record : test_support::read_jsonl(path, false)) {
-        result.push_back(expected_diagnostic{
-            .code = parse_diagnostic_code(test_support::required_string(record, path, "code")),
-            .span_lexeme = test_support::required_string(record, path, "span"),
-            .start = test_support::required_size(record, path, "start"),
-            .end = test_support::required_size(record, path, "end"),
-            .line = test_support::required_size(record, path, "line"),
-            .column = test_support::required_size(record, path, "column"),
-        });
+        result.emplace_back (
+            parse_diagnostic_code(test_support::required_string(record, path, "code")),
+            test_support::required_string(record, path, "span"),
+            test_support::required_size(record, path, "start"),
+            test_support::required_size(record, path, "end"),
+            test_support::required_size(record, path, "line"),
+            test_support::required_size(record, path, "column"));
     }
 
     return result;
 }
 
 [[nodiscard]]
-inline auto discover_cases(std::filesystem::path const& relative_root)
+auto inline discover_cases(std::filesystem::path const& relative_root)
     -> std::vector<lexer_case>
 {
     auto const root = cases_root() / relative_root;
@@ -170,12 +168,11 @@ inline auto discover_cases(std::filesystem::path const& relative_root)
             result.reserve(paths.size());
         }
 
-        result.push_back(lexer_case{
-            .source_path = source_path,
-            .source_text = normalize_source_text(source_path, read_text(source_path)),
-            .tokens = parse_expected_tokens(tokens_path),
-            .diagnostics = parse_expected_diagnostics(diag_path),
-        });
+        result.emplace_back (
+            source_path,
+            normalize_source_text(source_path, read_text(source_path)),
+            parse_expected_tokens(tokens_path),
+            parse_expected_diagnostics(diag_path));
     }
 
     return result;

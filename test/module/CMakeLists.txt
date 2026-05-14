@@ -9,6 +9,12 @@ target_sources(module_smoke_test
             smoke.cppm
 )
 
+target_link_libraries(module_smoke_test
+    PRIVATE
+        source
+        stdc++exp
+)
+
 set_target_properties(module_smoke_test PROPERTIES
     CXX_STANDARD 26
     CXX_EXTENSIONS OFF

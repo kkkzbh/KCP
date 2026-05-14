@@ -7,25 +7,25 @@ import lexer;
 using namespace std::literals;
 
 namespace {
-struct recording_diagnostic_sink
+struct recording_lexer_diagnostic_sink
 {
-    auto report(diagnostic value) -> void
+    auto report(lexer_diagnostic value) -> void
     {
         diagnostics_.push_back(std::move(value));
     }
 
     [[nodiscard]]
-    auto diagnostics() const -> std::vector<diagnostic> const&
+    auto diagnostics() const -> std::vector<lexer_diagnostic> const&
     {
         return diagnostics_;
     }
 
 private:
-    std::vector<diagnostic> diagnostics_{};
+    std::vector<lexer_diagnostic> diagnostics_{};
 };
 
-static_assert(diagnostic_sink<vector_diagnostic_sink>);
-static_assert(diagnostic_sink<recording_diagnostic_sink>);
+static_assert(lexer_diagnostic_sink<std::vector<lexer_diagnostic>>);
+static_assert(lexer_diagnostic_sink<recording_lexer_diagnostic_sink>);
 } // namespace
 
 auto main() -> int
@@ -44,16 +44,16 @@ auto main() -> int
     auto const alpha_start = sources.file_start(alpha);
     auto const to_global = [&](std::size_t local) { return alpha_start + static_cast<byte_pos>(local); };
 
-    test_lexer::assert_true(
+    test_lexer::assert_true (
         sources.position(to_global(0)) == source_position{.line = 1, .column = 1},
         "position should report first character");
-    test_lexer::assert_true(
+    test_lexer::assert_true (
         sources.position(to_global(return_offset)) == source_position{.line = 2, .column = 3},
         "position should track multi-line offsets");
-    test_lexer::assert_true(
+    test_lexer::assert_true (
         sources.position(to_global(x_offset)) == source_position{.line = 2, .column = 10},
         "position should report later columns");
-    test_lexer::assert_true(
+    test_lexer::assert_true (
         sources.position(to_global(file_text.size())) == source_position{.line = 3, .column = 1},
         "position should resolve eof sentinel back to its owning file");
 
@@ -63,21 +63,21 @@ auto main() -> int
     };
     test_lexer::assert_true(sources.slice(return_span) == "return", "slice should extract substrings");
 
-    auto default_diagnostic = diagnostic{};
+    auto default_diagnostic = lexer_diagnostic{};
     test_lexer::assert_true(default_diagnostic.message.empty(), "diagnostic message should default construct");
 
-    auto sink = vector_diagnostic_sink{};
-    sink.report(diagnostic{
-        .code = diagnostic_code::invalid_character,
-        .message = "invalid character",
-        .primary_span = return_span,
-    });
+    auto sink = std::vector<lexer_diagnostic>{};
+    sink.emplace_back (
+        lexer_diagnostic_severity::error,
+        lexer_diagnostic_code::invalid_character,
+        "invalid character",
+        return_span);
 
-    test_lexer::assert_true(sink.diagnostics().size() == 1, "diagnostic sink should collect entries");
+    test_lexer::assert_true(sink.size() == 1, "diagnostic sink should collect entries");
     sink.clear();
-    test_lexer::assert_true(sink.diagnostics().empty(), "clear should remove diagnostics");
+    test_lexer::assert_true(sink.empty(), "clear should remove diagnostics");
 
-    auto custom_sink = recording_diagnostic_sink{};
+    auto custom_sink = recording_lexer_diagnostic_sink{};
     auto const invalid = sources.add_source("invalid.lex", "@");
     auto custom_lexer = lexer{ sources, invalid, custom_sink };
     static_assert(std::same_as<decltype(custom_lexer), lexer>);
@@ -87,7 +87,7 @@ auto main() -> int
         "custom diagnostic sink should allow lexer construction");
     test_lexer::assert_true(custom_sink.diagnostics().size() == 1,
         "custom diagnostic sink should receive diagnostics");
-    test_lexer::assert_true(custom_sink.diagnostics().front().code == diagnostic_code::invalid_character,
+    test_lexer::assert_true(custom_sink.diagnostics().front().code == lexer_diagnostic_code::invalid_character,
         "custom diagnostic sink should observe invalid character diagnostics");
 
     test_lexer::assert_true(test_lexer::all_token_kinds.size() == 72, "token list should stay exhaustive");
@@ -103,7 +103,5 @@ auto main() -> int
         "to_string should match keyword tokens");
     test_lexer::assert_true(to_string(token_kind::arrow) == "arrow",
         "to_string should match punctuator tokens");
-    test_lexer::assert_true(to_string(static_cast<token_kind>(255)) == "unknown",
-        "unknown token kinds should fall back");
     return 0;
 }

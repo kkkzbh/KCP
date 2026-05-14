@@ -36,7 +36,7 @@ private:
     auto current_pos() const -> byte_pos;
     auto to_global(std::size_t local) const -> byte_pos;
     auto make_token(token_kind kind, std::size_t start, std::size_t end, token_flags flags) const -> token;
-    auto report(diagnostic_code code, std::string_view message, std::size_t start, std::size_t end) const -> void;
+    auto report(lexer_diagnostic_code code, std::string_view message, std::size_t start, std::size_t end) const -> void;
     auto emit_diagnostics(std::vector<scanner_diagnostic_request> const& diagnostics) const -> void;
     auto skip_trivia() -> trivia_state;
     auto preprocess_issue_at_offset() -> preprocess_issue const*;
@@ -172,11 +172,11 @@ auto scanner_engine::make_token(token_kind kind, std::size_t start, std::size_t 
     };
 }
 
-auto scanner_engine::report(diagnostic_code code, std::string_view message, std::size_t start, std::size_t end) const
+auto scanner_engine::report(lexer_diagnostic_code code, std::string_view message, std::size_t start, std::size_t end) const
     -> void
 {
-    reporter_.report(diagnostic {
-        .severity = diagnostic_severity::error,
+    reporter_.report(lexer_diagnostic {
+        .severity = lexer_diagnostic_severity::error,
         .code = code,
         .message = std::string{ message },
         .primary_span = source_span{ .start = to_global(start), .end = to_global(end) },
@@ -253,8 +253,8 @@ auto scanner_engine::lex_preprocess_issue(token_flags flags, preprocess_issue co
 
     switch(issue.kind) {
         case preprocess_issue_kind::unterminated_block_comment:
-            report(
-                diagnostic_code::unterminated_block_comment,
+            report (
+                lexer_diagnostic_code::unterminated_block_comment,
                 "unterminated block comment",
                 local_start,
                 local_end
@@ -299,7 +299,7 @@ auto scanner_engine::lex_token(token_flags flags) -> token
     }
 
     advance();
-    report(diagnostic_code::invalid_character, "invalid character", start, offset_);
+    report(lexer_diagnostic_code::invalid_character, "invalid character", start, offset_);
     return make_token(token_kind::invalid, start, offset_, flags | token_flags::recovered);
 }
 

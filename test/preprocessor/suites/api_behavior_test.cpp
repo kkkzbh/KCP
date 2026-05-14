@@ -8,10 +8,19 @@ using namespace std::literals;
 
 auto main() -> int
 {
+    auto const diagnostic_kind_names = std::array {
+        std::pair{preprocess_diagnostic_kind::unterminated_block_comment, "unterminated_block_comment"sv},
+    };
+
+    for (auto const [kind, expected_name] : diagnostic_kind_names) {
+        test_preprocessor::assert_true(to_string(kind) == expected_name,
+            "preprocess diagnostic kind should have a stable string name");
+    }
+
     auto sources = source_manager{};
 
     auto const valid_text = "let s = \"\\\"/* //\\\"\"; /*x*/\nreturn value / other;"sv;
-    auto const valid_file = sources.add_source("valid_runtime.cp", std::string(valid_text));
+    auto const valid_file = sources.add_source("valid_runtime.cp", std::string{valid_text});
     auto const valid_result = preprocess(sources, valid_file);
 
     test_preprocessor::assert_true(valid_result.issues.empty(), "valid input should not produce issues");
@@ -19,7 +28,7 @@ auto main() -> int
         "valid input should preserve source length");
 
     auto const invalid_text = "let value = 1; /* unterminated\ncomment"sv;
-    auto const invalid_file = sources.add_source("unterminated_runtime.cp", std::string(invalid_text));
+    auto const invalid_file = sources.add_source("unterminated_runtime.cp", std::string{invalid_text});
     auto const invalid_result = preprocess(sources, invalid_file);
     auto const comment_start = invalid_text.find("/*");
 
@@ -35,14 +44,14 @@ auto main() -> int
     test_preprocessor::assert_true(invalid_result.issue_at(invalid_text.size()) == nullptr,
         "issue_at should return nullptr at eof");
     auto const invalid_start = sources.file_start(invalid_file);
-    test_preprocessor::assert_true(
+    test_preprocessor::assert_true (
         issue->span == source_span{
             .start = invalid_start + static_cast<byte_pos>(comment_start),
             .end = invalid_start + static_cast<byte_pos>(invalid_text.size()),
         },
         "issue span should cover unterminated block comment");
-    test_preprocessor::assert_true(std::string(sources.slice(issue->span))
-            == std::string(invalid_text.substr(comment_start)),
+    test_preprocessor::assert_true(std::string{sources.slice(issue->span)}
+            == std::string{invalid_text.substr(comment_start)},
         "issue span should slice original unterminated comment text");
 
     return 0;

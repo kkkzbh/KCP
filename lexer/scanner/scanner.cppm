@@ -7,6 +7,7 @@ import std;
 import source;
 import lexer.token;
 import lexer.diagnostic;
+import lexer.diagnostic.concepts;
 import lexer.diagnostic_reporter;
 import lexer.scanner_engine;
 
@@ -14,7 +15,7 @@ import lexer.scanner_engine;
 export struct lexer
 {
     /// @brief 构造词法分析器，并立即装载指定文件的预处理结果。
-    template<diagnostic_sink Sink>
+    template<lexer_diagnostic_sink Sink>
     lexer(source_manager const& sources, file_id file, Sink& sink)
         : engine_(sources, file, make_diagnostic_reporter(sink))
     {

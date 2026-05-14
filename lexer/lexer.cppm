@@ -8,6 +8,8 @@ export import source;
 export import lexer.token;
 /// @brief 词法分析诊断数据结构与接收器。
 export import lexer.diagnostic;
+/// @brief 词法诊断接收器约束。
+export import lexer.diagnostic.concepts;
 /// @brief 字符分类原语。
 export import lexer.charset;
 /// @brief 词法分析器实现。

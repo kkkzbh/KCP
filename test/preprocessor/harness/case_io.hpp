@@ -6,12 +6,14 @@
 
 namespace test_preprocessor {
 
-[[nodiscard]] inline auto cases_root() -> std::filesystem::path
+[[nodiscard]]
+auto inline cases_root() -> std::filesystem::path
 {
     return std::filesystem::path{TEST_PREPROCESSOR_CASES_DIR};
 }
 
-[[nodiscard]] inline auto read_text(std::filesystem::path const& path) -> std::string
+[[nodiscard]]
+auto inline read_text(std::filesystem::path const& path) -> std::string
 {
     auto stream = std::ifstream{path};
     if (not stream.is_open()) {
@@ -23,7 +25,8 @@ namespace test_preprocessor {
     return buffer.str();
 }
 
-[[nodiscard]] inline auto normalize_case_text(std::string text) -> std::string
+[[nodiscard]]
+auto inline normalize_case_text(std::string text) -> std::string
 {
     if (text.ends_with('\n')) {
         text.pop_back();
@@ -32,7 +35,8 @@ namespace test_preprocessor {
     return text;
 }
 
-[[nodiscard]] inline auto split_exact(std::string const& line, char delimiter)
+[[nodiscard]]
+auto inline split_exact(std::string const& line, char delimiter)
     -> std::vector<std::string>
 {
     auto fields = std::vector<std::string>{};
@@ -51,7 +55,8 @@ namespace test_preprocessor {
     return fields;
 }
 
-[[nodiscard]] inline auto unescape_field(std::string_view text) -> std::string
+[[nodiscard]]
+auto inline unescape_field(std::string_view text) -> std::string
 {
     auto result = std::string{};
     result.reserve(text.size());
@@ -82,7 +87,8 @@ namespace test_preprocessor {
     return result;
 }
 
-[[nodiscard]] inline auto parse_issue_kind(std::string const& spelling)
+[[nodiscard]]
+auto inline parse_issue_kind(std::string const& spelling)
     -> preprocess_issue_kind
 {
     if (spelling == "unterminated_block_comment") {
@@ -92,25 +98,26 @@ namespace test_preprocessor {
     fail(std::format("unknown issue kind '{}'", spelling));
 }
 
-[[nodiscard]] inline auto parse_expected_issues(std::filesystem::path const& path)
+[[nodiscard]]
+auto inline parse_expected_issues(std::filesystem::path const& path)
     -> std::vector<expected_issue>
 {
     auto result = std::vector<expected_issue>{};
     for (auto const& record : test_support::read_jsonl(path, false)) {
-        result.push_back(expected_issue{
-            .kind = parse_issue_kind(test_support::required_string(record, path, "kind")),
-            .span_lexeme = test_support::required_string(record, path, "span"),
-            .start = test_support::required_size(record, path, "start"),
-            .end = test_support::required_size(record, path, "end"),
-            .line = test_support::required_size(record, path, "line"),
-            .column = test_support::required_size(record, path, "column"),
-        });
+        result.emplace_back (
+            parse_issue_kind(test_support::required_string(record, path, "kind")),
+            test_support::required_string(record, path, "span"),
+            test_support::required_size(record, path, "start"),
+            test_support::required_size(record, path, "end"),
+            test_support::required_size(record, path, "line"),
+            test_support::required_size(record, path, "column"));
     }
 
     return result;
 }
 
-[[nodiscard]] inline auto discover_cases(std::filesystem::path const& relative_root)
+[[nodiscard]]
+auto inline discover_cases(std::filesystem::path const& relative_root)
     -> std::vector<preprocessor_case>
 {
     auto const root = cases_root() / relative_root;
@@ -136,12 +143,11 @@ namespace test_preprocessor {
         assert_true(std::filesystem::exists(output_path),
             std::format("missing normalized output file {}", output_path.string()));
 
-        result.push_back(preprocessor_case{
-            .source_path = source_path,
-            .source_text = normalize_case_text(read_text(source_path)),
-            .normalized_text = normalize_case_text(read_text(output_path)),
-            .issues = parse_expected_issues(issues_path),
-        });
+        result.emplace_back (
+            source_path,
+            normalize_case_text(read_text(source_path)),
+            normalize_case_text(read_text(output_path)),
+            parse_expected_issues(issues_path));
     }
 
     return result;

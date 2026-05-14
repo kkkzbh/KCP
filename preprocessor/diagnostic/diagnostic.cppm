@@ -27,7 +27,7 @@ export struct preprocess_diagnostic
 
 /// @brief 将 `preprocess_diagnostic_kind` 转为稳定的可读字符串名。
 /// @param kind 要转换的诊断类别。
-/// @return 与枚举值对应的字符串名；未知值返回 `"unknown"`。
+/// @return 与枚举值对应的字符串名。
 export auto to_string(preprocess_diagnostic_kind kind) -> std::string_view
 {
     using enum preprocess_diagnostic_kind;
@@ -36,7 +36,7 @@ export auto to_string(preprocess_diagnostic_kind kind) -> std::string_view
         case unterminated_block_comment: return "unterminated_block_comment"sv;
     }
 
-    return "unknown"sv;
+    std::unreachable();
 }
 
 /// @brief 兼容旧命名的别名：lexer 与测试代码仍以 `preprocess_issue*` 书写。

@@ -2,18 +2,19 @@ import std;
 import lexer;
 
 #include "assert.hpp"
+#include "case_types.hpp"
 
 namespace {
 
 auto first_token_kind(std::string text) -> token_kind
 {
     auto sources = source_manager{};
-    auto diagnostics = vector_diagnostic_sink{};
+    auto diagnostics = std::vector<lexer_diagnostic>{};
     auto const file = sources.add_source("classification.lex", std::move(text));
     auto lex = lexer{ sources, file, diagnostics };
     auto const token = lex.next();
 
-    test_lexer::assert_true(diagnostics.diagnostics().empty(),
+    test_lexer::assert_true(diagnostics.empty(),
         "classification input should not produce diagnostics");
     return token.kind;
 }
@@ -56,8 +57,14 @@ auto main() -> int
             "keyword prefix extension should scan as identifier");
     }
 
-    // to_string：每个 token_kind 都有稳定的非空名字，且没有 unknown
-    for (auto const& [kind, name] : token_name_table) {
+    // to_string：合法 token_kind 与名称表按底层值一一对应。
+    static_assert(token_name_table.size() == test_lexer::all_token_kinds.size());
+    for(auto index = std::size_t{}; index < token_name_table.size(); ++index) {
+        auto const [kind, name] = token_name_table[index];
+        auto const declared_kind = test_lexer::all_token_kinds[index];
+
+        contract_assert(kind == declared_kind);
+        contract_assert(std::to_underlying(kind) == index);
         test_lexer::assert_true(not name.empty(), "token name should be non-empty");
         test_lexer::assert_true(to_string(kind) == name,
             "to_string(kind) should agree with token_name_table");

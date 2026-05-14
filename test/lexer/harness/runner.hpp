@@ -4,7 +4,7 @@
 
 namespace test_lexer {
 
-inline auto compare_tokens(
+auto inline compare_tokens(
     std::filesystem::path const& case_path,
     std::vector<expected_token> const& expected,
     std::vector<expected_token> const& actual) -> void
@@ -25,14 +25,14 @@ inline auto compare_tokens(
         actual_lines.push_back(format_token(value));
     }
 
-    fail(std::format(
+    fail(std::format (
         "token mismatch in {}\nexpected:\n{}actual:\n{}",
         std::filesystem::relative(case_path, cases_root()).string(),
         join_lines(expected_lines),
         join_lines(actual_lines)));
 }
 
-inline auto compare_diagnostics(
+auto inline compare_diagnostics(
     std::filesystem::path const& case_path,
     std::vector<expected_diagnostic> const& expected,
     std::vector<expected_diagnostic> const& actual) -> void
@@ -53,23 +53,48 @@ inline auto compare_diagnostics(
         actual_lines.push_back(format_diagnostic(value));
     }
 
-    fail(std::format(
+    fail(std::format (
         "diagnostic mismatch in {}\nexpected:\n{}actual:\n{}",
         std::filesystem::relative(case_path, cases_root()).string(),
         join_lines(expected_lines),
         join_lines(actual_lines)));
 }
 
-inline auto run_case(lexer_case const& current_case) -> void
+auto inline assert_invalid_tokens_match_diagnostics(
+    std::vector<token> const& tokens,
+    std::vector<lexer_diagnostic> const& diagnostics) -> void
+{
+    auto invalid_tokens = std::vector<token const*>{};
+    for(auto const& value : tokens) {
+        if(value.kind == token_kind::invalid) {
+            invalid_tokens.push_back(&value);
+        }
+    }
+
+    contract_assert(invalid_tokens.empty() == diagnostics.empty());
+    contract_assert(invalid_tokens.size() == diagnostics.size());
+
+    for(auto const& diagnostic : diagnostics) {
+        auto const covered = std::ranges::any_of(invalid_tokens, [&](token const* value) {
+            return value->span.start <= diagnostic.primary_span.start
+                and diagnostic.primary_span.end <= value->span.end;
+        });
+
+        contract_assert(covered);
+    }
+}
+
+auto inline run_case(lexer_case const& current_case) -> void
 {
     auto sources = source_manager{};
-    auto diagnostics = vector_diagnostic_sink{};
-    auto const file = sources.add_source(
+    auto diagnostics = std::vector<lexer_diagnostic>{};
+    auto const file = sources.add_source (
         std::filesystem::relative(current_case.source_path, cases_root()).string(),
         current_case.source_text);
 
     auto lex = lexer{sources, file, diagnostics};
     auto const tokens = lex.tokenize_all();
+    assert_invalid_tokens_match_diagnostics(tokens, diagnostics);
 
     auto actual_tokens = std::vector<expected_token>{};
     actual_tokens.reserve(tokens.size());
@@ -78,8 +103,8 @@ inline auto run_case(lexer_case const& current_case) -> void
     }
 
     auto actual_diagnostics = std::vector<expected_diagnostic>{};
-    actual_diagnostics.reserve(diagnostics.diagnostics().size());
-    for (auto const& diagnostic : diagnostics.diagnostics()) {
+    actual_diagnostics.reserve(diagnostics.size());
+    for (auto const& diagnostic : diagnostics) {
         actual_diagnostics.push_back(to_expected_diagnostic(sources, diagnostic));
     }
 
@@ -87,7 +112,7 @@ inline auto run_case(lexer_case const& current_case) -> void
     compare_diagnostics(current_case.source_path, current_case.diagnostics, actual_diagnostics);
 }
 
-inline auto run_case_suite(std::filesystem::path const& relative_root) -> int
+auto inline run_case_suite(std::filesystem::path const& relative_root) -> int
 {
     auto const cases = discover_cases(relative_root);
     for (auto const& current_case : cases) {

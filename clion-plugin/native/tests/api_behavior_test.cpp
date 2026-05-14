@@ -23,12 +23,12 @@ auto main() -> int
         std::exit(1);
     };
 
-    auto const valid_diagnostics = cp_lexer_helper::analyze(
+    auto const valid_diagnostics = cp_lexer_helper::analyze (
         "valid.cp",
         "let value = 1;\nreturn value;\n");
     assert_true(valid_diagnostics.empty(), "valid input should not produce diagnostics");
 
-    auto const invalid_diagnostics = std::array{
+    auto const invalid_diagnostics = std::array {
         std::pair{ "invalid_character", "let value = 1; @"sv },
         std::pair{ "unterminated_string_literal", "\"unterminated\n"sv },
         std::pair{ "unterminated_char_literal", "'a\n"sv },
@@ -49,7 +49,7 @@ auto main() -> int
             "diagnostic span should be non-negative");
     }
 
-    auto const positioned = cp_lexer_helper::analyze(
+    auto const positioned = cp_lexer_helper::analyze (
         "position.cp",
         "let ok = 1;\nlet bad = @;\n");
     assert_true(positioned.size() == 1, "position sample should produce one diagnostic");
@@ -85,8 +85,11 @@ auto main() -> int
     auto analyze_in = std::istringstream{"let bad = @;"};
     auto analyze_out = std::ostringstream{};
     auto analyze_err = std::ostringstream{};
-    auto const analyze_code = cp_lexer_helper::run_cli(
-        { "analyze", "--stdin", "--filename", "cli.cp", "--format", "json" },
+    auto const analyze_args = std::array {
+        "analyze"sv, "--stdin"sv, "--filename"sv, "cli.cp"sv, "--format"sv, "json"sv,
+    };
+    auto const analyze_code = cp_lexer_helper::run_cli (
+        analyze_args,
         analyze_in,
         analyze_out,
         analyze_err);
@@ -98,8 +101,11 @@ auto main() -> int
     auto tokens_in = std::istringstream{"let value = 0;"};
     auto tokens_out = std::ostringstream{};
     auto tokens_err = std::ostringstream{};
-    auto const tokens_code = cp_lexer_helper::run_cli(
-        { "tokens", "--stdin", "--filename", "cli.cp", "--format", "json" },
+    auto const tokens_args = std::array {
+        "tokens"sv, "--stdin"sv, "--filename"sv, "cli.cp"sv, "--format"sv, "json"sv,
+    };
+    auto const tokens_code = cp_lexer_helper::run_cli (
+        tokens_args,
         tokens_in,
         tokens_out,
         tokens_err);
@@ -111,8 +117,11 @@ auto main() -> int
     auto invalid_in = std::istringstream{"ignored"};
     auto invalid_out = std::ostringstream{};
     auto invalid_err = std::ostringstream{};
-    auto const invalid_code = cp_lexer_helper::run_cli(
-        { "analyze", "--filename", "missing.cp", "--format", "json" },
+    auto const invalid_args = std::array {
+        "analyze"sv, "--filename"sv, "missing.cp"sv, "--format"sv, "json"sv,
+    };
+    auto const invalid_code = cp_lexer_helper::run_cli (
+        invalid_args,
         invalid_in,
         invalid_out,
         invalid_err);

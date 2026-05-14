@@ -12,7 +12,8 @@ struct expected_issue {
     std::size_t line{};
     std::size_t column{};
 
-    [[nodiscard]] auto operator==(expected_issue const&) const -> bool = default;
+
+    auto operator==(expected_issue const&) const -> bool = default;
 };
 
 struct preprocessor_case {
@@ -22,17 +23,7 @@ struct preprocessor_case {
     std::vector<expected_issue> issues;
 };
 
-inline auto issue_kind_name(preprocess_issue_kind kind) -> std::string_view
-{
-    switch (kind) {
-    case preprocess_issue_kind::unterminated_block_comment:
-        return "unterminated_block_comment";
-    }
-
-    return "unknown_issue_kind";
-}
-
-inline auto escape_field(std::string_view text) -> std::string
+auto inline escape_field(std::string_view text) -> std::string
 {
     auto result = std::string{};
     result.reserve(text.size());
@@ -57,7 +48,7 @@ inline auto escape_field(std::string_view text) -> std::string
     return result;
 }
 
-inline auto to_expected_issue(source_manager const& sources, preprocess_issue const& value)
+auto inline to_expected_issue(source_manager const& sources, preprocess_issue const& value)
     -> expected_issue
 {
     auto const position = sources.position(value.span.start);
@@ -65,7 +56,7 @@ inline auto to_expected_issue(source_manager const& sources, preprocess_issue co
     auto const file_start = sources.file_start(file);
     return expected_issue{
         .kind = value.kind,
-        .span_lexeme = std::string(sources.slice(value.span)),
+        .span_lexeme = std::string{sources.slice(value.span)},
         .start = local_start,
         .end = value.span.end - file_start,
         .line = position.line,
@@ -73,10 +64,10 @@ inline auto to_expected_issue(source_manager const& sources, preprocess_issue co
     };
 }
 
-inline auto format_issue(expected_issue const& value) -> std::string
+auto inline format_issue(expected_issue const& value) -> std::string
 {
     return test_support::dump_jsonl_record(test_support::jsonl_record{
-        {"kind", std::string(issue_kind_name(value.kind))},
+        {"kind", std::string{to_string(value.kind)}},
         {"span", value.span_lexeme},
         {"start", value.start},
         {"end", value.end},
@@ -85,7 +76,7 @@ inline auto format_issue(expected_issue const& value) -> std::string
     });
 }
 
-inline auto join_lines(std::vector<std::string> const& lines) -> std::string
+auto inline join_lines(std::vector<std::string> const& lines) -> std::string
 {
     auto result = std::string{};
     for (auto const& line : lines) {

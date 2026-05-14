@@ -85,7 +85,7 @@ export enum class token_kind
 };
 
 /// @brief `token_kind` 与其字符串名的对照表。
-/// @details 表项顺序与 `token_kind` 枚举定义顺序一致；新增枚举值时需同步更新。
+/// @details 表项顺序与 `token_kind` 枚举底层值一致；新增枚举值时需同步更新。
 export auto constexpr token_name_table = std::to_array<std::pair<token_kind, std::string_view>>({
     { token_kind::eof, "eof" },
     { token_kind::invalid, "invalid" },
@@ -163,15 +163,10 @@ export auto constexpr token_name_table = std::to_array<std::pair<token_kind, std
 
 /// @brief 将 `token_kind` 转为稳定的可读字符串名。
 /// @param kind 要转换的 token 类型。
-/// @return 与枚举值对应的字符串名；未知值返回 `"unknown"`。
+/// @return 与枚举值对应的字符串名。
 export auto to_string(token_kind kind) -> std::string_view
 {
-    for(auto const& [candidate, name] : token_name_table) {
-        if(candidate == kind) {
-            return name;
-        }
-    }
-    return "unknown";
+    return token_name_table[std::to_underlying(kind)].second;
 }
 
 /// @brief 描述 token 在扫描过程中附加的状态标记。
@@ -189,9 +184,9 @@ export enum class token_flags : std::uint8_t
 /// @param lhs 左操作数标记集合。
 /// @param rhs 右操作数标记集合。
 /// @return 合并后的标记集合。
-export constexpr auto operator|(token_flags lhs, token_flags rhs) -> token_flags
+export auto constexpr operator|(token_flags lhs, token_flags rhs) -> token_flags
 {
-    return static_cast<token_flags>(
+    return static_cast<token_flags> (
         static_cast<std::uint8_t>(lhs) | static_cast<std::uint8_t>(rhs));
 }
 
@@ -199,7 +194,7 @@ export constexpr auto operator|(token_flags lhs, token_flags rhs) -> token_flags
 /// @param lhs 需要被更新的标记集合。
 /// @param rhs 要并入的标记集合。
 /// @return 更新后的 `lhs`。
-export constexpr auto operator|=(token_flags& lhs, token_flags rhs) -> token_flags&
+export auto constexpr operator|=(token_flags& lhs, token_flags rhs) -> token_flags&
 {
     lhs = lhs | rhs;
     return lhs;
@@ -209,7 +204,7 @@ export constexpr auto operator|=(token_flags& lhs, token_flags rhs) -> token_fla
 /// @param flags 待检查的标记集合。
 /// @param bit 需要判断的单个标记位。
 /// @return 若 `flags` 中包含 `bit`，则返回 `true`，否则返回 `false`。
-export constexpr auto has_flag(token_flags flags, token_flags bit) -> bool
+export auto constexpr has_flag(token_flags flags, token_flags bit) -> bool
 {
     return (static_cast<std::uint8_t>(flags) & static_cast<std::uint8_t>(bit)) != 0;
 }
@@ -221,7 +216,7 @@ export struct token
     /// @brief 比较两个 token 是否完全相等。
     /// @param other 待比较的 token。
     /// @return 若两个 token 的所有字段都相同，则返回 `true`。
-    constexpr auto operator==(token const& other) const -> bool = default;
+    auto constexpr operator==(token const& other) const -> bool = default;
 
     token_kind kind{};                        ///< token 的种类。
     source_span span{};                       ///< token 在原始源码中的区间。

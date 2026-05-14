@@ -6,6 +6,7 @@ target_sources(lexer
         FILES
             token/token.cppm
             diagnostic/diagnostic.cppm
+            diagnostic/concepts.cppm
             charset/charset.cppm
             scanner/reporter.cppm
             scanner/keyword.cppm
