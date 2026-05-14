@@ -66,6 +66,10 @@ def check_trailing_return_type(path: Path, lines: list[str], issues: list[str]) 
         stripped = line.strip()
         if not stripped or stripped.startswith(("//", "#")):
             continue
+        if stripped.startswith("explicit "):
+            continue
+        if re.match(r"^(?:constexpr|consteval)\s+[A-Za-z_]\w*\s*\(", stripped):
+            continue
         if stripped.startswith(("return ", "if", "for", "while", "switch", "catch", "requires", "and ", "or ")):
             continue
         if any(operator in stripped.split("(", 1)[0] for operator in {"<<", ">>", "==", "!=", "<=", ">="}):
@@ -113,6 +117,13 @@ def check_optional_has_value(path: Path, lines: list[str], issues: list[str]) ->
     for number, line in enumerate(lines, 1):
         if pattern.search(line):
             add_issue(issues, path, number, "prefer contextual bool conversion for optional-like values")
+
+
+def check_at_access(path: Path, lines: list[str], issues: list[str]) -> None:
+    pattern = re.compile(r"\.at\s*\(")
+    for number, line in enumerate(lines, 1):
+        if pattern.search(line):
+            add_issue(issues, path, number, "do not use .at(); use [] for invariants or find/contains for optional lookup")
 
 
 def check_construct_then_insert(path: Path, lines: list[str], issues: list[str]) -> None:
@@ -167,6 +178,7 @@ def main() -> int:
         check_auto_specifier_order(relative, lines, issues)
         check_bare_export_line(relative, lines, issues)
         check_optional_has_value(relative, lines, issues)
+        check_at_access(relative, lines, issues)
         check_construct_then_insert(relative, lines, issues)
         check_parenthesized_object_construction(relative, lines, issues)
 

@@ -27,13 +27,17 @@ Then run the relevant build/test command for the touched surface.
 - Prefer designated initializers for returned objects and temporary config values.
 - Keep `type const&` ordering for const references and pointers. Do not add low-value local `const`.
 - Prefer `std::string_view` for read-only string parameters; use `std::string` when ownership or lifetime extension is needed.
+- Do not use `.at()`. Use `[]` when the index/key is an invariant, or a prior `find`/`contains` check when absence is expected.
+- Prefer abbreviated/constrained template parameters over a separate `typename` plus `requires` clause when the constraint directly describes the parameter, such as `template<Range T>` instead of `template<typename T> requires Range<T>`.
 - Prefer literal helpers such as `uz` and `sv` where available.
 - Prefer brace construction for objects when that does not change overload selection. Do not mechanically rewrite constructors such as `std::string(view)`, `std::string(count, ch)`, `std::string(begin, end)`, or `std::vector(begin, end)`. Use `T{args}` for single-line braced construction and `T {` only when the matching `}` is on a later line.
+- For single-field wrapper structs, prefer an explicit constructor and direct construction such as `id_type{raw}` instead of aggregate/designated initialization like `id_type{ .value = raw }`.
 - Prefer `struct`. Put data members at the bottom, write only necessary `private:` sections, and use a newline before the struct left brace.
 - Avoid redundant `[[nodiscard]]` on functions. If a return type itself must not be ignored, put `[[nodiscard]]` on the type.
 - If a function needs an attribute, put the attribute on its own line. For exports, use `export [[nodiscard]]` on one line and the declaration on the next line.
 - Do not put bare `export` on its own line. Prefer exporting the function definition directly; write a separate declaration only when a later definition must be referenced before it appears.
 - Prefer range-for, `std::ranges`, and `std::views` when they keep the code clearer.
+- If a `for` statement cannot remain single-line, prefer `std::ranges::for_each (` with the structured multiline call style.
 - In optional-like contexts, prefer contextual `bool` conversion over `.has_value()`: write `if(value)` / `if(not value)`. For temporary optional results, consider condition declarations such as `if(auto item = parse_item()) { ... }` to keep the value scoped to the branch.
 - Any statement that must span multiple lines should use the structured multiline style. For multiline calls and multiline control conditions, put one space before the opening `(`. For multiline braced object construction, put one space before `{`. Closing delimiters are a hard alignment rule: a closing `)`, `}`, `);`, or `};` must align with the statement that opened that multiline construct, not with the last argument. This matches same-line-brace `if`/`for`: `if(x) {` closes with `}` under `if`; `if (` closes with `) {` under `if`; `ranges::for_each (` closes with `);` under `ranges::for_each`; `return std::pair {` closes with `};` under `return`; and `values.emplace_back (` closes with `);` under `values.emplace_back`.
 - For multiline initializers that contain `=`, wrap the right-hand expression in an outer parenthesized block when the expression is not already a braced construction. Braced construction is already structured, so write `auto result = parse_result { ... };`, not `auto result = (parse_result { ... });`.
@@ -60,4 +64,4 @@ Then run the relevant build/test command for the touched surface.
 
 ## Deterministic Checks
 
-The script at `scripts/check_cp_style.py` intentionally checks only simple, low-false-positive rules: user-defined `class`, prefix `const T&`/`const T*`, non-trailing function return types, same-line function attributes, declaration specifier order around `auto`, explicit optional `.has_value()`, obvious `pair`/`tuple`/`optional` parenthesized construction, and obvious construct-then-insert container calls such as `push_back(Type{...})` or `emplace_back(Type{...})`. Formatting and alignment rules live primarily in this skill text because they need judgment.
+The script at `scripts/check_cp_style.py` intentionally checks only simple, low-false-positive rules: user-defined `class`, prefix `const T&`/`const T*`, non-trailing function return types, same-line function attributes, declaration specifier order around `auto`, explicit optional `.has_value()`, banned `.at()`, obvious `pair`/`tuple`/`optional` parenthesized construction, and obvious construct-then-insert container calls such as `push_back(Type{...})` or `emplace_back(Type{...})`. Formatting and alignment rules live primarily in this skill text because they need judgment.
