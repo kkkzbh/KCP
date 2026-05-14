@@ -1,1 +1,1 @@
-export module only;
+export module only.core;

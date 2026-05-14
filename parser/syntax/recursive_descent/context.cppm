@@ -1,0 +1,377 @@
+module parser.syntax.recursive_descent:context;
+
+import std;
+import lexer;
+import parser.ast;
+import parser.diagnostic;
+
+struct parser_context
+{
+    explicit parser_context(std::vector<token> tokens) :
+        tokens(std::move(tokens)) {}
+
+    auto peek(std::size_t lookahead = 0uz) const -> token
+    {
+        if(lookahead < injected.size()) {
+            return injected[lookahead];
+        }
+
+        auto raw_index = index + lookahead - injected.size();
+        if(raw_index >= tokens.size()) {
+            return tokens.back();
+        }
+
+        return tokens[raw_index];
+    }
+
+    auto check(token_kind kind) const -> bool
+    {
+        return peek().kind == kind;
+    }
+
+    auto check_any(std::initializer_list<token_kind> kinds) const -> bool
+    {
+        return std::ranges::find(kinds, peek().kind) != kinds.end();
+    }
+
+    auto consume() -> token
+    {
+        auto current = peek();
+        if(not injected.empty()) {
+            injected.pop_front();
+        } else if(index < tokens.size()) {
+            ++index;
+        }
+
+        return current;
+    }
+
+    auto report(parser_diagnostic_code code, std::string message, source_span location) -> void
+    {
+        diagnostics.emplace_back(
+            parser_diagnostic_severity::error,
+            code,
+            std::move(message),
+            location
+        );
+    }
+
+    auto report_current(parser_diagnostic_code code, std::string message) -> void
+    {
+        report(code, std::move(message), peek().span);
+    }
+
+    auto token_name(token_kind kind) const -> std::string_view
+    {
+        using enum token_kind;
+        switch(kind) {
+            case eof:
+                return "end of file";
+            case invalid:
+                return "valid token";
+            case identifier:
+                return "identifier";
+            case integer_literal:
+                return "integer literal";
+            case float_literal:
+                return "float literal";
+            case char_literal:
+                return "char literal";
+            case string_literal:
+                return "string literal";
+            case kw_let:
+                return "'let'";
+            case kw_const:
+                return "'const'";
+            case kw_if:
+                return "'if'";
+            case kw_else:
+                return "'else'";
+            case kw_while:
+                return "'while'";
+            case kw_do:
+                return "'do'";
+            case kw_for:
+                return "'for'";
+            case kw_break:
+                return "'break'";
+            case kw_continue:
+                return "'continue'";
+            case kw_return:
+                return "'return'";
+            case kw_import:
+                return "'import'";
+            case kw_export:
+                return "'export'";
+            case kw_module:
+                return "'module'";
+            case kw_struct:
+                return "'struct'";
+            case kw_impl:
+                return "'impl'";
+            case kw_trait:
+                return "'trait'";
+            case kw_as:
+                return "'as'";
+            case kw_true:
+                return "'true'";
+            case kw_false:
+                return "'false'";
+            case kw_and:
+                return "'and'";
+            case kw_or:
+                return "'or'";
+            case kw_not:
+                return "'not'";
+            case l_paren:
+                return "'('";
+            case r_paren:
+                return "')'";
+            case l_brace:
+                return "'{'";
+            case r_brace:
+                return "'}'";
+            case l_bracket:
+                return "'['";
+            case r_bracket:
+                return "']'";
+            case comma:
+                return "','";
+            case semicolon:
+                return "';'";
+            case colon:
+                return "':'";
+            case colon_colon:
+                return "'::'";
+            case dot:
+                return "'.'";
+            case arrow:
+                return "'->'";
+            case plus:
+                return "'+'";
+            case plus_equal:
+                return "'+='";
+            case minus:
+                return "'-'";
+            case minus_equal:
+                return "'-='";
+            case star:
+                return "'*'";
+            case star_equal:
+                return "'*='";
+            case slash:
+                return "'/'";
+            case slash_equal:
+                return "'/='";
+            case percent:
+                return "'%'";
+            case percent_equal:
+                return "'%='";
+            case equal:
+                return "'='";
+            case equal_equal:
+                return "'=='";
+            case bang_equal:
+                return "'!='";
+            case less:
+                return "'<'";
+            case less_equal:
+                return "'<='";
+            case greater:
+                return "'>'";
+            case greater_equal:
+                return "'>='";
+            case amp:
+                return "'&'";
+            case amp_equal:
+                return "'&='";
+            case pipe:
+                return "'|'";
+            case pipe_equal:
+                return "'|='";
+            case caret:
+                return "'^'";
+            case caret_equal:
+                return "'^='";
+            case tilde:
+                return "'~'";
+            case less_less:
+                return "'<<'";
+            case less_less_equal:
+                return "'<<='";
+            case greater_greater:
+                return "'>>'";
+            case greater_greater_equal:
+                return "'>>='";
+            case plus_plus:
+                return "'++'";
+            case minus_minus:
+                return "'--'";
+            case question:
+                return "'?'";
+        }
+
+        std::unreachable();
+    }
+
+    auto expect(token_kind kind) -> std::optional<token>
+    {
+        if(not check(kind)) {
+            report_current(
+                parser_diagnostic_code::expected_token,
+                std::format("expected {}, got {}", token_name(kind), token_name(peek().kind))
+            );
+            return std::nullopt;
+        }
+
+        return consume();
+    }
+
+    auto expect_identifier(std::string_view what) -> std::optional<token>
+    {
+        if(not check(token_kind::identifier)) {
+            report_current(
+                parser_diagnostic_code::expected_identifier,
+                std::format("expected {}, got {}", what, token_name(peek().kind))
+            );
+            return std::nullopt;
+        }
+
+        return consume();
+    }
+
+    auto split_current_double_greater() -> bool
+    {
+        if(not injected.empty() or index >= tokens.size()) {
+            return false;
+        }
+
+        auto current = tokens[index];
+        if (
+            current.kind != token_kind::greater_greater
+            and current.kind != token_kind::greater_greater_equal
+        ) {
+            return false;
+        }
+
+        auto first = token {
+            .kind = token_kind::greater,
+            .span = source_span {
+                .start = current.span.start,
+                .end = current.span.start + 1,
+            },
+            .flags = current.flags,
+        };
+
+        auto second_kind = (
+            current.kind == token_kind::greater_greater
+                ? token_kind::greater
+                : token_kind::greater_equal
+        );
+
+        auto second = token {
+            .kind = second_kind,
+            .span = source_span {
+                .start = current.span.start + 1,
+                .end = current.span.end,
+            },
+            .flags = current.flags,
+        };
+
+        ++index;
+        injected.emplace_back(first);
+        injected.emplace_back(second);
+        return true;
+    }
+
+    auto expect_closing_angle() -> std::optional<token>
+    {
+        if(not check(token_kind::greater)) {
+            if(not split_current_double_greater() or not check(token_kind::greater)) {
+                report_current(
+                    parser_diagnostic_code::expected_token,
+                    std::format(
+                        "expected {}, got {}",
+                        token_name(token_kind::greater),
+                        token_name(peek().kind)
+                    )
+                );
+                return std::nullopt;
+            }
+        }
+
+        return consume();
+    }
+
+    auto synchronize_statement() -> void
+    {
+        auto brace_depth = 0uz;
+
+        while(not check(token_kind::eof)) {
+            if(brace_depth == 0uz) {
+                if(check(token_kind::semicolon)) {
+                    consume();
+                    return;
+                }
+
+                if(check(token_kind::r_brace)) {
+                    return;
+                }
+            }
+
+            switch(peek().kind) {
+                case token_kind::l_brace:
+                    ++brace_depth;
+                    break;
+                case token_kind::r_brace:
+                    if(brace_depth > 0uz) {
+                        --brace_depth;
+                    }
+                    break;
+                default:
+                    break;
+            }
+
+            consume();
+        }
+    }
+
+    auto synchronize_import_list() -> void
+    {
+        while(not check_any({
+            token_kind::semicolon,
+            token_kind::kw_import,
+            token_kind::kw_export,
+            token_kind::identifier,
+            token_kind::eof,
+        })) {
+            consume();
+        }
+
+        if(check(token_kind::semicolon)) {
+            consume();
+        }
+    }
+
+    auto synchronize_function_list() -> void
+    {
+        while(not check_any({
+            token_kind::semicolon,
+            token_kind::kw_export,
+            token_kind::identifier,
+            token_kind::eof,
+        })) {
+            consume();
+        }
+
+        if(check(token_kind::semicolon)) {
+            consume();
+        }
+    }
+
+    std::vector<token> tokens;
+    std::size_t index{};
+    std::deque<token> injected{};
+    ast_arena arena{};
+    std::vector<parser_diagnostic> diagnostics{};
+};

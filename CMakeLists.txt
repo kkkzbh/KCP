@@ -1,6 +1,10 @@
-cmake_minimum_required(VERSION 3.31)
+cmake_minimum_required(VERSION 4.2.2)
 
-set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444")
+if(CMAKE_VERSION VERSION_GREATER_EQUAL 4.3)
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
+else()
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444")
+endif()
 set(CMAKE_CXX_MODULE_STD ON)
 set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 set(CMAKE_CXX_STANDARD 26)
@@ -11,10 +15,10 @@ project(language_lab LANGUAGES CXX)
 include(FetchContent)
 set(JSON_BuildTests OFF CACHE INTERNAL "")
 FetchContent_Declare(
-    nlohmann_json
+    json
     URL https://github.com/nlohmann/json/releases/download/v3.12.0/json.tar.xz
 )
-FetchContent_MakeAvailable(nlohmann_json)
+FetchContent_MakeAvailable(json)
 
 include(CTest)
 add_subdirectory(source)

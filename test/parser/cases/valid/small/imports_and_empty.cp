@@ -1,5 +1,5 @@
 import math;
-import flow_demo;
+import flow.demo;
 
 main()
 {

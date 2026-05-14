@@ -5,7 +5,7 @@
 本次实验三选择输入方式 (c) ——「输入文法，由程序自动生成该文法的算符优先关系矩阵」——并把它做成两件事：
 
 1. 教学用的算符优先分析器（本文档主线），完整覆盖实验要求 (1)(c)、(2)、(3)。
-2. 主管线表达式分析器的"事实校准器"。cp 真编译器的表达式分析走的是 clang / rust 形态：前缀 / 调用 / 后缀仍由递归下降处理，二元算符由 Pratt（绑定力 binding power）解析。算符优先模块自动生成的优先矩阵被一致性测试拿来与 Pratt 绑定力表交叉对照，未来调整任何算符的优先级只需改一处 (`parser/core/expression_precedence.cppm`)，CI 自动检查不漂移。
+2. 主管线表达式分析器的"事实校准器"。cp 真编译器的表达式分析走的是 clang / rust 形态：前缀 / 调用 / 后缀仍由递归下降处理，二元算符由 Pratt（绑定力 binding power）解析。算符优先模块自动生成的优先矩阵被一致性测试拿来与 Pratt 绑定力表交叉对照，未来调整任何算符的优先级只需改一处 (`parser/expression/precedence.cppm`)，CI 自动检查不漂移。
 
 > 这一节同时说明：实验三模块不会进入"token → AST"主路径（那条路径是 Pratt），但它和主路径共享算符优先级的"事实之源"，因此并不是一次性代码。
 
@@ -37,7 +37,7 @@ E10 → ( E0 )
 
 终结符均使用 lexer `token_kind` 的字符串名（`plus`、`star`、`l_paren`、`identifier` …），这样能直接复用 `to_string(token_kind)`，无需另维护映射表。`build_op_precedence_table` 的输入是这套通用 `grammar_definition`，不绑死 cp，任何文法都能跑。
 
-文法生成器代码在 `parser/core/operator_precedence.cppm:cp_expression_op_grammar()`，**它直接读取共享的 `cp_binary_operator_table` 并按 `left_bp` 分层**——这是实现"两块共享同一份算符优先级"的关键。
+文法生成器代码在 `parser/op/operator_precedence.cppm:cp_expression_op_grammar()`，**它直接读取共享的 `cp_binary_operator_table` 并按 `left_bp` 分层**——这是实现"两块共享同一份算符优先级"的关键。
 
 ## 3. 算法
 
@@ -87,7 +87,7 @@ E10 → ( E0 )
 4. 找不到关系 / 关系为 none ⇒ 写一条诊断并失败。
 5. 当栈为 `[$, N]` 且当前输入为 `$` 时接受。
 
-可选 `trace_enabled` 时每一步都写一个 `trace_event`，含栈快照、剩余输入、动作字符串，便于教学演示和单元测试比对。
+可选 `trace_enabled` 时每一步都写一个 `op_trace_step`，含栈快照、剩余输入、动作字符串，便于教学演示和单元测试比对。
 
 > 实现细节：占位符 `N` 不在文法的非终结符集合里，会被 `last_terminal_index` 误判成终结符。为此驱动器**先把 `N` 注入临时非终结符集合**再开始驱动。这一点很容易踩坑。
 
@@ -157,7 +157,7 @@ diag: no precedence relation between identifier and identifier
 
 ## 6. Pratt 与算符优先矩阵的一致性
 
-主管线表达式分析器是 Pratt（`parser/core/recursive_descent.cppm:parse_expression_pratt`）。它和算符优先实验共用 `cp_binary_operator_table`：
+主管线表达式分析器是 Pratt（`parser/syntax/recursive_descent.cppm:parse_expression_pratt`）。它和算符优先实验共用 `cp_binary_operator_table`：
 
 - A 块（Pratt）：`find_binary_operator(token_kind)` 查表得到 `(left_bp, right_bp)`，配合 `min_bp` 决定移进/收回。
 - B 块（实验三）：`cp_expression_op_grammar()` 按 `left_bp` 分层生成产生式，再由 `build_op_precedence_table` 构造矩阵。
@@ -182,9 +182,9 @@ prev.right_bp <= next.left_bp  ⇒  prev <· next   (移进 next)
 
 ## 8. 关键文件清单
 
-- `parser/core/expression_precedence.cppm` — 共享的 cp 二元算符表 `cp_binary_operator_table`，A/B 共用的事实之源。
-- `parser/core/operator_precedence.cppm` — 实验三主体：FIRSTVT/LASTVT/优先矩阵构造与表驱动 shift-reduce 驱动器；导出 `cp_expression_op_grammar()`、`build_op_precedence_table`、`parse_with_op_precedence`、`tokens_to_terminal_names`。
-- `parser/core/recursive_descent.cppm` — A 块 Pratt 表达式分析器（`parse_expression_pratt`），由 `parse_assignment` 入口直接调用。
-- `parser/core/grammar.cppm` — LL(1) 文法已经把二元表达式长链路折叠为 `Expression → Assignment → Unary AssignmentTail`；二元算符不再出现在 LL(1) 文法里。
+- `parser/expression/precedence.cppm` — 共享的 cp 二元算符表 `cp_binary_operator_table`，A/B 共用的事实之源。
+- `parser/op/operator_precedence.cppm` — 实验三主体：FIRSTVT/LASTVT/优先矩阵构造与表驱动 shift-reduce 驱动器；导出 `cp_expression_op_grammar()`、`build_op_precedence_table`、`parse_with_op_precedence`、`tokens_to_terminal_names`。
+- `parser/syntax/recursive_descent.cppm` — A 块 Pratt 表达式分析器（`parse_expression_pratt`），由 `parse_assignment` 入口直接调用。
+- `parser/ll1/grammar.cppm` — LL(1) 文法已经把二元表达式长链路折叠为 `Expression → Assignment → Unary AssignmentTail`；二元算符不再出现在 LL(1) 文法里。
 - `parser/tool/op_precedence_demo.cpp` — 命令行 demo：打印产生式、FIRSTVT、LASTVT、矩阵以及解析 trace。
 - `test/parser/suites/op_precedence_test.cpp` — 实验三测试套件，含 Pratt↔矩阵一致性断言。

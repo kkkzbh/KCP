@@ -21,5 +21,6 @@
 - `docs/cast.md`: 类型转换
 - `docs/flow.md`: 流程控制
 - `docs/initial.md`: 变量、常量与初始化
+- `docs/module.md`: 模块声明、导入与导出
 - `docs/operator.md`: 运算符
 - `docs/struct.md`: `struct / impl / trait`

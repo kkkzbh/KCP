@@ -3,11 +3,47 @@ import parser;
 
 #include "assert.hpp"
 
+namespace {
+[[nodiscard]]
+auto first_function(parse_result const& parsed) -> function_syntax const&
+{
+    auto const& unit = parsed.ast.translation_unit(parsed.root);
+    return parsed.ast.function(unit.functions.front());
+}
+
+[[nodiscard]]
+auto function_body(parse_result const& parsed, function_syntax const& function)
+    -> block_statement_syntax const&
+{
+    return as<block_statement_syntax>(parsed.ast.statement(function.body));
+}
+
+[[nodiscard]]
+auto declaration(parse_result const& parsed, stmt_id statement)
+    -> declaration_statement_syntax const&
+{
+    return as<declaration_statement_syntax>(parsed.ast.statement(statement));
+}
+
+[[nodiscard]]
+auto expression_statement(parse_result const& parsed, stmt_id statement)
+    -> expression_statement_syntax const&
+{
+    return as<expression_statement_syntax>(parsed.ast.statement(statement));
+}
+
+[[nodiscard]]
+auto type_argument_type(type_argument_syntax const& argument) -> type_id
+{
+    return as<type_argument_type_syntax>(argument).type;
+}
+} // namespace
+
 auto main() -> int
 {
     auto sources = source_manager{};
 
-    auto const valid = sources.add_source(
+    auto const valid = sources.add_source (
         "api_valid.cp",
         R"(main()
 {
@@ -16,64 +52,41 @@ auto main() -> int
     return value;
 })");
 
-    auto parsed = parse_translation_unit(sources, valid, parse_options{
-        .trace_enabled = true,
-    });
+    auto parsed = parse_translation_unit(sources, valid);
 
     test_parser::assert_true(parsed.accepted, "valid source should parse");
-    test_parser::assert_true(parsed.syntax_tree != nullptr, "valid source should produce syntax tree");
+    test_parser::assert_true(parsed.root.valid(), "valid source should produce syntax tree");
     test_parser::assert_true(parsed.lexer_diagnostics.empty(), "valid source should not emit lexer diagnostics");
-    test_parser::assert_true(parsed.diagnostics.empty(), "valid source should not emit parser diagnostics");
-    test_parser::assert_true(not parsed.trace.empty(), "trace should be populated when enabled");
-    test_parser::assert_true(parsed.syntax_tree->functions.size() == 1, "valid source should contain one function");
-    test_parser::assert_true(
-        to_string(trace_event_kind::enter) == "enter"
-            and to_string(trace_event_kind::match) == "match"
-            and to_string(trace_event_kind::fail) == "fail"
-            and to_string(trace_event_kind::exit) == "exit",
-        "trace event strings should remain stable");
-    test_parser::assert_true(
-        format_trace_event(sources, parsed.trace.front()) == "enter\ttranslation_unit\tidentifier\tmain",
-        "formatted trace should include the current token lexeme");
-    test_parser::assert_true(
-        format_trace_event(
-            sources,
-            trace_event{
-                .kind = trace_event_kind::fail,
-                .label = "eof",
-                .current = token{
-                    .kind = token_kind::eof,
-                    .span = source_span{
-                        .start = sources.file_start(valid),
-                        .end = sources.file_start(valid),
-                    },
-                },
-            })
-            == "fail\teof\teof\t",
-        "formatted trace should omit lexeme text for empty spans");
+    test_parser::assert_true(parsed.parser_diagnostics.empty(), "valid source should not emit parser diagnostics");
+    test_parser::assert_true (
+        parsed.ast.translation_unit(parsed.root).functions.size() == 1,
+        "valid source should contain one function");
 
-    auto const& function = parsed.syntax_tree->functions.front();
+    auto const& function = first_function(parsed);
+    auto const& body = function_body(parsed, function);
     test_parser::assert_true(std::string(sources.slice(function.name)) == "main", "function name should be main");
-    test_parser::assert_true(function.body != nullptr, "function should have a body");
-    test_parser::assert_true(function.body->statements.size() == 3, "function body should contain three statements");
-    test_parser::assert_true(
-        function.body->statements.front()->declared_type != nullptr,
-        "first declaration should preserve its explicit type");
-    test_parser::assert_true(
-        std::string(sources.slice(function.body->statements.front()->declared_type->name.components.front())) == "array",
-        "first declaration type should be array");
-    test_parser::assert_true(
-        function.body->statements.front()->declared_type->type_arguments.size() == 1,
-        "outer array type should contain nested type argument");
-    test_parser::assert_true(
-        function.body->statements.front()->declared_type->literal_arguments.size() == 1,
-        "outer array type should contain one literal argument");
+    test_parser::assert_true(function.body.valid(), "function should have a body");
+    test_parser::assert_true(body.statements.size() == 3, "function body should contain three statements");
 
-    auto const shapes = sources.add_source(
+    auto const& rows = declaration(parsed, body.statements.front());
+    test_parser::assert_true(rows.declared_type != std::nullopt, "first declaration should preserve its explicit type");
+    auto const& rows_type = parsed.ast.type(*rows.declared_type);
+    test_parser::assert_true (
+        std::string(sources.slice(rows_type.name.components.front())) == "array",
+        "first declaration type should be array");
+    test_parser::assert_true(rows_type.arguments.size() == 2, "outer array type should contain two arguments");
+    test_parser::assert_true (
+        is<type_argument_type_syntax>(rows_type.arguments.front()),
+        "outer array first argument should be nested type");
+    test_parser::assert_true (
+        is<type_argument_literal_syntax>(rows_type.arguments.back()),
+        "outer array second argument should be literal argument");
+
+    auto const shapes = sources.add_source (
         "api_shapes.cp",
         R"(main()
 {
-    let pointer: i32 const* = &value;
+    let pointer: i32 const**& = value;
     let nested: outer<inner<i32>> = seed;
     let empty_array = [];
     let empty_sequence = {};
@@ -90,67 +103,123 @@ auto main() -> int
 
     auto shaped = parse_translation_unit(sources, shapes);
     test_parser::assert_true(shaped.accepted, "shape-focused source should parse");
-    test_parser::assert_true(shaped.syntax_tree != nullptr, "shape-focused source should produce syntax tree");
-    test_parser::assert_true(shaped.diagnostics.empty(), "shape-focused source should not emit parser diagnostics");
-    test_parser::assert_true(
-        shaped.syntax_tree->functions.size() == 1 and shaped.syntax_tree->functions.front().body != nullptr,
-        "shape-focused source should produce one function body");
+    test_parser::assert_true(shaped.root.valid(), "shape-focused source should produce syntax tree");
+    test_parser::assert_true(shaped.parser_diagnostics.empty(), "shape-focused source should not emit parser diagnostics");
 
-    auto const& shaped_body = shaped.syntax_tree->functions.front().body->statements;
-    test_parser::assert_true(shaped_body.size() == 7, "shape-focused source should contain seven statements");
-    test_parser::assert_true(
-        shaped_body[0]->declared_type != nullptr and shaped_body[0]->declared_type->const_qualified,
+    auto const& shaped_function = first_function(shaped);
+    auto const& shaped_body = function_body(shaped, shaped_function);
+    test_parser::assert_true(shaped_body.statements.size() == 7, "shape-focused source should contain seven statements");
+
+    auto const& pointer = declaration(shaped, shaped_body.statements[0]);
+    test_parser::assert_true(pointer.declared_type != std::nullopt, "pointer declaration should keep explicit type");
+    auto const& pointer_type = shaped.ast.type(*pointer.declared_type);
+    test_parser::assert_true (
+        pointer_type.const_qualified,
         "pointer declaration should keep const-qualified type information");
-    test_parser::assert_true(
-        shaped_body[0]->declared_type->suffix_operators.size() == 1
-            and shaped_body[0]->declared_type->suffix_operators.front() == token_kind::star,
-        "pointer declaration should record pointer suffix");
-    test_parser::assert_true(
-        shaped_body[1]->declared_type != nullptr
-            and std::string(sources.slice(shaped_body[1]->declared_type->name.components.front())) == "outer",
+    test_parser::assert_true (
+        pointer_type.suffix_operators.size() == 3
+            and pointer_type.suffix_operators.front() == token_kind::star
+            and pointer_type.suffix_operators[1] == token_kind::star
+            and pointer_type.suffix_operators.back() == token_kind::amp,
+        "pointer declaration should record pointer-reference suffixes");
+
+    auto const& nested = declaration(shaped, shaped_body.statements[1]);
+    test_parser::assert_true(nested.declared_type != std::nullopt, "nested generic declaration should keep explicit type");
+    auto const& outer_type = shaped.ast.type(*nested.declared_type);
+    test_parser::assert_true (
+        std::string(sources.slice(outer_type.name.components.front())) == "outer",
         "nested generic declaration should preserve the outer type name");
-    test_parser::assert_true(
-        shaped_body[1]->declared_type->type_arguments.size() == 1
-            and shaped_body[1]->declared_type->type_arguments.front()->type_arguments.size() == 1,
+    auto const inner_type_id = type_argument_type(outer_type.arguments.front());
+    auto const& inner_type = shaped.ast.type(inner_type_id);
+    test_parser::assert_true (
+        outer_type.arguments.size() == 1 and inner_type.arguments.size() == 1,
         "nested generic declaration should preserve inner type arguments split from >>");
-    test_parser::assert_true(
-        shaped_body[2]->expressions.front()->kind == expr_syntax_kind::array_literal
-            and shaped_body[2]->expressions.front()->operands.empty(),
+
+    auto const recovered_source = sources.add_source (
+        "api_recovery.cp",
+        R"(main()
+{
+    let before = 1;
+    module;
+    let after = 2;
+})");
+    auto recovered = parse_translation_unit(sources, recovered_source);
+    test_parser::assert_true(not recovered.accepted, "recovery-focused source should be rejected");
+    test_parser::assert_true (
+        not recovered.parser_diagnostics.empty(),
+        "recovery-focused source should emit parser diagnostics");
+    auto const& recovered_function = first_function(recovered);
+    auto const& recovered_body = function_body(recovered, recovered_function);
+    test_parser::assert_true (
+        recovered_body.statements.size() == 2,
+        "statement recovery should continue after a bad token inside a block");
+
+    auto const unclosed_source = sources.add_source (
+        "api_unclosed_recovery.cp",
+        R"(main()
+{
+    let before = 1;
+    let broken = call(;
+    let after = 2;
+})");
+    auto unclosed = parse_translation_unit(sources, unclosed_source);
+    test_parser::assert_true(not unclosed.accepted, "unclosed recovery source should be rejected");
+    test_parser::assert_true (
+        not unclosed.parser_diagnostics.empty(),
+        "unclosed recovery source should emit parser diagnostics");
+    auto const& unclosed_function = first_function(unclosed);
+    auto const& unclosed_body = function_body(unclosed, unclosed_function);
+    test_parser::assert_true (
+        unclosed_body.statements.size() == 2,
+        "statement recovery should stop at semicolon even after an unclosed parenthesis");
+
+    auto const& empty_array = declaration(shaped, shaped_body.statements[2]);
+    auto const& empty_array_expr = shaped.ast.expression(empty_array.initializer);
+    test_parser::assert_true (
+        is<array_literal_expr_syntax>(empty_array_expr)
+            and as<array_literal_expr_syntax>(empty_array_expr).elements.empty(),
         "empty array literal should parse as an array literal with no operands");
-    test_parser::assert_true(
-        shaped_body[3]->expressions.front()->kind == expr_syntax_kind::sequence_literal
-            and shaped_body[3]->expressions.front()->operands.empty(),
+
+    auto const& empty_sequence = declaration(shaped, shaped_body.statements[3]);
+    auto const& empty_sequence_expr = shaped.ast.expression(empty_sequence.initializer);
+    test_parser::assert_true (
+        is<sequence_literal_expr_syntax>(empty_sequence_expr)
+            and as<sequence_literal_expr_syntax>(empty_sequence_expr).elements.empty(),
         "empty sequence literal should parse as a sequence literal with no operands");
-    test_parser::assert_true(
-        shaped_body[4]->kind == statement_syntax_kind::expr_stmt
-            and shaped_body[4]->expressions.front()->kind == expr_syntax_kind::unary
-            and shaped_body[4]->expressions.front()->operator_kind == token_kind::plus_plus,
+
+    auto const& increment_stmt = expression_statement(shaped, shaped_body.statements[4]);
+    auto const& increment = as<unary_expr_syntax>(shaped.ast.expression(increment_stmt.expression));
+    test_parser::assert_true (
+        increment.operator_kind == token_kind::plus_plus and increment.position == unary_position::postfix,
         "postfix increment should remain an expression statement with unary ++");
-    test_parser::assert_true(
-        shaped_body[5]->kind == statement_syntax_kind::expr_stmt
-            and shaped_body[5]->expressions.front()->kind == expr_syntax_kind::unary
-            and shaped_body[5]->expressions.front()->operator_kind == token_kind::minus_minus,
+
+    auto const& decrement_stmt = expression_statement(shaped, shaped_body.statements[5]);
+    auto const& decrement = as<unary_expr_syntax>(shaped.ast.expression(decrement_stmt.expression));
+    test_parser::assert_true (
+        decrement.operator_kind == token_kind::minus_minus and decrement.position == unary_position::postfix,
         "postfix decrement should remain an expression statement with unary --");
-    test_parser::assert_true(
-        shaped_body[6]->kind == statement_syntax_kind::if_stmt
-            and shaped_body[6]->statements.size() == 2
-            and shaped_body[6]->statements[1]->kind == statement_syntax_kind::if_stmt,
-        "else-if chains should stay nested as if statements");
-    test_parser::assert_true(
-        shaped_body[6]->statements[1]->statements.size() == 2
-            and shaped_body[6]->statements[1]->statements[1]->kind == statement_syntax_kind::block,
+
+    auto const& if_stmt = as<if_statement_syntax>(shaped.ast.statement(shaped_body.statements[6]));
+    test_parser::assert_true(if_stmt.else_branch != std::nullopt, "if statement should keep else-if branch");
+    auto const& else_if = as<if_statement_syntax>(shaped.ast.statement(*if_stmt.else_branch));
+    test_parser::assert_true (
+        else_if.else_branch
+            and is<block_statement_syntax>(shaped.ast.statement(*else_if.else_branch)),
         "else-if chains should keep the trailing else block");
 
     auto const invalid = sources.add_source("api_invalid.cp", "main() { let value = @; }");
     auto rejected = parse_translation_unit(sources, invalid);
+    contract_assert(not rejected.lexer_diagnostics.empty());
     test_parser::assert_true(not rejected.accepted, "lexically invalid source should be rejected");
     test_parser::assert_true(not rejected.lexer_diagnostics.empty(), "lexically invalid source should keep lexer diagnostics");
-    test_parser::assert_true(rejected.diagnostics.size() == 1, "lexically invalid source should emit parser lexical failure");
     test_parser::assert_true(
-        rejected.diagnostics.front().code == parser_diagnostic_code::lexical_failure,
+        rejected.parser_diagnostics.size() == 1,
+        "lexically invalid source should emit parser lexical failure");
+    test_parser::assert_true (
+        rejected.parser_diagnostics.front().code == parser_diagnostic_code::lexical_failure,
         "lexically invalid source should emit lexical_failure");
-    test_parser::assert_true(
-        std::string(sources.slice(rejected.diagnostics.front().primary_span)) == "@",
+    test_parser::assert_true (
+        std::string(sources.slice(rejected.parser_diagnostics.front().primary_span)) == "@",
         "lexical_failure should point at the lexer-reported invalid lexeme");
 
     return 0;

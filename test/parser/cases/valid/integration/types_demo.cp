@@ -14,6 +14,8 @@ export literals_and_casts() -> i32
 
     let count_ref: i32& = count;
     let count_ptr: i32* = &count;
+    let count_ptr_ptr: i32** = &count_ptr;
+    let count_ptr_ref: i32*& = count_ptr;
 
     let widened: f64 = count as f64;
     let narrowed = i32(ratio + widened / 42.0);

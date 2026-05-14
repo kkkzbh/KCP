@@ -4,7 +4,7 @@
 
 namespace test_parser {
 
-inline auto compare_diagnostics(
+auto inline compare_diagnostics(
     std::filesystem::path const& case_path,
     std::vector<expected_diagnostic> const& expected,
     std::vector<expected_diagnostic> const& actual) -> void
@@ -25,46 +25,46 @@ inline auto compare_diagnostics(
         actual_lines.push_back(format_diagnostic(value));
     }
 
-    fail(std::format(
+    fail(std::format (
         "diagnostic mismatch in {}\nexpected:\n{}actual:\n{}",
         std::filesystem::relative(case_path, cases_root()).string(),
         join_lines(expected_lines),
         join_lines(actual_lines)));
 }
 
-inline auto run_case(parser_case const& current_case) -> void
+auto inline run_case(parser_case const& current_case) -> void
 {
     auto sources = source_manager{};
-    auto const file = sources.add_source(
+    auto const file = sources.add_source (
         std::filesystem::relative(current_case.source_path, cases_root()).string(),
         current_case.source_text);
 
     auto result = parse_translation_unit(sources, file);
     if(result.accepted != current_case.accepted) {
-        fail(std::format(
+        fail(std::format (
             "acceptance mismatch in {}: expected {}, got {}",
             std::filesystem::relative(current_case.source_path, cases_root()).string(),
             current_case.accepted ? "accepted" : "rejected",
             result.accepted ? "accepted" : "rejected"));
     }
 
-    assert_true(
+    assert_true (
         result.lexer_diagnostics.empty(),
         std::format("{} should not emit lexer diagnostics", current_case.source_path.string()));
     if(current_case.accepted) {
-        assert_true(result.syntax_tree != nullptr, "accepted case should produce syntax tree");
+        assert_true(result.root.valid(), "accepted case should produce syntax tree");
     }
 
     auto actual = std::vector<expected_diagnostic>{};
-    actual.reserve(result.diagnostics.size());
-    for(auto const& diagnostic : result.diagnostics) {
+    actual.reserve(result.parser_diagnostics.size());
+    for(auto const& diagnostic : result.parser_diagnostics) {
         actual.push_back(to_expected_diagnostic(sources, diagnostic));
     }
 
     compare_diagnostics(current_case.source_path, current_case.diagnostics, actual);
 }
 
-inline auto run_case_suite(std::filesystem::path const& relative_root) -> int
+auto inline run_case_suite(std::filesystem::path const& relative_root) -> int
 {
     auto const cases = discover_cases(relative_root);
     for(auto const& current_case : cases) {

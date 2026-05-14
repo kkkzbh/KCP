@@ -2,16 +2,18 @@ import std;
 import parser;
 
 namespace {
-[[nodiscard]] auto read_all(std::istream& input) -> std::string
+
+auto read_all(std::istream& input) -> std::string
 {
     return std::string(
-        std::istreambuf_iterator<char>{ input },
-        std::istreambuf_iterator<char>{});
+        std::istreambuf_iterator<char>{input},
+        std::istreambuf_iterator<char>{}
+    );
 }
 
-auto print_lexer_diagnostic(source_manager const& sources, diagnostic const& value) -> void
+auto print_lexer_diagnostic(source_manager const& sources, lexer_diagnostic const& value) -> void
 {
-    auto const position = sources.position(value.primary_span.start);
+    auto position = sources.position(value.primary_span.start);
     std::cout
         << "lexer:" << position.line << ':' << position.column << ": "
         << value.message << '\n';
@@ -19,27 +21,26 @@ auto print_lexer_diagnostic(source_manager const& sources, diagnostic const& val
 
 auto print_parser_diagnostic(source_manager const& sources, parser_diagnostic const& value) -> void
 {
-    auto const position = sources.position(value.primary_span.start);
+    auto position = sources.position(value.primary_span.start);
     std::cout
         << "parser:" << position.line << ':' << position.column << ": "
         << value.message << '\n';
 }
-}
+} // namespace
 
 auto main(int argc, char** argv) -> int
 {
-    auto trace_enabled = false;
     auto path = std::optional<std::string>{};
-    auto const arguments = std::span(argv, static_cast<std::size_t>(argc));
+    auto arguments = std::span(argv, static_cast<std::size_t>(argc));
 
-    for(auto const raw_argument : arguments | std::views::drop(1)) {
-        auto const argument = std::string_view(raw_argument);
-        if(argument == "--trace") {
-            trace_enabled = true;
-            continue;
+    for(auto raw_argument : arguments | std::views::drop(1)) {
+        auto argument = std::string_view(raw_argument);
+        if(argument.starts_with("--")) {
+            std::cerr << "unexpected option: " << argument << '\n';
+            return 2;
         }
 
-        if(path.has_value()) {
+        if(path) {
             std::cerr << "unexpected extra argument: " << argument << '\n';
             return 2;
         }
@@ -48,12 +49,12 @@ auto main(int argc, char** argv) -> int
     }
 
     auto sources = source_manager{};
-    auto name = std::string{ "<stdin>" };
+    auto name = std::string{"<stdin>"};
     auto input = std::string{};
 
-    if(path.has_value() and *path != "-") {
+    if(path and *path != "-") {
         name = *path;
-        auto stream = std::ifstream{ *path };
+        auto stream = std::ifstream{*path};
         if(not stream.is_open()) {
             std::cerr << "failed to open " << *path << '\n';
             return 2;
@@ -63,23 +64,15 @@ auto main(int argc, char** argv) -> int
         input = read_all(std::cin);
     }
 
-    auto const file = sources.add_source(name, input);
-    auto const result = parse_translation_unit(sources, file, parse_options{
-        .trace_enabled = trace_enabled,
-    });
+    auto file = sources.add_source(name, input);
+    auto result = parse_translation_unit(sources, file);
 
     std::cout << (result.accepted ? "accepted" : "rejected") << '\n';
     for(auto const& diagnostic : result.lexer_diagnostics) {
         print_lexer_diagnostic(sources, diagnostic);
     }
-    for(auto const& diagnostic : result.diagnostics) {
+    for(auto const& diagnostic : result.parser_diagnostics) {
         print_parser_diagnostic(sources, diagnostic);
-    }
-
-    if(trace_enabled) {
-        for(auto const& event : result.trace) {
-            std::cout << format_trace_event(sources, event) << '\n';
-        }
     }
 
     return result.accepted ? 0 : 1;

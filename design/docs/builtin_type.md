@@ -30,7 +30,7 @@ array<type,num> 数组字面量 [x,y,z]
 tuple<type,type,type> 元组字面量 (x,y,z)
 
 ## 引用类型
-type& type const&
+type& type const& type*& type**&
 
 ## 指针类型
-type* type const*
+type* type** type const*

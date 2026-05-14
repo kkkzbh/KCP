@@ -6,8 +6,9 @@
 
 - 顶层：可选 `export module` 文件头、若干 `import`、若干函数定义
 - 语句：块、`let/const` 声明、`if / else if / else`、`while`、`do while`、范围 `for`、带标签 `break/continue`、`return`、表达式语句
-- 类型：限定名类型、`array/sequence/tuple` 泛型形态、引用与指针后缀、`type const&` / `type const*`
-- 表达式：限定名、字面量、数组/序列/元组字面量、函数调用、`as` cast、赋值、逻辑/位运算/比较/移位/算术、前后缀一元运算
+- 模块：`export module` 文件头、点分隔模块名、若干 `import`
+- 类型：标识符类型、`array/sequence/tuple` 泛型形态、多级指针与可选单级引用后缀、`type const&` / `type const*`
+- 表达式：标识符、字面量、数组/序列/元组字面量、函数调用、`as` cast、赋值、逻辑/位运算/比较/移位/算术、前后缀一元运算
 
 本次明确不纳入：
 
@@ -39,9 +40,10 @@ TranslationUnit
 
 ```text
 TranslationUnit -> ModuleHeaderOpt ImportList FunctionList
-ModuleHeaderOpt -> export module QualifiedName ; | ε
+ModuleHeaderOpt -> export module ModuleName ; | ε
 ImportList -> Import ImportList | ε
-Import -> import QualifiedName ;
+Import -> import ModuleName ;
+ModuleName -> identifier ( . identifier )*
 FunctionList -> Function FunctionList | ε
 Function -> export? identifier ( ParameterList? ) ReturnTypeOpt Block
 ParameterList -> Parameter ( , Parameter )*
@@ -70,12 +72,11 @@ ContinueStmt -> continue identifier? ;
 ReturnStmt -> return Expression? ;
 ExprStmt -> Expression ;
 
-Type -> QualifiedName TypeArgs? ConstQualifier? PointerOrRef*
+Type -> identifier TypeArgs? ConstQualifier? PointerSuffix* ReferenceSuffix?
 TypeArgs -> < TypeArg ( , TypeArg )* >
 TypeArg -> Type | integer_literal
-PointerOrRef -> & | *
-
-QualifiedName -> identifier ( :: identifier )*
+PointerSuffix -> *
+ReferenceSuffix -> &
 
 Expression -> Assignment
 Assignment -> Assignment AssignOp LogicalOr | LogicalOr
@@ -93,7 +94,7 @@ Cast -> Unary ( as Type )*
 Unary -> PrefixOp Unary | Postfix
 Postfix -> Primary ( CallSuffix | ++ | -- )*
 Primary -> Literal
-         | QualifiedName
+         | identifier
          | [ ElementList? ]
          | { ElementList? }
          | ( Expression )
@@ -108,7 +109,7 @@ Primary -> Literal
 
 ## 3. 消除左递归和左公因子后的 LL(1) 文法
 
-实际程序与 `parser/core/grammar.cppm` 采用下列 LL(1) 版本。
+实际程序与 `parser/ll1/grammar.cppm` 采用下列 LL(1) 版本。
 
 ### 3.1 顶层左公因子
 
@@ -116,16 +117,18 @@ Primary -> Literal
 TranslationUnit -> TranslationUnitPrefix
 TranslationUnitPrefix
     -> kw_export TranslationUnitAfterExport
-    | kw_import QualifiedName ; ImportListTail FunctionList
+    | kw_import ModuleName ; ImportListTail FunctionList
     | identifier FunctionAfterName FunctionList
     | ε
 
 TranslationUnitAfterExport
-    -> kw_module QualifiedName ; ImportList FunctionList
+    -> kw_module ModuleName ; ImportList FunctionList
     | identifier FunctionAfterName FunctionList
 
-ImportList -> kw_import QualifiedName ; ImportList | ε
-ImportListTail -> kw_import QualifiedName ; ImportListTail | ε
+ImportList -> kw_import ModuleName ; ImportList | ε
+ImportListTail -> kw_import ModuleName ; ImportListTail | ε
+ModuleName -> identifier ModuleNameTail
+ModuleNameTail -> dot identifier ModuleNameTail | ε
 FunctionList -> FunctionLead FunctionList | ε
 FunctionLead -> kw_export identifier FunctionAfterName
 FunctionLead -> identifier FunctionAfterName
@@ -221,21 +224,21 @@ TupleTail        -> comma Expression TupleTail | ε
 ### 3.5 类型文法
 
 ```text
-Type            -> QualifiedName TypeArgumentOpt TypeConstOpt TypeSuffixList
+Type            -> identifier TypeArgumentOpt TypeConstOpt PointerSuffixList ReferenceOpt
 TypeArgumentOpt -> type_less TypeArgumentList type_greater | ε
 TypeArgumentList-> TypeArgument TypeArgumentTail
 TypeArgumentTail-> comma TypeArgument TypeArgumentTail | ε
 TypeArgument    -> Type | integer_literal
 TypeConstOpt    -> kw_const | ε
-TypeSuffixList  -> TypeSuffix TypeSuffixList | ε
-TypeSuffix      -> type_amp | type_star
+PointerSuffixList -> type_star PointerSuffixList | ε
+ReferenceOpt   -> type_amp | ε
 ```
 
 ## 4. SELECT 集合与 LL(1) 判断
 
 完整机器可校验文法与集合计算实现位于：
 
-- [grammar.cppm](/home/kkkzbh/code/cp/parser/core/grammar.cppm)
+- [grammar.cppm](/home/kkkzbh/code/cp/parser/ll1/grammar.cppm)
 - [ll1_behavior_test.cpp](/home/kkkzbh/code/cp/test/parser/suites/ll1_behavior_test.cpp)
 
 下面给出按非终结符分组后的 SELECT 结果摘要。
@@ -245,12 +248,12 @@ TypeSuffix      -> type_amp | type_star
 | 非终结符 | 产生式 | SELECT |
 | --- | --- | --- |
 | `TranslationUnitPrefix` | `kw_export TranslationUnitAfterExport` | `{ kw_export }` |
-| `TranslationUnitPrefix` | `kw_import QualifiedName ; ImportListTail FunctionList` | `{ kw_import }` |
+| `TranslationUnitPrefix` | `kw_import ModuleName ; ImportListTail FunctionList` | `{ kw_import }` |
 | `TranslationUnitPrefix` | `identifier FunctionAfterName FunctionList` | `{ identifier }` |
 | `TranslationUnitPrefix` | `ε` | `{ $ }` |
-| `TranslationUnitAfterExport` | `kw_module QualifiedName ; ImportList FunctionList` | `{ kw_module }` |
+| `TranslationUnitAfterExport` | `kw_module ModuleName ; ImportList FunctionList` | `{ kw_module }` |
 | `TranslationUnitAfterExport` | `identifier FunctionAfterName FunctionList` | `{ identifier }` |
-| `ImportList` | `kw_import QualifiedName ; ImportList` | `{ kw_import }` |
+| `ImportList` | `kw_import ModuleName ; ImportList` | `{ kw_import }` |
 | `ImportList` | `ε` | `{ kw_export, identifier, $ }` |
 | `FunctionList` | `FunctionLead FunctionList` | `{ kw_export, identifier }` |
 | `FunctionList` | `ε` | `{ $ }` |
@@ -280,15 +283,17 @@ TypeSuffix      -> type_amp | type_star
 
 | 非终结符 | 产生式 | SELECT |
 | --- | --- | --- |
-| `Type` | `QualifiedName TypeArgumentOpt TypeConstOpt TypeSuffixList` | `{ identifier }` |
+| `Type` | `identifier TypeArgumentOpt TypeConstOpt PointerSuffixList ReferenceOpt` | `{ identifier }` |
 | `TypeArgumentOpt` | `type_less TypeArgumentList type_greater` | `{ type_less }` |
 | `TypeArgumentOpt` | `ε` | `{ kw_const, type_amp, type_star, semicolon, comma, r_paren, kw_as }` |
 | `TypeArgument` | `Type` | `{ identifier }` |
 | `TypeArgument` | `integer_literal` | `{ integer_literal }` |
 | `TypeConstOpt` | `kw_const` | `{ kw_const }` |
 | `TypeConstOpt` | `ε` | `{ type_amp, type_star, semicolon, comma, r_paren, kw_as }` |
-| `TypeSuffixList` | `TypeSuffix TypeSuffixList` | `{ type_amp, type_star }` |
-| `TypeSuffixList` | `ε` | `{ semicolon, comma, r_paren, kw_as }` |
+| `PointerSuffixList` | `type_star PointerSuffixList` | `{ type_star }` |
+| `PointerSuffixList` | `ε` | `{ type_amp, semicolon, comma, r_paren, kw_as }` |
+| `ReferenceOpt` | `type_amp` | `{ type_amp }` |
+| `ReferenceOpt` | `ε` | `{ semicolon, comma, r_paren, kw_as }` |
 
 ### 4.4 表达式主链
 
@@ -313,12 +318,12 @@ TypeSuffix      -> type_amp | type_star
 | 非终结符 | 产生式 | SELECT |
 | --- | --- | --- |
 | `Primary` | `Literal` | `{ integer_literal, float_literal, char_literal, string_literal, kw_true, kw_false }` |
-| `Primary` | `QualifiedName` | `{ identifier }` |
+| `Primary` | `identifier` | `{ identifier }` |
 | `Primary` | `ArrayLiteral` | `{ l_bracket }` |
 | `Primary` | `SequenceLiteral` | `{ l_brace }` |
 | `Primary` | `ParenPrimary` | `{ l_paren }` |
 | `PrimaryNoBrace` | `Literal` | `{ integer_literal, float_literal, char_literal, string_literal, kw_true, kw_false }` |
-| `PrimaryNoBrace` | `QualifiedName` | `{ identifier }` |
+| `PrimaryNoBrace` | `identifier` | `{ identifier }` |
 | `PrimaryNoBrace` | `ArrayLiteral` | `{ l_bracket }` |
 | `PrimaryNoBrace` | `ParenPrimary` | `{ l_paren }` |
 
@@ -335,11 +340,11 @@ TypeSuffix      -> type_amp | type_star
 
 ### 5.1 结构
 
-- `parser/support/ast.cppm`: 最小 AST
-- `parser/support/diagnostic.cppm`: 语法诊断
-- `parser/support/trace.cppm`: 扁平 trace 事件
-- `parser/core/grammar.cppm`: 文法与 FIRST/FOLLOW/SELECT 计算
-- `parser/core/recursive_descent.cppm`: 递归下降主体
+- `parser/ast/ast.cppm`: 最小 AST
+- `parser/diagnostic/diagnostic.cppm`: 语法诊断
+- `parser/op/trace.cppm`: 算符优先实验步骤 trace
+- `parser/ll1/grammar.cppm`: 文法与 FIRST/FOLLOW/SELECT 计算
+- `parser/syntax/recursive_descent.cppm`: 递归下降主体
 - `parser/tool/main.cpp`: CLI demo
 
 ### 5.2 递归下降策略
@@ -347,7 +352,7 @@ TypeSuffix      -> type_amp | type_star
 - 每个主要非终结符对应一个成员函数
 - 表达式严格按 `assignment -> ... -> primary` 层级实现
 - 类型解析函数内部支持把 `>>` 拆成两个 `>`，从而正确处理 `array<array<i32,3>,2>`
-- `Type(expr)` 在语法上按“限定名 + 调用后缀”处理；是否真为 cast 留到语义阶段
+- `Type(expr)` 在语法上按“标识符 + 调用后缀”处理；是否真为 cast 留到语义阶段
 
 ### 5.3 诊断与恢复
 

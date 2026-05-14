@@ -1,0 +1,4 @@
+interface:
+  display_name: "CP Code Style"
+  short_description: "C++ style rules for the cp compiler lab"
+  default_prompt: "Use $cp-code-style before editing C++ code in this compiler-lab repo."

@@ -13,7 +13,8 @@ struct expected_diagnostic
     std::size_t line{};
     std::size_t column{};
 
-    [[nodiscard]] auto operator==(expected_diagnostic const&) const -> bool = default;
+    [[nodiscard]]
+    auto operator==(expected_diagnostic const&) const -> bool = default;
 };
 
 struct parser_case
@@ -24,14 +25,14 @@ struct parser_case
     std::vector<expected_diagnostic> diagnostics;
 };
 
-inline auto to_expected_diagnostic(
+auto inline to_expected_diagnostic(
     source_manager const& sources,
     parser_diagnostic const& value) -> expected_diagnostic
 {
     auto const position = sources.position(value.primary_span.start);
     auto const [file, local_start] = sources.locate(value.primary_span.start);
     auto const file_start = sources.file_start(file);
-    return expected_diagnostic{
+    return expected_diagnostic {
         .code = value.code,
         .span_lexeme = std::string(sources.slice(value.primary_span)),
         .start = local_start,
@@ -41,9 +42,9 @@ inline auto to_expected_diagnostic(
     };
 }
 
-inline auto format_diagnostic(expected_diagnostic const& value) -> std::string
+auto inline format_diagnostic(expected_diagnostic const& value) -> std::string
 {
-    return test_support::dump_jsonl_record(test_support::jsonl_record{
+    return test_support::dump_jsonl_record(test_support::jsonl_record {
         {"code", std::string(to_string(value.code))},
         {"span", value.span_lexeme},
         {"start", value.start},
@@ -53,7 +54,7 @@ inline auto format_diagnostic(expected_diagnostic const& value) -> std::string
     });
 }
 
-inline auto join_lines(std::vector<std::string> const& lines) -> std::string
+auto inline join_lines(std::vector<std::string> const& lines) -> std::string
 {
     auto result = std::string{};
     for(auto const& line : lines) {

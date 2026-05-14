@@ -11,9 +11,10 @@ function(add_parser_suite target_name source_name test_name)
 
     target_link_libraries(${target_name}
         PRIVATE
-            parser_core
+            parser
             test_jsonl_support
             nlohmann_json::nlohmann_json
+            stdc++exp
     )
 
     target_include_directories(${target_name}
