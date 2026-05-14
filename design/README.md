@@ -24,3 +24,4 @@
 - `docs/module.md`: 模块声明、导入与导出
 - `docs/operator.md`: 运算符
 - `docs/struct.md`: `struct / impl / trait`
+- `docs/type_system.md`: 当前主线类型系统、聚合字面量推导、返回类型推导与语义检查规则
