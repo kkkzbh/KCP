@@ -22,7 +22,6 @@ export struct llvm_emit_result
     std::string error{};
 };
 
-namespace {
 struct llvm_type_lowerer
 {
     auto lower(semantic_type_id id) -> llvm::Type*
@@ -101,8 +100,6 @@ struct llvm_type_lowerer
     llvm::LLVMContext& context;
     semantic_result const& semantics;
 };
-
-} // namespace
 
 export auto emit_llvm_ir(
     source_manager const& sources,

@@ -10,7 +10,7 @@ set(CMAKE_CXX_SCAN_FOR_MODULES ON)
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-project(language_lab LANGUAGES CXX)
+project(language_lab LANGUAGES C CXX)
 
 include(FetchContent)
 set(JSON_BuildTests OFF CACHE INTERNAL "")
