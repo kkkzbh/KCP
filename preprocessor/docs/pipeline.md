@@ -15,7 +15,7 @@
 
 3. **块注释 `/* ... */`**：
    - 正常闭合：把注释范围内的非换行字符写成空格；换行原样保留。
-   - 未闭合到 EOF：同样清空范围内的非换行字符，并追加一条 `unterminated_block_comment` 问题记录。
+   - 未闭合到 EOF：同样清空范围内的非换行字符，并追加一条 `unterminated_block_comment` 预处理诊断。
 
 4. 其他字符直接前进一位，规范化文本不变。
 
@@ -23,13 +23,11 @@
 
 - 规范化文本的长度与原始源码严格相等。
 - 规范化文本中换行的位置与原始源码完全一致，因而 `source_manager::position` 可以直接作用于原始偏移。
-- 问题列表按起始偏移升序排列，词法阶段的 `preprocess_issue_at_offset` 依赖这一顺序做线性扫描。
+- `diagnostics` 按起始偏移升序排列，供上层 pipeline 决定是否继续后续阶段。
 
 ## 与词法阶段的协作
 
-词法扫描器直接读取 `preprocessed_file::normalized_text`，空白（包括原注释留下的空格）被当作普通 trivia 跳过。
-
-当扫描位置正好落在某条 `preprocess_issue` 的起始偏移时，词法阶段会把该片段转换为一个带 `unterminated | recovered` 标记的 `invalid` token，并通过 `diagnostic_sink` 重新报告，从而与词法自己产生的诊断共享同一条出口。
+词法扫描器直接读取 `preprocessed_file::normalized_text`，空白（包括原注释留下的空格）被当作普通 trivia 跳过。预处理诊断保持在 `diagnostics` 中，不再转换为词法诊断或 `invalid` token。
 
 ## 为什么不引入完整的预处理指令
 

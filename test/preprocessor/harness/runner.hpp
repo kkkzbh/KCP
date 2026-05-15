@@ -20,10 +20,10 @@ auto inline compare_normalized_text(
         actual));
 }
 
-auto inline compare_issues(
+auto inline compare_diagnostics(
     std::filesystem::path const& case_path,
-    std::vector<expected_issue> const& expected,
-    std::vector<expected_issue> const& actual) -> void
+    std::vector<expected_diagnostic> const& expected,
+    std::vector<expected_diagnostic> const& actual) -> void
 {
     if (expected == actual) {
         return;
@@ -32,17 +32,17 @@ auto inline compare_issues(
     auto expected_lines = std::vector<std::string>{};
     expected_lines.reserve(expected.size());
     for (auto const& value : expected) {
-        expected_lines.push_back(format_issue(value));
+            expected_lines.push_back(format_diagnostic(value));
     }
 
     auto actual_lines = std::vector<std::string>{};
     actual_lines.reserve(actual.size());
     for (auto const& value : actual) {
-        actual_lines.push_back(format_issue(value));
+            actual_lines.push_back(format_diagnostic(value));
     }
 
     fail(std::format (
-        "issue mismatch in {}\nexpected:\n{}actual:\n{}",
+        "diagnostic mismatch in {}\nexpected:\n{}actual:\n{}",
         std::filesystem::relative(case_path, cases_root()).string(),
         join_lines(expected_lines),
         join_lines(actual_lines)));
@@ -57,17 +57,20 @@ auto inline run_case(preprocessor_case const& current_case) -> void
 
     auto const result = preprocess(sources, file);
 
-    auto actual_issues = std::vector<expected_issue>{};
-    actual_issues.reserve(result.issues.size());
-    for (auto const& issue : result.issues) {
-        actual_issues.push_back(to_expected_issue(sources, issue));
+    auto actual_diagnostics = std::vector<expected_diagnostic>{};
+    actual_diagnostics.reserve(result.diagnostics.size());
+    for (auto const& diagnostic : result.diagnostics) {
+        actual_diagnostics.push_back(to_expected_diagnostic(sources, diagnostic));
     }
 
     compare_normalized_text (
         current_case.source_path,
         current_case.normalized_text,
         result.normalized_text);
-    compare_issues(current_case.source_path, current_case.issues, actual_issues);
+    compare_diagnostics (
+        current_case.source_path,
+        current_case.diagnostics,
+        actual_diagnostics);
 }
 
 auto inline run_case_suite(std::filesystem::path const& relative_root) -> int

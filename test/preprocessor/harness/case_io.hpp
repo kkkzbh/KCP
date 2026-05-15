@@ -88,24 +88,24 @@ auto inline unescape_field(std::string_view text) -> std::string
 }
 
 [[nodiscard]]
-auto inline parse_issue_kind(std::string const& spelling)
-    -> preprocess_issue_kind
+auto inline parse_diagnostic_kind(std::string const& spelling)
+    -> diagnostic_kind
 {
     if (spelling == "unterminated_block_comment") {
-        return preprocess_issue_kind::unterminated_block_comment;
+        return diagnostic_kind::unterminated_block_comment;
     }
 
-    fail(std::format("unknown issue kind '{}'", spelling));
+    fail(std::format("unknown preprocessor diagnostic kind '{}'", spelling));
 }
 
 [[nodiscard]]
-auto inline parse_expected_issues(std::filesystem::path const& path)
-    -> std::vector<expected_issue>
+auto inline parse_expected_diagnostics(std::filesystem::path const& path)
+    -> std::vector<expected_diagnostic>
 {
-    auto result = std::vector<expected_issue>{};
+    auto result = std::vector<expected_diagnostic>{};
     for (auto const& record : test_support::read_jsonl(path, false)) {
         result.emplace_back (
-            parse_issue_kind(test_support::required_string(record, path, "kind")),
+            parse_diagnostic_kind(test_support::required_string(record, path, "code")),
             test_support::required_string(record, path, "span"),
             test_support::required_size(record, path, "start"),
             test_support::required_size(record, path, "end"),
@@ -138,7 +138,9 @@ auto inline discover_cases(std::filesystem::path const& relative_root)
 
     for (auto const& source_path : paths) {
         auto const output_path = source_path.parent_path() / (source_path.stem().string() + ".out");
-        auto const issues_path = source_path.parent_path() / (source_path.stem().string() + ".issues.jsonl");
+        auto const diagnostics_path = (
+            source_path.parent_path() / (source_path.stem().string() + ".diagnostics.jsonl")
+        );
 
         assert_true(std::filesystem::exists(output_path),
             std::format("missing normalized output file {}", output_path.string()));
@@ -147,7 +149,7 @@ auto inline discover_cases(std::filesystem::path const& relative_root)
             source_path,
             normalize_case_text(read_text(source_path)),
             normalize_case_text(read_text(output_path)),
-            parse_expected_issues(issues_path));
+            parse_expected_diagnostics(diagnostics_path));
     }
 
     return result;

@@ -4,13 +4,13 @@ target_sources(preprocessor
     PUBLIC
         FILE_SET CXX_MODULES
         FILES
-            diagnostic.cppm
             preprocessed.cppm
             preprocessor.cppm
 )
 
 target_link_libraries(preprocessor
     PUBLIC
+        diagnostic
         source
 )
 

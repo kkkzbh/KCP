@@ -3,7 +3,7 @@
 export module preprocessor;
 
 import std;
-export import preprocessor.diagnostic;
+export import diagnostic;
 export import preprocessor.preprocessed;
 import source;
 
@@ -15,14 +15,11 @@ struct preprocessor
     /// @brief 构造预处理扫描器。
     /// @param sources 源文件管理器，用于读取输入文本。
     /// @param file 要预处理的文件编号。
-    preprocessor(source_manager const& sources, file_id file)
-        : sources_(sources),
-          file_(file),
-          file_start_(sources.file_start(file)),
-          source_(sources.text(file)),
-          normalized_(std::string{ source_ })
-    {
-    }
+    preprocessor(source_manager const& sources, file_id file) : sources_(sources),
+                                                                file_(file),
+                                                                file_start_(sources.file_start(file)),
+                                                                source_(sources.text(file)),
+                                                                normalized_(std::string{ source_ }) {}
 
     /// @brief 执行完整的预处理扫描。
     /// @return 规范化文本与问题列表。
@@ -37,12 +34,12 @@ struct preprocessor
                 continue;
             }
 
-            if(ch == '/' and peek_char() == '/') {
+            if(ch == '/' and peek() == '/') {
                 skip_line_comment();
                 continue;
             }
 
-            if(ch == '/' and peek_char() == '*') {
+            if(ch == '/' and peek() == '*') {
                 skip_block_comment();
                 continue;
             }
@@ -52,7 +49,7 @@ struct preprocessor
 
         return preprocessed_file {
             .normalized_text = std::move(normalized_),
-            .issues = std::move(issues_),
+            .diagnostics = diagnostics_.take(),
             .file_start = file_start_,
         };
     }
@@ -74,7 +71,7 @@ private:
 
     /// @brief 返回下一个字符；到达末尾时返回 `\0`。
     /// @return 当前偏移后一个位置的字符；若不存在则返回 `\0`。
-    auto peek_char() const -> char
+    auto peek() const -> char
     {
         auto const next = index_ + 1;
         return next < source_.size() ? source_[next] : '\0';
@@ -146,7 +143,7 @@ private:
         advance(2);
 
         while(not eof()) {
-            if(current() == '*' and peek_char() == '/') {
+            if(current() == '*' and peek() == '/') {
                 blank_at(index_);
                 blank_at(index_ + 1);
                 advance(2);
@@ -159,26 +156,22 @@ private:
             advance();
         }
 
-        report(preprocess_diagnostic_kind::unterminated_block_comment, start, source_.size());
-    }
-
-    auto report(preprocess_diagnostic_kind kind, std::size_t start, std::size_t end) -> void
-    {
-        issues_.emplace_back (
-            kind,
-            source_span{
+        diagnostics_.report(
+            diagnostic_kind::unterminated_block_comment,
+            source_span {
                 .start = file_start_ + static_cast<byte_pos>(start),
-                .end = file_start_ + static_cast<byte_pos>(end),
-            });
+                .end = file_start_ + static_cast<byte_pos>(source_.size()),
+            }
+        );
     }
 
-    source_manager const& sources_;       ///< 源文件管理器。
-    file_id file_{};                      ///< 当前正在预处理的文件编号。
-    byte_pos file_start_{};               ///< 当前文件在全局地址空间中的起点。
-    std::string_view source_;             ///< 原始源码只读视图。
-    std::string normalized_;              ///< 正在构建的规范化文本，初始化为源码副本。
-    std::vector<preprocess_diagnostic> issues_;///< 已记录的诊断列表。
-    std::size_t index_{};                 ///< 当前扫描偏移（文件内）。
+    source_manager const& sources_; ///< 源文件管理器。
+    file_id file_{}; ///< 当前正在预处理的文件编号。
+    byte_pos file_start_{}; ///< 当前文件在全局地址空间中的起点。
+    std::string_view source_; ///< 原始源码只读视图。
+    std::string normalized_; ///< 正在构建的规范化文本，初始化为源码副本。
+    diagnostic_collector diagnostics_; ///< 已记录的诊断列表。
+    std::size_t index_{}; ///< 当前扫描偏移（文件内）。
 };
 
 /// @brief 预处理指定文件，剥离注释并收集结构性问题。
@@ -187,5 +180,5 @@ private:
 /// @return 规范化文本与问题列表。
 export auto preprocess(source_manager const& sources, file_id file) -> preprocessed_file
 {
-    return preprocessor{ sources, file }.run();
+    return preprocessor{ sources,file }.run();
 }
