@@ -4,9 +4,8 @@ target_sources(preprocessor
     PUBLIC
         FILE_SET CXX_MODULES
         FILES
-            diagnostic/diagnostic.cppm
-            preprocessed/preprocessed.cppm
-            scanner/scanner.cppm
+            diagnostic.cppm
+            preprocessed.cppm
             preprocessor.cppm
 )
 

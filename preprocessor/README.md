@@ -4,14 +4,13 @@
 
 ## 实现与设计
 
-- `diagnostic/` 放预处理阶段的诊断类型。
-- `preprocessed/` 放预处理产物结构。
-- `scanner/` 放预处理扫描逻辑。
+- `diagnostic.cppm` 放预处理阶段的诊断类型。
+- `preprocessed.cppm` 放预处理产物结构。
+- `preprocessor.cppm` 放预处理扫描逻辑和对外 `preprocess` 函数。
 - `docs/` 放设计说明文档。
-- `preprocessor.cppm` 是入口模块，它重新导出 `diagnostic`、`preprocessed`、`scanner` 三个子模块。
-- `diagnostic/diagnostic.cppm` 定义 `preprocess_diagnostic_kind` 与 `preprocess_diagnostic`，并提供 `to_string`；同时导出兼容别名 `preprocess_issue_kind` / `preprocess_issue`。
-- `preprocessed/preprocessed.cppm` 定义 `preprocessed_file` 结构和按偏移查询诊断的方法。
-- `scanner/scanner.cppm` 是核心扫描器实现：按顺序跳过引号字面量并把注释位置替换为空格，同时原样保留换行。
+- `preprocessor.cppm` 是入口模块，它重新导出 `diagnostic` 与 `preprocessed` 两个类型模块，并直接实现核心扫描器：按顺序跳过引号字面量并把注释位置替换为空格，同时原样保留换行。
+- `diagnostic.cppm` 定义 `preprocess_diagnostic_kind` 与 `preprocess_diagnostic`，并提供 `to_string`；同时导出兼容别名 `preprocess_issue_kind` / `preprocess_issue`。
+- `preprocessed.cppm` 定义 `preprocessed_file` 结构和按偏移查询诊断的方法。
 - 规范化文本与原始源码长度一致，后续阶段可以直接复用原始偏移进行诊断定位。
 - 未闭合的块注释不会中止扫描；会追加一条 `unterminated_block_comment` 问题，供词法阶段重放为 `invalid` token。
 
@@ -34,16 +33,12 @@ import preprocessor;
   - `normalized_text`：规范化后的源码副本，长度与原始源码一致
   - `issues`：按起始偏移排列的诊断列表
   - `issue_at(offset)`：在指定偏移查询诊断
-- `preprocessor_scanner`
-  - `preprocessor_scanner(sources, file)`：绑定源文件并准备扫描
-  - `run()`：执行一次完整的预处理扫描并返回 `preprocessed_file`
 - `preprocess(sources, file)`
-  - 便捷函数：等价于 `preprocessor_scanner{ sources, file }.run()`
+  - 执行完整的预处理扫描并返回 `preprocessed_file`
 
 ## 阅读顺序
 
 1. [preprocessor.cppm](/home/kkkzbh/code/cp/preprocessor/preprocessor.cppm)
-2. [diagnostic/diagnostic.cppm](/home/kkkzbh/code/cp/preprocessor/diagnostic/diagnostic.cppm)
-3. [preprocessed/preprocessed.cppm](/home/kkkzbh/code/cp/preprocessor/preprocessed/preprocessed.cppm)
-4. [scanner/scanner.cppm](/home/kkkzbh/code/cp/preprocessor/scanner/scanner.cppm)
-5. [docs/pipeline.md](/home/kkkzbh/code/cp/preprocessor/docs/pipeline.md)
+2. [diagnostic.cppm](/home/kkkzbh/code/cp/preprocessor/diagnostic.cppm)
+3. [preprocessed.cppm](/home/kkkzbh/code/cp/preprocessor/preprocessed.cppm)
+4. [docs/pipeline.md](/home/kkkzbh/code/cp/preprocessor/docs/pipeline.md)
