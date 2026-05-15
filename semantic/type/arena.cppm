@@ -1,4 +1,4 @@
-export module semantic.ty:arena;
+export module semantic.type:arena;
 
 import std;
 import :builtin;

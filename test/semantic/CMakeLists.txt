@@ -12,7 +12,6 @@ function(add_semantic_suite target_name source_name test_name)
     target_link_libraries(${target_name}
         PRIVATE
             semantic
-            codegen_llvm
             test_jsonl_support
             stdc++exp
     )

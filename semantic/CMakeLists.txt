@@ -4,29 +4,24 @@ target_sources(semantic
     PUBLIC
         FILE_SET CXX_MODULES
         FILES
-            ty/builtin.cppm
-            ty/ids.cppm
-            ty/nodes.cppm
-            ty/arena.cppm
-            ty/type.cppm
-            diagnostic/diagnostic.cppm
-            symbol/symbol.cppm
-            result/keys.cppm
-            result/result.cppm
-            check/concepts.cppm
-            check/keys.cppm
-            check/state.cppm
-            check/context.cppm
-            check/types.cppm
-            check/expressions.cppm
-            check/statements.cppm
-            check/analyzer.cppm
-            check/check.cppm
+            type/builtin.cppm
+            type/ids.cppm
+            type/nodes.cppm
+            type/arena.cppm
+            type/type.cppm
+            symbol.cppm
+            result.cppm
+            modules.cppm
+            types.cppm
+            expressions.cppm
+            statements.cppm
+            return_infer.cppm
             semantic.cppm
 )
 
 target_link_libraries(semantic
     PUBLIC
+        diagnostic
         parser
         stdc++exp
 )

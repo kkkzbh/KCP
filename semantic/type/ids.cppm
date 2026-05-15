@@ -1,4 +1,4 @@
-export module semantic.ty:ids;
+export module semantic.type:ids;
 
 import std;
 import :builtin;

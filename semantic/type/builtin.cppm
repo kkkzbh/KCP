@@ -1,4 +1,4 @@
-export module semantic.ty:builtin;
+export module semantic.type:builtin;
 
 import std;
 

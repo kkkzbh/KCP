@@ -1,4 +1,4 @@
-export module semantic.ty:nodes;
+export module semantic.type:nodes;
 
 import std;
 import :builtin;

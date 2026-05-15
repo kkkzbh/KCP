@@ -3,7 +3,7 @@ export module semantic.symbol;
 import std;
 import source;
 import parser.ast;
-import semantic.ty;
+import semantic.type;
 
 export struct [[nodiscard]] symbol_id
 {

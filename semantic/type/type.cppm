@@ -1,4 +1,4 @@
-export module semantic.ty;
+export module semantic.type;
 
 export import :builtin;
 export import :ids;

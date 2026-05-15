@@ -1,7 +1,8 @@
 import std;
+import preprocessor;
+import lexer;
 import parser;
 import semantic;
-import codegen.llvm;
 
 #include "assert.hpp"
 
@@ -19,7 +20,12 @@ auto read_design_example(std::string_view name) -> std::string
 auto parse_source(source_manager& sources, std::string_view name, std::string text) -> parse_result
 {
     auto file = sources.add_source(std::string{name}, std::move(text));
-    auto parsed = parse_translation_unit(sources, file);
+    auto preprocessed = preprocess(sources, file);
+    test_parser::assert_true(preprocessed.diagnostics.empty(),
+        std::format("{} should preprocess before semantic analysis", name));
+    auto lexical = lex(preprocessed);
+    test_parser::assert_true(lexical.diagnostics.empty(), std::format("{} should lex before semantic analysis", name));
+    auto parsed = parse_translation_unit(std::move(lexical.tokens));
     test_parser::assert_true(parsed.accepted, std::format("{} should parse before semantic analysis", name));
     return parsed;
 }
@@ -27,29 +33,39 @@ auto parse_source(source_manager& sources, std::string_view name, std::string te
 auto parse_rejected_source(source_manager& sources, std::string_view name, std::string text) -> parse_result
 {
     auto file = sources.add_source(std::string{name}, std::move(text));
-    auto parsed = parse_translation_unit(sources, file);
+    auto preprocessed = preprocess(sources, file);
+    test_parser::assert_true(preprocessed.diagnostics.empty(),
+        std::format("{} should preprocess before semantic rejection", name));
+    auto lexical = lex(preprocessed);
+    test_parser::assert_true(lexical.diagnostics.empty(), std::format("{} should lex before semantic rejection", name));
+    auto parsed = parse_translation_unit(std::move(lexical.tokens));
     test_parser::assert_true(parsed.accepted, std::format("{} should parse before semantic rejection", name));
     return parsed;
 }
 
-auto has_diagnostic(semantic_result const& result, semantic_diagnostic_code code) -> bool
+auto has_diagnostic(semantic_result const& result, diagnostic_kind kind) -> bool
 {
-    return std::ranges::contains(result.diagnostics, code, &semantic_diagnostic::code);
+    return std::ranges::contains(result.diagnostics, kind, &diagnostic::kind);
+}
+
+auto analyze_single(source_manager const& sources, parse_result const& parsed) -> semantic_result
+{
+    return analyze_semantics(sources, std::span<parse_result const>{ &parsed, 1uz });
 }
 
 auto analyze_one(std::string_view name, std::string text) -> semantic_result
 {
     auto sources = source_manager{};
     auto parsed = parse_rejected_source(sources, name, std::move(text));
-    return analyze_semantics(sources, parsed);
+    return analyze_single(sources, parsed);
 }
 
-auto expect_diagnostic(std::string_view name, std::string text, semantic_diagnostic_code code) -> void
+auto expect_diagnostic(std::string_view name, std::string text, diagnostic_kind kind) -> void
 {
     auto result = analyze_one(name, std::move(text));
     test_parser::assert_true(
-        has_diagnostic(result, code),
-        std::format("{} should report {}", name, diagnostic_name(code)));
+        has_diagnostic(result, kind),
+        std::format("{} should report {}", name, spec(kind).code));
 }
 
 auto function_return_type(
@@ -76,12 +92,14 @@ auto function_return_type(
 auto check_design_examples() -> void
 {
     auto sources = source_manager{};
-    auto math = parse_source(sources, "math.cp", read_design_example("math.cp"));
-    auto types = parse_source(sources, "types_demo.cp", read_design_example("types_demo.cp"));
-    auto flow = parse_source(sources, "flow_demo.cp", read_design_example("flow_demo.cp"));
-    auto main = parse_source(sources, "main.cp", read_design_example("main.cp"));
+    auto units = std::array {
+        parse_source(sources, "math.cp", read_design_example("math.cp")),
+        parse_source(sources, "types_demo.cp", read_design_example("types_demo.cp")),
+        parse_source(sources, "flow_demo.cp", read_design_example("flow_demo.cp")),
+        parse_source(sources, "main.cp", read_design_example("main.cp")),
+    };
 
-    auto checked = analyze_semantics(sources, math, types, flow, main);
+    auto checked = analyze_semantics(sources, std::span<parse_result const>{ units });
     test_parser::assert_true(checked.accepted(), "design examples should pass semantic analysis together");
 }
 
@@ -98,7 +116,7 @@ auto check_side_tables() -> void
     let value: i64 = 1;
     return value;
 })");
-    auto checked = analyze_semantics(sources, parsed);
+    auto checked = analyze_single(sources, parsed);
     test_parser::assert_true(checked.accepted(), "side table source should pass semantic analysis");
 
     auto const& unit = *parsed.root;
@@ -175,7 +193,7 @@ f()
 {
     return 1;
 })");
-        auto checked = analyze_semantics(sources, parsed);
+        auto checked = analyze_single(sources, parsed);
         test_parser::assert_true(checked.accepted(), "forward inferred return call should pass");
         test_parser::assert_true(
             function_return_type(sources, parsed, checked, "f") == semantic_type_ids::i32,
@@ -196,7 +214,7 @@ main()
 {
     return f();
 })");
-        auto checked = analyze_semantics(sources, parsed);
+        auto checked = analyze_single(sources, parsed);
         test_parser::assert_true(checked.accepted(), "ordered inferred return call should pass");
         test_parser::assert_true(
             function_return_type(sources, parsed, checked, "main") == semantic_type_ids::i32,
@@ -206,7 +224,7 @@ main()
     {
         auto sources = source_manager{};
         auto parsed = parse_source(sources, "unit_inferred_return.cp", "f() { return; }");
-        auto checked = analyze_semantics(sources, parsed);
+        auto checked = analyze_single(sources, parsed);
         test_parser::assert_true(checked.accepted(), "empty return should infer unit");
         test_parser::assert_true(
             function_return_type(sources, parsed, checked, "f") == semantic_type_ids::unit,
@@ -225,7 +243,7 @@ main()
     }
     return 2;
 })");
-        auto checked = analyze_semantics(sources, parsed);
+        auto checked = analyze_single(sources, parsed);
         test_parser::assert_true(checked.accepted(), "same-family returns should infer one return type");
         test_parser::assert_true(
             function_return_type(sources, parsed, checked, "f") == semantic_type_ids::i32,
@@ -235,7 +253,7 @@ main()
     {
         auto sources = source_manager{};
         auto parsed = parse_source(sources, "explicit_recursive_return.cp", "f() -> i32 { return f(); }");
-        auto checked = analyze_semantics(sources, parsed);
+        auto checked = analyze_single(sources, parsed);
         test_parser::assert_true(checked.accepted(), "explicit recursive return type should not need inference");
     }
 }
@@ -252,9 +270,66 @@ auto check_contiguous_unit_batch() -> void
     test_parser::assert_true(checked.accepted(), "contiguous parse_result batch should pass semantic analysis");
 }
 
+auto check_reference_pointer_types() -> void
+{
+    {
+        auto result = analyze_one(
+            "const_double_pointer_reference.cp",
+            R"(main() -> i32
+{
+    const first: i32 = 7;
+    const second: i32 = 11;
+    let p: i32 const* = &first;
+    let q: i32 const* = &second;
+    let pp: i32 const** = &p;
+    let qq: i32 const** = &q;
+    let rr: i32 const**& = pp;
+    rr = qq;
+    return **pp;
+})"
+        );
+        test_parser::assert_true(result.accepted(), "i32 const**& alias source should pass semantic analysis");
+    }
+
+    {
+        auto result = analyze_one(
+            "i64_triple_pointer_write.cp",
+            R"(main() -> i32
+{
+    let value: i64 = 9;
+    let p: i64* = &value;
+    let pp: i64** = &p;
+    let ppp: i64*** = &pp;
+    ***ppp = 33;
+    ***ppp += 4;
+    return i32(value);
+})"
+        );
+        test_parser::assert_true(result.accepted(), "i64*** read/write source should pass semantic analysis");
+    }
+
+    {
+        auto result = analyze_one(
+            "i64_pointer_reference_alias.cp",
+            R"(main() -> i32
+{
+    let first: i64 = 5;
+    let second: i64 = 11;
+    let pointer: i64* = &first;
+    let alias: i64*& = pointer;
+    alias = &second;
+    *alias = 20;
+    *pointer += 2;
+    return i32(second);
+})"
+        );
+        test_parser::assert_true(result.accepted(), "i64*& alias source should pass semantic analysis");
+    }
+}
+
 auto check_negative_cases() -> void
 {
-    using enum semantic_diagnostic_code;
+    using enum diagnostic_kind;
     expect_diagnostic("mixed_array.cp", "main() { let value = [1, 2.0]; }", heterogeneous_aggregate);
     expect_diagnostic("empty_array.cp", "main() { let value = []; }", empty_aggregate_without_context);
     expect_diagnostic("short_array.cp", "main() { let value: array<i32,2> = [1]; }", aggregate_length_mismatch);
@@ -267,6 +342,23 @@ auto check_negative_cases() -> void
         "main() { const value = 1; let pointer: i32 const* = &value; *pointer = 2; }",
         assign_to_const
     );
+    expect_diagnostic (
+        "const_double_pointer_reference_assign.cp",
+        "main() { const value = 1; let p: i32 const* = &value; let pp: i32 const** = &p; let rr: i32 const**& = pp; **rr = 2; }",
+        assign_to_const
+    );
+    expect_diagnostic (
+        "const_pointer_reference_compound_assign.cp",
+        "main() { const value: i64 = 1; let pointer: i64 const* = &value; let alias: i64 const*& = pointer; *alias += 2; }",
+        assign_to_const
+    );
+    expect_diagnostic (
+        "pointer_reference_compound_assign.cp",
+        "main() { let first: i64 = 1; let second: i64 = 2; let pointer: i64* = &first; let other: i64* = &second; let alias: i64*& = pointer; alias += other; }",
+        invalid_operator
+    );
+    expect_diagnostic("float_remainder.cp", "main() { let value = 5.0 % 2.0; }", invalid_operator);
+    expect_diagnostic("float_remainder_assign.cp", "main() { let value = 5.0; value %= 2.0; }", invalid_operator);
     expect_diagnostic("bad_condition.cp", "main() { if(1) { return; } }", condition_not_bool);
     expect_diagnostic("bad_return.cp", "main() -> i32 { return true; }", return_type_mismatch);
     expect_diagnostic (
@@ -285,22 +377,6 @@ auto check_negative_cases() -> void
     expect_diagnostic("bad_builtin_arg.cp", "main() { let value: i32<u8> = 1; }", invalid_type_argument);
 }
 
-auto check_llvm_codegen() -> void
-{
-    auto sources = source_manager{};
-    auto parsed = parse_source(
-        sources,
-        "llvm.cp",
-        R"(answer() -> i32
-{
-    return 42;
-})");
-    auto checked = analyze_semantics(sources, parsed);
-    test_parser::assert_true(checked.accepted(), "LLVM smoke source should pass semantic analysis");
-    auto emitted = emit_llvm_ir(sources, parsed, checked);
-    test_parser::assert_true(emitted.verified, emitted.error.empty() ? "LLVM module should verify" : emitted.error);
-    test_parser::assert_true(emitted.ir.contains("@answer"), "LLVM IR should contain the function symbol");
-}
 } // namespace
 
 auto main() -> int
@@ -310,7 +386,7 @@ auto main() -> int
     check_fixed_type_ids();
     check_inferred_return_types();
     check_contiguous_unit_batch();
+    check_reference_pointer_types();
     check_negative_cases();
-    check_llvm_codegen();
     return 0;
 }
