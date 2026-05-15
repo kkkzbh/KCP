@@ -1,6 +1,46 @@
+# IDE state
 .idea/
+.vscode/
+*.iml
+
+# CMake/Ninja build trees and generated files
 build/
-build-clion/
-build-clion-plugin-native/
-cmake-build-debug/
+build-*/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+CTestTestfile.cmake
+DartConfiguration.tcl
+Testing/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+.ninja_deps
+.ninja_log
+build.ninja
+rules.ninja
+
+# Native build outputs
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.o
+*.obj
+*.lo
+*.la
+*.bmi
+*.gcm
+*.modmap
+*.ddi
+*.ddi.d
+*.ddi.i
+
+# Plugin/tool caches
+clion-plugin/.gradle/
+clion-plugin/.intellijPlatform/
+clion-plugin/build/
+
+# Local scratch material
 教材ppt/
