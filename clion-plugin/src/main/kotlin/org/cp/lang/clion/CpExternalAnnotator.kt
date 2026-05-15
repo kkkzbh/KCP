@@ -7,10 +7,9 @@ import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiFile
 
-class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, List<CpHelperDiagnostic>>() {
+class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, CpInspectionResult>() {
     data class Request(
-        val filename: String,
-        val text: String,
+        val inspection: CpInspectionRequest,
     )
 
     override fun collectInformation(file: PsiFile): Request? = buildRequest(file, file.text)
@@ -18,16 +17,20 @@ class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, List<
     override fun collectInformation(file: PsiFile, editor: Editor, hasErrors: Boolean): Request? =
         buildRequest(file, editor.document.text)
 
-    override fun doAnnotate(collectedInfo: Request?): List<CpHelperDiagnostic> =
-        collectedInfo?.let { CpHelperRunner.analyze(it.filename, it.text) }.orEmpty()
+    override fun doAnnotate(collectedInfo: Request?): CpInspectionResult =
+        collectedInfo?.let { CpHelperRunner.inspect(it.inspection) } ?: CpInspectionResult(
+            accepted = false,
+            diagnostics = emptyList(),
+            highlights = emptyList(),
+        )
 
-    override fun apply(file: PsiFile, annotationResult: List<CpHelperDiagnostic>?, holder: AnnotationHolder) {
-        if (annotationResult.isNullOrEmpty()) {
+    override fun apply(file: PsiFile, annotationResult: CpInspectionResult?, holder: AnnotationHolder) {
+        if (annotationResult == null) {
             return
         }
 
         val textLength = file.textLength
-        for (diagnostic in annotationResult) {
+        for (diagnostic in annotationResult.diagnostics) {
             val start = diagnostic.startOffset.coerceIn(0, textLength)
             val end = diagnostic.endOffset.coerceIn(start, textLength).let { boundedEnd ->
                 when {
@@ -50,13 +53,6 @@ class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, List<
     }
 
     private fun buildRequest(file: PsiFile, text: String): Request? {
-        if (file.language != CpLanguage) {
-            return null
-        }
-
-        return Request(
-            filename = file.virtualFile?.name ?: file.name,
-            text = text,
-        )
+        return CpProjectSnapshotCollector.collect(file, text)?.let { Request(it) }
     }
 }

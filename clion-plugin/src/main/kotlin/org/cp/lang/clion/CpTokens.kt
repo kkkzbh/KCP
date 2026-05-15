@@ -93,6 +93,22 @@ object CpTypes {
     )
 
     @JvmField
+    val CONTROL_KEYWORD_TOKENS: TokenSet = TokenSet.create(
+        KW_IF, KW_ELSE, KW_WHILE, KW_DO, KW_FOR, KW_BREAK, KW_CONTINUE, KW_RETURN,
+    )
+
+    @JvmField
+    val DECLARATION_KEYWORD_TOKENS: TokenSet = TokenSet.create(
+        KW_LET, KW_CONST, KW_STRUCT, KW_IMPL, KW_TRAIT,
+    )
+
+    @JvmField
+    val MODULE_KEYWORD_TOKENS: TokenSet = TokenSet.create(KW_IMPORT, KW_EXPORT, KW_MODULE)
+
+    @JvmField
+    val BOOLEAN_LITERAL_TOKENS: TokenSet = TokenSet.create(KW_TRUE, KW_FALSE)
+
+    @JvmField
     val COMMENT_TOKENS: TokenSet = TokenSet.create(LINE_COMMENT, BLOCK_COMMENT)
 
     @JvmField
@@ -106,6 +122,21 @@ object CpTypes {
         GREATER, GREATER_EQUAL, AMP, AMP_EQUAL, PIPE, PIPE_EQUAL, CARET, CARET_EQUAL, TILDE,
         LESS_LESS, LESS_LESS_EQUAL, GREATER_GREATER, GREATER_GREATER_EQUAL, PLUS_PLUS,
         MINUS_MINUS, QUESTION,
+    )
+
+    @JvmField
+    val OPERATOR_TOKENS: TokenSet = TokenSet.create(
+        ARROW, PLUS, PLUS_EQUAL, MINUS, MINUS_EQUAL, STAR, STAR_EQUAL, SLASH, SLASH_EQUAL,
+        PERCENT, PERCENT_EQUAL, EQUAL, EQUAL_EQUAL, BANG_EQUAL, LESS, LESS_EQUAL, GREATER,
+        GREATER_EQUAL, AMP, AMP_EQUAL, PIPE, PIPE_EQUAL, CARET, CARET_EQUAL, TILDE, LESS_LESS,
+        LESS_LESS_EQUAL, GREATER_GREATER, GREATER_GREATER_EQUAL, PLUS_PLUS, MINUS_MINUS,
+        QUESTION, KW_AS, KW_AND, KW_OR, KW_NOT,
+    )
+
+    @JvmField
+    val PUNCTUATION_TOKENS: TokenSet = TokenSet.create(
+        L_PAREN, R_PAREN, L_BRACE, R_BRACE, L_BRACKET, R_BRACKET, COMMA, SEMICOLON,
+        COLON, COLON_COLON, DOT,
     )
 
     private val keywordMap: Map<String, IElementType> = mapOf(

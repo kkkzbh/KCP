@@ -10,6 +10,27 @@ auto contains(std::string_view haystack, std::string_view needle) -> bool
     return haystack.find(needle) != std::string_view::npos;
 }
 
+auto has_diagnostic(
+    cp_lexer_helper::inspect_result const& result,
+    std::string_view stage,
+    std::string_view code
+) -> bool
+{
+    return std::ranges::any_of(result.diagnostics, [&](auto const& diagnostic) {
+        return diagnostic.stage == stage and diagnostic.code == code;
+    });
+}
+
+auto has_highlight(
+    cp_lexer_helper::inspect_result const& result,
+    std::string_view category
+) -> bool
+{
+    return std::ranges::any_of(result.highlights, [&](auto const& highlight) {
+        return highlight.category == category;
+    });
+}
+
 } // namespace
 
 auto main() -> int
@@ -82,6 +103,79 @@ auto main() -> int
     assert_true(contains(tokens_json, "\"startOfLine\":true"),
         "token json should include token flags");
 
+    auto const multi_file = cp_lexer_helper::inspect(cp_lexer_helper::inspect_request {
+        .active_file = "main.cp",
+        .files = {
+            cp_lexer_helper::source_file_record {
+                "math.cp",
+                R"(export module math;
+
+export add(a: i32, b: i32) -> i32
+{
+    return a + b;
+})",
+            },
+            cp_lexer_helper::source_file_record {
+                "main.cp",
+                R"(import math;
+
+main() -> i32
+{
+    return add(1, 2);
+})",
+            },
+        },
+    });
+    assert_true(multi_file.accepted, "multi-file inspect should pass import/export semantic analysis");
+    assert_true(multi_file.diagnostics.empty(), "valid multi-file inspect should not return diagnostics");
+    assert_true(has_highlight(multi_file, "import.name"), "inspect should highlight import module names");
+    assert_true(has_highlight(multi_file, "function.call"), "inspect should highlight function calls");
+    assert_true(has_highlight(multi_file, "type"), "inspect should highlight type names");
+
+    auto const unknown_module = cp_lexer_helper::inspect(cp_lexer_helper::inspect_request {
+        .active_file = "unknown.cp",
+        .files = {
+            cp_lexer_helper::source_file_record {
+                "unknown.cp",
+                "import missing.core;\nmain() { return; }\n",
+            },
+        },
+    });
+    assert_true(not unknown_module.accepted, "unknown module inspect should fail semantic analysis");
+    assert_true(has_diagnostic(unknown_module, "semantic", "unknown_module"),
+        "unknown module inspect should report a semantic diagnostic");
+
+    auto const parser_error = cp_lexer_helper::inspect(cp_lexer_helper::inspect_request {
+        .active_file = "parser_error.cp",
+        .files = {
+            cp_lexer_helper::source_file_record {
+                "parser_error.cp",
+                "main() { let value = ; return missing; }\n",
+            },
+        },
+    });
+    assert_true(not parser_error.accepted, "parser error inspect should fail");
+    assert_true(has_diagnostic(parser_error, "parser", "expected_expression"),
+        "parser error inspect should report parser diagnostics");
+    assert_true(not has_diagnostic(parser_error, "semantic", "unknown_name"),
+        "parser error inspect should not run semantic analysis");
+
+    auto const active_only = cp_lexer_helper::inspect(cp_lexer_helper::inspect_request {
+        .active_file = "active.cp",
+        .files = {
+            cp_lexer_helper::source_file_record {
+                "active.cp",
+                "main() { return; }\n",
+            },
+            cp_lexer_helper::source_file_record {
+                "broken.cp",
+                "main() { return @; }\n",
+            },
+        },
+    });
+    assert_true(not active_only.accepted, "inactive file syntax errors should make project inspect fail");
+    assert_true(active_only.diagnostics.empty(), "inspect should return only active-file diagnostics");
+
     auto analyze_in = std::istringstream{"let bad = @;"};
     auto analyze_out = std::ostringstream{};
     auto analyze_err = std::ostringstream{};
@@ -97,6 +191,26 @@ auto main() -> int
     assert_true(analyze_err.view().empty(), "analyze cli should not write stderr on success");
     assert_true(contains(analyze_out.view(), "\"code\":\"invalid_character\""),
         "analyze cli should emit diagnostic json");
+
+    auto inspect_in = std::istringstream{
+        R"({"activeFile":"cli.cp","files":[{"path":"cli.cp","text":"main() { return; }\n"}]})"
+    };
+    auto inspect_out = std::ostringstream{};
+    auto inspect_err = std::ostringstream{};
+    auto const inspect_args = std::array {
+        "inspect"sv, "--stdin"sv, "--format"sv, "json"sv,
+    };
+    auto const inspect_code = cp_lexer_helper::run_cli (
+        inspect_args,
+        inspect_in,
+        inspect_out,
+        inspect_err);
+    assert_true(inspect_code == 0, "inspect cli should succeed");
+    assert_true(inspect_err.view().empty(), "inspect cli should not write stderr on success");
+    assert_true(contains(inspect_out.view(), "\"accepted\":true"),
+        "inspect cli should emit inspection json");
+    assert_true(contains(inspect_out.view(), "\"highlights\""),
+        "inspect cli should emit highlight json");
 
     auto tokens_in = std::istringstream{"let value = 0;"};
     auto tokens_out = std::ostringstream{};

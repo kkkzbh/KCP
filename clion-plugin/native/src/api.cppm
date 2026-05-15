@@ -1,14 +1,40 @@
+module;
+
+#include <nlohmann/json.hpp>
+
 export module cp_lexer_helper;
 
 import std;
 import source;
 import preprocessor;
 import lexer;
+import parser;
+import parser.ast;
+import semantic;
 
 export namespace cp_lexer_helper {
 
+struct source_file_record
+{
+    source_file_record() = default;
+
+    source_file_record(std::string path, std::string text) :
+        path(std::move(path)),
+        text(std::move(text)) {}
+
+    std::string path;
+    std::string text;
+};
+
+struct inspect_request
+{
+    std::string active_file;
+    std::vector<source_file_record> files;
+};
+
 struct diagnostic_record
 {
+    std::string stage;
     std::string code;
     std::string message;
     std::string severity;
@@ -30,17 +56,31 @@ struct token_record
     bool recovered{};
 };
 
-[[nodiscard]]
+struct highlight_record
+{
+    std::string category;
+    std::size_t start_offset{};
+    std::size_t end_offset{};
+};
+
+struct inspect_result
+{
+    bool accepted{};
+    std::vector<diagnostic_record> diagnostics;
+    std::vector<highlight_record> highlights;
+};
+
 auto analyze(std::string_view filename, std::string_view text) -> std::vector<diagnostic_record>;
 
-[[nodiscard]]
 auto tokenize(std::string_view filename, std::string_view text) -> std::vector<token_record>;
 
-[[nodiscard]]
+auto inspect(inspect_request request) -> inspect_result;
+
 auto diagnostics_to_json(std::span<diagnostic_record const> diagnostics) -> std::string;
 
-[[nodiscard]]
 auto tokens_to_json(std::span<token_record const> tokens) -> std::string;
+
+auto inspect_to_json(inspect_result const& result) -> std::string;
 
 auto run_cli(std::span<std::string_view const> args, std::istream& input, std::ostream& output,
              std::ostream& error) -> int;
@@ -82,22 +122,376 @@ auto bool_json(bool value) -> std::string_view
     return value ? "true" : "false";
 }
 
+auto diagnostic_stage_name(diagnostic_kind kind) -> std::string
+{
+    return std::string{ stage_name(spec(kind).stage) };
+}
+
+auto make_diagnostic_record(
+    source_manager const& sources,
+    byte_pos file_start,
+    diagnostic const& value
+) -> diagnostic_record
+{
+    auto const position = sources.position(value.primary_span.start);
+    auto const info = spec(value.kind);
+    return diagnostic_record {
+        .stage = diagnostic_stage_name(value.kind),
+        .code = std::string{ info.code },
+        .message = value.message,
+        .severity = std::string{ severity_name(info.severity) },
+        .start_offset = value.primary_span.start - file_start,
+        .end_offset = value.primary_span.end - file_start,
+        .line = position.line,
+        .column = position.column,
+    };
+}
+
 auto append_diagnostic_record(
     std::vector<diagnostic_record>& records,
     source_manager const& sources,
     byte_pos file_start,
     diagnostic const& value) -> void
 {
-    auto const position = sources.position(value.primary_span.start);
-    auto const info = spec(value.kind);
-    records.emplace_back (
-        std::string{ info.code },
-        value.message,
-        std::string{ severity_name(info.severity) },
-        value.primary_span.start - file_start,
-        value.primary_span.end - file_start,
-        position.line,
-        position.column);
+    records.emplace_back(make_diagnostic_record(sources, file_start, value));
+}
+
+auto append_diagnostics(
+    std::vector<diagnostic>& output,
+    std::vector<diagnostic> const& input
+) -> void
+{
+    output.insert(output.end(), input.begin(), input.end());
+}
+
+auto span_file(source_manager const& sources, source_span span) -> file_id
+{
+    return sources.locate(span.start).first;
+}
+
+auto span_local_start(source_manager const& sources, source_span span) -> std::size_t
+{
+    return sources.locate(span.start).second;
+}
+
+auto span_local_end(source_manager const& sources, source_span span) -> std::size_t
+{
+    return sources.locate(span.end).second;
+}
+
+auto in_file(source_manager const& sources, source_span span, file_id file) -> bool
+{
+    return span_file(sources, span) == file;
+}
+
+struct highlight_collector
+{
+    highlight_collector(source_manager const& sources, file_id active_file) :
+        sources(sources),
+        active_file(active_file) {}
+
+    auto add(std::string_view category, source_span span) -> void
+    {
+        if(span.start == span.end or not in_file(sources, span, active_file)) {
+            return;
+        }
+
+        auto const item = highlight_record {
+            .category = std::string{ category },
+            .start_offset = span_local_start(sources, span),
+            .end_offset = span_local_end(sources, span),
+        };
+        auto const key = std::tuple{ item.category, item.start_offset, item.end_offset };
+        if(seen.emplace(key).second) {
+            highlights.emplace_back(item);
+        }
+    }
+
+    source_manager const& sources;
+    file_id active_file{};
+    std::set<std::tuple<std::string, std::size_t, std::size_t>> seen{};
+    std::vector<highlight_record> highlights{};
+};
+
+auto is_operator_token(token_kind kind) -> bool
+{
+    using enum token_kind;
+    switch(kind) {
+        case plus:
+        case plus_equal:
+        case minus:
+        case minus_equal:
+        case star:
+        case star_equal:
+        case slash:
+        case slash_equal:
+        case percent:
+        case percent_equal:
+        case equal:
+        case equal_equal:
+        case bang_equal:
+        case less:
+        case less_equal:
+        case greater:
+        case greater_equal:
+        case amp:
+        case amp_equal:
+        case pipe:
+        case pipe_equal:
+        case caret:
+        case caret_equal:
+        case tilde:
+        case less_less:
+        case less_less_equal:
+        case greater_greater:
+        case greater_greater_equal:
+        case plus_plus:
+        case minus_minus:
+        case question:
+        case kw_as:
+        case kw_and:
+        case kw_or:
+        case kw_not:
+            return true;
+        default:
+            return false;
+    }
+}
+
+auto is_literal_token(token_kind kind) -> bool
+{
+    using enum token_kind;
+    return (
+        kind == integer_literal
+        or kind == float_literal
+        or kind == char_literal
+        or kind == string_literal
+        or kind == kw_true
+        or kind == kw_false
+    );
+}
+
+auto add_token_highlights(
+    highlight_collector& collector,
+    std::span<token const> tokens
+) -> void
+{
+    for(auto const& token : tokens) {
+        if(is_literal_token(token.kind)) {
+            collector.add("literal", token.span);
+            continue;
+        }
+        if(is_operator_token(token.kind)) {
+            collector.add("operator", token.span);
+        }
+    }
+}
+
+auto collect_type_highlights(highlight_collector& collector, ast_arena const& ast, type_id id) -> void
+{
+    auto const& type = ast.type(id);
+    collector.add("type", type.name);
+    for(auto const& argument : type.arguments) {
+        std::visit(overloaded {
+            [&](type_argument_type_syntax const& node) {
+                collect_type_highlights(collector, ast, node.type);
+            },
+            [&](type_argument_literal_syntax const& node) {
+                collector.add("literal", node.literal);
+            },
+        }, argument);
+    }
+}
+
+auto collect_expression_highlights(
+    highlight_collector& collector,
+    ast_arena const& ast,
+    semantic_result const* checked,
+    std::size_t unit_index,
+    expr_id id,
+    bool call_callee = false
+) -> void
+{
+    auto const& expression = ast.expression(id);
+    std::visit(overloaded {
+        [&](name_expr_syntax const& node) {
+            if(call_callee) {
+                collector.add("function.call", node.name);
+                return;
+            }
+
+            if(checked != nullptr) {
+                auto const symbol = checked->resolved_name(unit_index, id);
+                if(symbol.valid() and symbol.value < checked->symbols.size()) {
+                    switch(checked->symbols[symbol.value].kind) {
+                        case symbol_kind::function:
+                            collector.add("function.reference", node.name);
+                            return;
+                        case symbol_kind::parameter:
+                            collector.add("parameter.reference", node.name);
+                            return;
+                        case symbol_kind::local:
+                            collector.add("local.reference", node.name);
+                            return;
+                    }
+                }
+            }
+
+            collector.add("identifier.reference", node.name);
+        },
+        [&](literal_expr_syntax const& node) {
+            collector.add("literal", node.full_span);
+        },
+        [&](unary_expr_syntax const& node) {
+            collect_expression_highlights(collector, ast, checked, unit_index, node.operand);
+        },
+        [&](binary_expr_syntax const& node) {
+            collect_expression_highlights(collector, ast, checked, unit_index, node.left);
+            collect_expression_highlights(collector, ast, checked, unit_index, node.right);
+        },
+        [&](assignment_expr_syntax const& node) {
+            collect_expression_highlights(collector, ast, checked, unit_index, node.left);
+            collect_expression_highlights(collector, ast, checked, unit_index, node.right);
+        },
+        [&](call_expr_syntax const& node) {
+            collect_expression_highlights(collector, ast, checked, unit_index, node.callee, true);
+            for(auto argument : node.arguments) {
+                collect_expression_highlights(collector, ast, checked, unit_index, argument);
+            }
+        },
+        [&](cast_expr_syntax const& node) {
+            collect_expression_highlights(collector, ast, checked, unit_index, node.operand);
+            collect_type_highlights(collector, ast, node.type);
+        },
+        [&](array_literal_expr_syntax const& node) {
+            for(auto element : node.elements) {
+                collect_expression_highlights(collector, ast, checked, unit_index, element);
+            }
+        },
+        [&](sequence_literal_expr_syntax const& node) {
+            for(auto element : node.elements) {
+                collect_expression_highlights(collector, ast, checked, unit_index, element);
+            }
+        },
+        [&](tuple_literal_expr_syntax const& node) {
+            for(auto element : node.elements) {
+                collect_expression_highlights(collector, ast, checked, unit_index, element);
+            }
+        },
+        [&](grouped_expr_syntax const& node) {
+            collect_expression_highlights(collector, ast, checked, unit_index, node.expression);
+        },
+    }, expression);
+}
+
+auto collect_statement_highlights(
+    highlight_collector& collector,
+    ast_arena const& ast,
+    semantic_result const* checked,
+    std::size_t unit_index,
+    stmt_id id
+) -> void
+{
+    auto const& statement = ast.statement(id);
+    std::visit(overloaded {
+        [&](block_statement_syntax const& node) {
+            for(auto child : node.statements) {
+                collect_statement_highlights(collector, ast, checked, unit_index, child);
+            }
+        },
+        [&](declaration_statement_syntax const& node) {
+            collector.add("local.declaration", node.name);
+            if(node.declared_type) {
+                collect_type_highlights(collector, ast, *node.declared_type);
+            }
+            collect_expression_highlights(collector, ast, checked, unit_index, node.initializer);
+        },
+        [&](if_statement_syntax const& node) {
+            collect_expression_highlights(collector, ast, checked, unit_index, node.condition);
+            collect_statement_highlights(collector, ast, checked, unit_index, node.then_branch);
+            if(node.else_branch) {
+                collect_statement_highlights(collector, ast, checked, unit_index, *node.else_branch);
+            }
+        },
+        [&](while_statement_syntax const& node) {
+            collect_expression_highlights(collector, ast, checked, unit_index, node.condition);
+            collect_statement_highlights(collector, ast, checked, unit_index, node.body);
+        },
+        [&](do_while_statement_syntax const& node) {
+            collect_statement_highlights(collector, ast, checked, unit_index, node.body);
+            collect_expression_highlights(collector, ast, checked, unit_index, node.condition);
+        },
+        [&](for_statement_syntax const& node) {
+            collector.add("local.declaration", node.name);
+            if(node.label) {
+                collector.add("loop.label", *node.label);
+            }
+            collect_expression_highlights(collector, ast, checked, unit_index, node.range);
+            collect_statement_highlights(collector, ast, checked, unit_index, node.body);
+        },
+        [&](break_statement_syntax const& node) {
+            if(node.label) {
+                collector.add("loop.label.reference", *node.label);
+            }
+        },
+        [&](continue_statement_syntax const& node) {
+            if(node.label) {
+                collector.add("loop.label.reference", *node.label);
+            }
+        },
+        [&](return_statement_syntax const& node) {
+            if(node.value) {
+                collect_expression_highlights(collector, ast, checked, unit_index, *node.value);
+            }
+        },
+        [&](expression_statement_syntax const& node) {
+            collect_expression_highlights(collector, ast, checked, unit_index, node.expression);
+        },
+    }, statement);
+}
+
+auto collect_module_name_highlights(
+    highlight_collector& collector,
+    module_name_syntax const& name,
+    std::string_view category
+) -> void
+{
+    for(auto component : name.components) {
+        collector.add(category, component);
+    }
+}
+
+auto collect_ast_highlights(
+    highlight_collector& collector,
+    parse_result const& parsed,
+    semantic_result const* checked,
+    std::size_t unit_index
+) -> void
+{
+    if(not parsed.root) {
+        return;
+    }
+
+    auto const& root = *parsed.root;
+    if(root.module_header) {
+        collect_module_name_highlights(collector, root.module_header->name, "module.name");
+    }
+    for(auto const& import : root.imports) {
+        collect_module_name_highlights(collector, import.name, "import.name");
+    }
+
+    for(auto id : root.functions) {
+        auto const& function = parsed.ast.function(id);
+        collector.add("function.declaration", function.name);
+        for(auto const& parameter : function.parameters) {
+            collector.add("parameter.declaration", parameter.name);
+            collect_type_highlights(collector, parsed.ast, parameter.type);
+        }
+        if(function.return_type) {
+            collect_type_highlights(collector, parsed.ast, *function.return_type);
+        }
+        collect_statement_highlights(collector, parsed.ast, checked, unit_index, function.body);
+    }
 }
 
 auto read_all(std::istream& input) -> std::string
@@ -107,9 +501,45 @@ auto read_all(std::istream& input) -> std::string
         std::istreambuf_iterator<char>()};
 }
 
+auto parse_inspect_request(std::string_view text, std::ostream& error) -> std::optional<inspect_request>
+{
+    try {
+        auto const payload = nlohmann::ordered_json::parse(text);
+        auto request = inspect_request{};
+        request.active_file = payload.value("activeFile", std::string{});
+
+        auto const files = payload.find("files");
+        if(files == payload.end() or not files->is_array()) {
+            error << "inspect request must contain files array\n";
+            return std::nullopt;
+        }
+
+        for(auto const& file : *files) {
+            if(not file.is_object()) {
+                error << "inspect file entry must be an object\n";
+                return std::nullopt;
+            }
+            request.files.emplace_back(
+                file.value("path", std::string{}),
+                file.value("text", std::string{})
+            );
+        }
+
+        if(request.active_file.empty() or request.files.empty()) {
+            error << "inspect request must contain activeFile and at least one file\n";
+            return std::nullopt;
+        }
+
+        return request;
+    } catch(nlohmann::json::exception const& exception) {
+        error << "invalid inspect json: " << exception.what() << '\n';
+        return std::nullopt;
+    }
+}
+
 auto usage(std::ostream& error) -> void
 {
-    error << "usage: cp-lexer-helper <analyze|tokens> --stdin --filename <name> --format json\n";
+    error << "usage: cp-lexer-helper <analyze|tokens|inspect> --stdin [--filename <name>] --format json\n";
 }
 
 struct cli_request
@@ -163,9 +593,16 @@ auto parse_cli(std::span<std::string_view const> args, std::ostream& error) -> s
         return std::nullopt;
     }
 
-    if((request.command != "analyze" and request.command != "tokens")
+    auto const known_command = (
+        request.command == "analyze"
+        or request.command == "tokens"
+        or request.command == "inspect"
+    );
+    auto const needs_filename = request.command != "inspect";
+
+    if(not known_command
        or not request.read_stdin
-       or request.filename.empty()
+       or (needs_filename and request.filename.empty())
        or not request.json) {
         usage(error);
         return std::nullopt;
@@ -222,6 +659,93 @@ auto tokenize(std::string_view filename, std::string_view text) -> std::vector<t
     return result;
 }
 
+auto inspect(inspect_request request) -> inspect_result
+{
+    auto sources = source_manager{};
+    auto file_ids = std::vector<file_id>{};
+    file_ids.reserve(request.files.size());
+
+    auto active_file = std::optional<file_id>{};
+    for(auto const& file : request.files) {
+        auto const id = sources.add_source(file.path, file.text);
+        if(file.path == request.active_file) {
+            active_file = id;
+        }
+        file_ids.emplace_back(id);
+    }
+
+    if(not active_file) {
+        active_file = file_ids.front();
+    }
+
+    auto all_diagnostics = std::vector<diagnostic>{};
+    auto parsed_units = std::vector<parse_result>{};
+    auto active_unit = std::optional<std::size_t>{};
+    auto active_tokens = std::vector<token>{};
+    auto frontend_ok = true;
+
+    for(auto index = 0uz; index < file_ids.size(); ++index) {
+        auto const file = file_ids[index];
+        auto preprocessed = preprocess(sources, file);
+        if(not preprocessed.diagnostics.empty()) {
+            frontend_ok = false;
+            append_diagnostics(all_diagnostics, preprocessed.diagnostics);
+            continue;
+        }
+
+        auto lexical = lex(preprocessed);
+        if(file == *active_file) {
+            active_tokens = lexical.tokens;
+        }
+        if(not lexical.diagnostics.empty()) {
+            frontend_ok = false;
+            append_diagnostics(all_diagnostics, lexical.diagnostics);
+            continue;
+        }
+
+        auto parsed = parse_translation_unit(std::move(lexical.tokens));
+        if(not parsed.accepted) {
+            frontend_ok = false;
+        }
+        append_diagnostics(all_diagnostics, parsed.diagnostics);
+
+        if(file == *active_file) {
+            active_unit = parsed_units.size();
+        }
+        parsed_units.emplace_back(std::move(parsed));
+    }
+
+    auto checked = std::optional<semantic_result>{};
+    if(frontend_ok and parsed_units.size() == request.files.size()) {
+        checked = analyze_semantics(
+            sources,
+            std::span<parse_result const>{ parsed_units.data(), parsed_units.size() }
+        );
+        append_diagnostics(all_diagnostics, checked->diagnostics);
+    }
+
+    auto const semantic_ok = checked ? checked->accepted() : frontend_ok;
+    auto result = inspect_result {
+        .accepted = frontend_ok and semantic_ok,
+    };
+
+    auto const active_start = sources.file_start(*active_file);
+    for(auto const& diagnostic : all_diagnostics) {
+        if(in_file(sources, diagnostic.primary_span, *active_file)) {
+            result.diagnostics.emplace_back(make_diagnostic_record(sources, active_start, diagnostic));
+        }
+    }
+
+    auto collector = highlight_collector{ sources, *active_file };
+    add_token_highlights(collector, active_tokens);
+    if(active_unit) {
+        auto const semantic = checked ? &*checked : nullptr;
+        collect_ast_highlights(collector, parsed_units[*active_unit], semantic, *active_unit);
+    }
+    result.highlights = std::move(collector.highlights);
+    return result;
+}
+
 auto diagnostics_to_json(std::span<diagnostic_record const> diagnostics) -> std::string
 {
     auto json = std::string{"["};
@@ -231,8 +755,9 @@ auto diagnostics_to_json(std::span<diagnostic_record const> diagnostics) -> std:
             json += ',';
         }
         json += std::format (
-            "{{\"code\":\"{}\",\"message\":\"{}\",\"severity\":\"{}\",\"startOffset\":{},\"endOffset\":{},"
+            "{{\"stage\":\"{}\",\"code\":\"{}\",\"message\":\"{}\",\"severity\":\"{}\",\"startOffset\":{},\"endOffset\":{},"
             "\"line\":{},\"column\":{}}}",
+            escape_json(diagnostic.stage),
             escape_json(diagnostic.code),
             escape_json(diagnostic.message),
             escape_json(diagnostic.severity),
@@ -269,6 +794,34 @@ auto tokens_to_json(std::span<token_record const> tokens) -> std::string
     return json;
 }
 
+auto inspect_to_json(inspect_result const& result) -> std::string
+{
+    auto payload = nlohmann::ordered_json{};
+    payload["accepted"] = result.accepted;
+    payload["diagnostics"] = nlohmann::ordered_json::array();
+    for(auto const& diagnostic : result.diagnostics) {
+        auto& item = payload["diagnostics"].emplace_back();
+        item["stage"] = diagnostic.stage;
+        item["code"] = diagnostic.code;
+        item["message"] = diagnostic.message;
+        item["severity"] = diagnostic.severity;
+        item["startOffset"] = diagnostic.start_offset;
+        item["endOffset"] = diagnostic.end_offset;
+        item["line"] = diagnostic.line;
+        item["column"] = diagnostic.column;
+    }
+
+    payload["highlights"] = nlohmann::ordered_json::array();
+    for(auto const& highlight : result.highlights) {
+        auto& item = payload["highlights"].emplace_back();
+        item["category"] = highlight.category;
+        item["startOffset"] = highlight.start_offset;
+        item["endOffset"] = highlight.end_offset;
+    }
+
+    return payload.dump();
+}
+
 auto run_cli(std::span<std::string_view const> args, std::istream& input, std::ostream& output,
              std::ostream& error) -> int
 {
@@ -278,6 +831,15 @@ auto run_cli(std::span<std::string_view const> args, std::istream& input, std::o
     }
 
     auto const text = read_all(input);
+    if(request->command == "inspect") {
+        auto parsed = parse_inspect_request(text, error);
+        if(not parsed) {
+            return 2;
+        }
+        output << inspect_to_json(inspect(std::move(*parsed)));
+        return 0;
+    }
+
     if(request->command == "analyze") {
         output << diagnostics_to_json(analyze(request->filename, text));
         return 0;

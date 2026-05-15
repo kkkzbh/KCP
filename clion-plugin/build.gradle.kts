@@ -57,8 +57,8 @@ intellijPlatform {
         name = providers.gradleProperty("pluginName")
         version = providers.gradleProperty("pluginVersion")
         description = """
-            Syntax highlighting and lexer diagnostics for the cp experimental language.
-            The editor lexer runs inside CLion and diagnostics are delegated to the native cp lexer helper.
+            Rich highlighting and parser/semantic diagnostics for the cp experimental language.
+            The editor lexer runs inside CLion and project-level frontend analysis is delegated to the native cp helper.
         """.trimIndent()
 
         ideaVersion {
@@ -73,8 +73,11 @@ val configureNativeHelper by tasks.registering(Exec::class) {
     description = "Configure the native cp lexer helper build."
 
     inputs.file(repoRoot.file("CMakeLists.txt"))
+    inputs.dir(repoRoot.dir("diagnostic"))
     inputs.dir(repoRoot.dir("lexer"))
+    inputs.dir(repoRoot.dir("parser"))
     inputs.dir(repoRoot.dir("preprocessor"))
+    inputs.dir(repoRoot.dir("semantic"))
     inputs.dir(repoRoot.dir("clion-plugin/native"))
     outputs.file(nativeBuildDir.file("CMakeCache.txt"))
 
@@ -94,6 +97,8 @@ val buildNativeHelper by tasks.registering(Exec::class) {
     dependsOn(configureNativeHelper)
     inputs.file(nativeBuildDir.file("CMakeCache.txt"))
     inputs.dir(repoRoot.dir("clion-plugin/native"))
+    inputs.dir(repoRoot.dir("parser"))
+    inputs.dir(repoRoot.dir("semantic"))
     outputs.file(nativeHelperPath)
 
     commandLine(

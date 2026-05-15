@@ -17,7 +17,7 @@ class CpLexerContractTest {
             repoRoot.resolve("design/examples/types_demo.cp"),
             repoRoot.resolve("test/lexer/cases/valid/trivia/block_comment.lex"),
             repoRoot.resolve("test/lexer/cases/valid/trivia/line_comment.lex"),
-            repoRoot.resolve("test/lexer/cases/invalid/comments/unterminated_block.lex"),
+            repoRoot.resolve("test/lexer/cases/invalid/misc/invalid_character.lex"),
             repoRoot.resolve("test/lexer/cases/invalid/numbers/invalid_suffix.lex"),
             repoRoot.resolve("test/lexer/cases/invalid/strings/unknown_escape.lex"),
         )

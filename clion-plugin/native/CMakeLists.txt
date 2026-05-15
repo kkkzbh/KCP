@@ -22,7 +22,10 @@ target_link_libraries(cp_lexer_helper_lib
     PUBLIC
         diagnostic
         lexer
+        nlohmann_json::nlohmann_json
+        parser
         preprocessor
+        semantic
 )
 
 configure_cp_plugin_native_target(cp_lexer_helper_lib)

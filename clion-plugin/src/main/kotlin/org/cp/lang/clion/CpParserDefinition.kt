@@ -5,7 +5,6 @@ import com.intellij.extapi.psi.PsiFileBase
 import com.intellij.lang.ASTNode
 import com.intellij.lang.ParserDefinition
 import com.intellij.lang.PsiParser
-import com.intellij.lang.PsiBuilder
 import com.intellij.lexer.Lexer
 import com.intellij.openapi.project.Project
 import com.intellij.psi.FileViewProvider
@@ -37,17 +36,6 @@ class CpParserDefinition : ParserDefinition {
 
     private companion object {
         private val FILE = IFileElementType(CpLanguage)
-    }
-}
-
-class CpPsiParser : PsiParser {
-    override fun parse(root: com.intellij.psi.tree.IElementType, builder: PsiBuilder): ASTNode {
-        val marker = builder.mark()
-        while (!builder.eof()) {
-            builder.advanceLexer()
-        }
-        marker.done(root)
-        return builder.treeBuilt
     }
 }
 

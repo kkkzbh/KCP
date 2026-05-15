@@ -4,6 +4,7 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.util.SystemInfo
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.nio.charset.StandardCharsets
 import java.nio.file.Files
@@ -13,6 +14,7 @@ import java.util.concurrent.TimeUnit
 
 @Serializable
 data class CpHelperDiagnostic(
+    val stage: String = "",
     val code: String,
     val message: String,
     val severity: String,
@@ -20,6 +22,32 @@ data class CpHelperDiagnostic(
     val endOffset: Int,
     val line: Int,
     val column: Int,
+)
+
+@Serializable
+data class CpHelperHighlight(
+    val category: String,
+    val startOffset: Int,
+    val endOffset: Int,
+)
+
+@Serializable
+data class CpInspectionFile(
+    val path: String,
+    val text: String,
+)
+
+@Serializable
+data class CpInspectionRequest(
+    val activeFile: String,
+    val files: List<CpInspectionFile>,
+)
+
+@Serializable
+data class CpInspectionResult(
+    val accepted: Boolean,
+    val diagnostics: List<CpHelperDiagnostic>,
+    val highlights: List<CpHelperHighlight>,
 )
 
 @Serializable
@@ -39,7 +67,11 @@ object CpHelperRunner {
     private val json = Json { ignoreUnknownKeys = true }
 
     fun analyze(filename: String, text: String): List<CpHelperDiagnostic> =
-        runHelper("analyze", filename, text)?.let { payload ->
+        runHelper(
+            command = "analyze",
+            stdin = text,
+            filename = filename,
+        )?.let { payload ->
             val offsetMap = Utf8OffsetMap(text)
             json.decodeFromString(ListSerializer(CpHelperDiagnostic.serializer()), payload)
                 .map { diagnostic ->
@@ -56,7 +88,11 @@ object CpHelperRunner {
         }.orEmpty()
 
     fun tokens(filename: String, text: String): List<CpHelperToken> =
-        runHelper("tokens", filename, text)?.let { payload ->
+        runHelper(
+            command = "tokens",
+            stdin = text,
+            filename = filename,
+        )?.let { payload ->
             val offsetMap = Utf8OffsetMap(text)
             json.decodeFromString(ListSerializer(CpHelperToken.serializer()), payload)
                 .map { token ->
@@ -67,25 +103,62 @@ object CpHelperRunner {
                 }
         }.orEmpty()
 
-    private fun runHelper(command: String, filename: String, text: String): String? {
+    fun inspect(request: CpInspectionRequest): CpInspectionResult {
+        val activeText = request.files.firstOrNull { it.path == request.activeFile }?.text.orEmpty()
+        val offsetMap = Utf8OffsetMap(activeText)
+        val payload = json.encodeToString(request)
+        return runHelper(
+            command = "inspect",
+            stdin = payload,
+        )?.let { output ->
+            val decoded = json.decodeFromString(CpInspectionResult.serializer(), output)
+            decoded.copy(
+                diagnostics = decoded.diagnostics.map { diagnostic ->
+                    val startOffset = offsetMap.toCharOffset(diagnostic.startOffset)
+                    val endOffset = offsetMap.toCharOffset(diagnostic.endOffset)
+                    val (line, column) = offsetMap.lineAndColumn(startOffset)
+                    diagnostic.copy(
+                        startOffset = startOffset,
+                        endOffset = endOffset,
+                        line = line,
+                        column = column,
+                    )
+                },
+                highlights = decoded.highlights.map { highlight ->
+                    highlight.copy(
+                        startOffset = offsetMap.toCharOffset(highlight.startOffset),
+                        endOffset = offsetMap.toCharOffset(highlight.endOffset),
+                    )
+                },
+            )
+        } ?: CpInspectionResult(
+            accepted = false,
+            diagnostics = emptyList(),
+            highlights = emptyList(),
+        )
+    }
+
+    private fun runHelper(command: String, stdin: String, filename: String? = null): String? {
         val helper = resolveHelperPath() ?: return null
         helper.toFile().setExecutable(true)
 
         return try {
-            val process = ProcessBuilder(
+            val arguments = mutableListOf(
                 helper.toString(),
                 command,
                 "--stdin",
-                "--filename",
-                filename,
                 "--format",
                 "json",
-            ).start()
+            )
+            if (filename != null) {
+                arguments.addAll(listOf("--filename", filename))
+            }
+            val process = ProcessBuilder(arguments).start()
             val stdoutFuture = process.readAsync(process.inputStream)
             val stderrFuture = process.readAsync(process.errorStream)
 
             process.outputStream.use { output ->
-                output.write(text.toByteArray(StandardCharsets.UTF_8))
+                output.write(stdin.toByteArray(StandardCharsets.UTF_8))
             }
 
             val finished = process.waitFor(30, TimeUnit.SECONDS)

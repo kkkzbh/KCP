@@ -3,8 +3,9 @@
     <name>cp Language Support</name>
     <vendor>kkkzbh</vendor>
     <description><![CDATA[
-        Basic CLion support for the cp experimental language: file type registration,
-        syntax highlighting, comment handling, brace matching, and lexer diagnostics.
+        CLion support for the cp experimental language: file type registration,
+        rich syntax and semantic highlighting, comment handling, brace matching,
+        and native parser/semantic diagnostics.
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>
@@ -12,8 +13,12 @@
 
     <extensions defaultExtensionNs="com.intellij">
         <fileType name="cp" language="cp" extensions="cp" implementationClass="org.cp.lang.clion.CpFileType" fieldName="INSTANCE" />
+        <fileTypeOverrider implementation="org.cp.lang.clion.CpFileTypeOverrider" />
         <lang.parserDefinition language="cp" implementationClass="org.cp.lang.clion.CpParserDefinition" />
         <lang.syntaxHighlighterFactory language="cp" implementationClass="org.cp.lang.clion.CpSyntaxHighlighterFactory" />
+        <colorSettingsPage implementation="org.cp.lang.clion.CpColorSettingsPage" />
+        <annotator language="cp" implementationClass="org.cp.lang.clion.CpAnnotator" />
+        <lang.psiStructureViewFactory language="cp" implementationClass="org.cp.lang.clion.CpStructureViewFactory" />
         <lang.commenter language="cp" implementationClass="org.cp.lang.clion.CpCommenter" />
         <lang.braceMatcher language="cp" implementationClass="org.cp.lang.clion.CpBraceMatcher" />
         <externalAnnotator language="cp" implementationClass="org.cp.lang.clion.CpExternalAnnotator" />

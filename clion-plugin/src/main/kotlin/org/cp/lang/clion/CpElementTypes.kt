@@ -1,0 +1,47 @@
+package org.cp.lang.clion
+
+import com.intellij.psi.tree.IElementType
+
+class CpElementType(debugName: String) : IElementType(debugName, CpLanguage)
+
+object CpElements {
+    private fun element(name: String): CpElementType = CpElementType(name)
+
+    @JvmField val MODULE_HEADER = element("module_header")
+    @JvmField val IMPORT_DECLARATION = element("import_declaration")
+    @JvmField val MODULE_NAME = element("module_name")
+    @JvmField val IMPORT_NAME = element("import_name")
+    @JvmField val FUNCTION = element("function")
+    @JvmField val FUNCTION_NAME = element("function_name")
+    @JvmField val PARAMETER_LIST = element("parameter_list")
+    @JvmField val PARAMETER = element("parameter")
+    @JvmField val PARAMETER_NAME = element("parameter_name")
+    @JvmField val TYPE_REFERENCE = element("type_reference")
+    @JvmField val TYPE_NAME = element("type_name")
+    @JvmField val TYPE_ARGUMENT_LIST = element("type_argument_list")
+    @JvmField val TYPE_ARGUMENT = element("type_argument")
+    @JvmField val BLOCK = element("block")
+    @JvmField val DECLARATION_STATEMENT = element("declaration_statement")
+    @JvmField val LOCAL_DECLARATION = element("local_declaration")
+    @JvmField val IF_STATEMENT = element("if_statement")
+    @JvmField val WHILE_STATEMENT = element("while_statement")
+    @JvmField val DO_WHILE_STATEMENT = element("do_while_statement")
+    @JvmField val FOR_STATEMENT = element("for_statement")
+    @JvmField val LOOP_LABEL = element("loop_label")
+    @JvmField val BREAK_STATEMENT = element("break_statement")
+    @JvmField val CONTINUE_STATEMENT = element("continue_statement")
+    @JvmField val RETURN_STATEMENT = element("return_statement")
+    @JvmField val EXPRESSION_STATEMENT = element("expression_statement")
+    @JvmField val NAME_EXPRESSION = element("name_expression")
+    @JvmField val LITERAL_EXPRESSION = element("literal_expression")
+    @JvmField val UNARY_EXPRESSION = element("unary_expression")
+    @JvmField val BINARY_EXPRESSION = element("binary_expression")
+    @JvmField val ASSIGNMENT_EXPRESSION = element("assignment_expression")
+    @JvmField val CALL_EXPRESSION = element("call_expression")
+    @JvmField val CAST_EXPRESSION = element("cast_expression")
+    @JvmField val ARRAY_LITERAL = element("array_literal")
+    @JvmField val SEQUENCE_LITERAL = element("sequence_literal")
+    @JvmField val TUPLE_LITERAL = element("tuple_literal")
+    @JvmField val GROUPED_EXPRESSION = element("grouped_expression")
+    @JvmField val ARGUMENT_LIST = element("argument_list")
+}

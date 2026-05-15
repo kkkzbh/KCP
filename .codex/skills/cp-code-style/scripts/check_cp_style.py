@@ -15,6 +15,7 @@ SKIP_DIRS = {
     ".vscode",
     "build",
     "build-clion",
+    "build-clion-plugin-native",
     "cmake-build-debug",
     "cmake-build-release",
 }
