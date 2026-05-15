@@ -1,4 +1,6 @@
 import std;
+import source;
+import preprocessor;
 import lexer;
 
 #include "runner.hpp"

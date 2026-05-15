@@ -2,13 +2,13 @@ export module lexer.literal;
 
 import std;
 import lexer.token;
-import lexer.diagnostic;
+import diagnostic;
 import lexer.charset;
 
-/// @brief helper 请求 scanner engine 发出的诊断。
-export struct scanner_diagnostic_request
+/// @brief 字面量扫描产生的局部诊断。
+export struct literal_diagnostic
 {
-    lexer_diagnostic_code code{};
+    diagnostic_kind kind{};
     std::string_view message;
     std::size_t start{};
     std::size_t end{};
@@ -20,7 +20,7 @@ export struct literal_scan_result
     token_kind kind{};
     std::size_t end{};
     token_flags flags{};
-    std::vector<scanner_diagnostic_request> diagnostics;
+    std::vector<literal_diagnostic> diagnostics;
 };
 
 enum class escape_result
@@ -30,22 +30,12 @@ enum class escape_result
     unterminated,
 };
 
-auto add_diagnostic(
-    std::vector<scanner_diagnostic_request>& diagnostics,
-    lexer_diagnostic_code code,
-    std::string_view message,
-    std::size_t start,
-    std::size_t end) -> void
-{
-    diagnostics.emplace_back(code, message, start, end);
-}
-
 auto consume_escape_sequence(
     std::string_view source,
     std::size_t& offset,
-    std::vector<scanner_diagnostic_request>& diagnostics,
+    std::vector<literal_diagnostic>& diagnostics,
     std::size_t literal_start,
-    lexer_diagnostic_code unterminated_code,
+    diagnostic_kind unterminated_kind,
     std::string_view unterminated_message) -> escape_result
 {
     using namespace std::literals;
@@ -54,12 +44,12 @@ auto consume_escape_sequence(
     ++offset;
 
     if(offset >= source.size()) {
-        add_diagnostic(diagnostics, unterminated_code, unterminated_message, literal_start, offset);
+        diagnostics.emplace_back(unterminated_kind, unterminated_message, literal_start, offset);
         return escape_result::unterminated;
     }
 
     if(source[offset] == '\n') {
-        add_diagnostic(diagnostics, unterminated_code, unterminated_message, literal_start, offset);
+        diagnostics.emplace_back(unterminated_kind, unterminated_message, literal_start, offset);
         return escape_result::unterminated;
     }
 
@@ -79,8 +69,12 @@ auto consume_escape_sequence(
     if(source[offset] == 'x') {
         ++offset;
         if(offset >= source.size() or not is_hex_digit(source[offset])) {
-            add_diagnostic(diagnostics, lexer_diagnostic_code::invalid_escape_sequence,
-                "invalid escape sequence"sv, escape_start, offset);
+            diagnostics.emplace_back(
+                diagnostic_kind::invalid_escape_sequence,
+                "invalid escape sequence"sv,
+                escape_start,
+                offset
+            );
             return escape_result::invalid;
         }
         while(offset < source.size() and is_hex_digit(source[offset])) {
@@ -90,8 +84,12 @@ auto consume_escape_sequence(
     }
 
     ++offset;
-    add_diagnostic(diagnostics, lexer_diagnostic_code::invalid_escape_sequence,
-        "invalid escape sequence"sv, escape_start, offset);
+    diagnostics.emplace_back(
+        diagnostic_kind::invalid_escape_sequence,
+        "invalid escape sequence"sv,
+        escape_start,
+        offset
+    );
     return escape_result::invalid;
 }
 
@@ -105,8 +103,12 @@ export auto scan_number_literal(std::string_view source, std::size_t start, toke
         result.kind = token_kind::invalid;
         result.end = end;
         result.flags = flags | token_flags::recovered;
-        add_diagnostic(result.diagnostics, lexer_diagnostic_code::invalid_number_suffix,
-            "invalid numeric suffix"sv, start, end);
+        result.diagnostics.emplace_back(
+            diagnostic_kind::invalid_number_suffix,
+            "invalid numeric suffix"sv,
+            start,
+            end
+        );
         return result;
     };
 
@@ -181,8 +183,12 @@ export auto scan_string_literal(std::string_view source, std::size_t start, toke
             return result;
         }
         if(ch == '\n') {
-            add_diagnostic(result.diagnostics, lexer_diagnostic_code::unterminated_string_literal,
-                unterminated_message, start, offset);
+            result.diagnostics.emplace_back(
+                diagnostic_kind::unterminated_string_literal,
+                unterminated_message,
+                start,
+                offset
+            );
             result.kind = token_kind::invalid;
             result.end = offset;
             result.flags = flags | token_flags::unterminated | token_flags::recovered;
@@ -190,7 +196,7 @@ export auto scan_string_literal(std::string_view source, std::size_t start, toke
         }
         if(ch == '\\') {
             auto const escape = consume_escape_sequence(source, offset, result.diagnostics, start,
-                lexer_diagnostic_code::unterminated_string_literal, unterminated_message);
+                diagnostic_kind::unterminated_string_literal, unterminated_message);
             if(escape == escape_result::unterminated) {
                 result.kind = token_kind::invalid;
                 result.end = offset;
@@ -205,8 +211,12 @@ export auto scan_string_literal(std::string_view source, std::size_t start, toke
         ++offset;
     }
 
-    add_diagnostic(result.diagnostics, lexer_diagnostic_code::unterminated_string_literal,
-        unterminated_message, start, offset);
+    result.diagnostics.emplace_back(
+        diagnostic_kind::unterminated_string_literal,
+        unterminated_message,
+        start,
+        offset
+    );
     result.kind = token_kind::invalid;
     result.end = offset;
     result.flags = flags | token_flags::unterminated | token_flags::recovered;
@@ -237,15 +247,23 @@ export auto scan_char_literal(std::string_view source, std::size_t start, token_
             if(content_count == 1) {
                 return result;
             }
-            add_diagnostic(result.diagnostics, lexer_diagnostic_code::invalid_char_literal,
-                "invalid char literal"sv, start, offset);
+            result.diagnostics.emplace_back(
+                diagnostic_kind::invalid_char_literal,
+                "invalid char literal"sv,
+                start,
+                offset
+            );
             result.kind = token_kind::invalid;
             result.flags = flags | token_flags::recovered;
             return result;
         }
         if(ch == '\n') {
-            add_diagnostic(result.diagnostics, lexer_diagnostic_code::unterminated_char_literal,
-                unterminated_message, start, offset);
+            result.diagnostics.emplace_back(
+                diagnostic_kind::unterminated_char_literal,
+                unterminated_message,
+                start,
+                offset
+            );
             result.kind = token_kind::invalid;
             result.end = offset;
             result.flags = flags | token_flags::unterminated | token_flags::recovered;
@@ -253,7 +271,7 @@ export auto scan_char_literal(std::string_view source, std::size_t start, token_
         }
         if(ch == '\\') {
             auto const escape = consume_escape_sequence(source, offset, result.diagnostics, start,
-                lexer_diagnostic_code::unterminated_char_literal, unterminated_message);
+                diagnostic_kind::unterminated_char_literal, unterminated_message);
             if(escape == escape_result::unterminated) {
                 result.kind = token_kind::invalid;
                 result.end = offset;
@@ -270,8 +288,12 @@ export auto scan_char_literal(std::string_view source, std::size_t start, token_
         ++offset;
     }
 
-    add_diagnostic(result.diagnostics, lexer_diagnostic_code::unterminated_char_literal,
-        unterminated_message, start, offset);
+    result.diagnostics.emplace_back(
+        diagnostic_kind::unterminated_char_literal,
+        unterminated_message,
+        start,
+        offset
+    );
     result.kind = token_kind::invalid;
     result.end = offset;
     result.flags = flags | token_flags::unterminated | token_flags::recovered;

@@ -5,8 +5,6 @@ target_sources(source
         FILE_SET CXX_MODULES
         FILES
             source.cppm
-            diagnostic/concepts.cppm
-            diagnostic/diagnostic.cppm
 )
 
 set_target_properties(source PROPERTIES

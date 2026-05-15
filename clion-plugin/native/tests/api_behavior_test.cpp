@@ -38,10 +38,10 @@ auto main() -> int
         std::pair{ "invalid_number_suffix", "123suffix"sv },
     };
 
-    for(auto const& [expected_code, source] : invalid_diagnostics) {
+    for(auto const& [expected_kind, source] : invalid_diagnostics) {
         auto const diagnostics = cp_lexer_helper::analyze("invalid.cp", source);
         assert_true(diagnostics.size() == 1, "each invalid sample should produce one diagnostic");
-        assert_true(diagnostics.front().code == expected_code, "diagnostic code should match");
+        assert_true(diagnostics.front().code == expected_kind, "diagnostic kind should match");
         assert_true(diagnostics.front().severity == "error", "severity should be error");
         assert_true(diagnostics.front().line == 1, "single-line invalid samples should map to line 1");
         assert_true(diagnostics.front().column >= 1, "columns should be one-based");
@@ -68,7 +68,7 @@ auto main() -> int
 
     auto const diagnostics_json = cp_lexer_helper::diagnostics_to_json(positioned);
     assert_true(contains(diagnostics_json, "\"code\":\"invalid_character\""),
-        "diagnostic json should contain diagnostic code");
+        "diagnostic json should contain diagnostic kind");
     assert_true(contains(diagnostics_json, "\"startOffset\":22"),
         "diagnostic json should contain start offset");
     assert_true(contains(diagnostics_json, "\"column\":11"),

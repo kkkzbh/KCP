@@ -62,7 +62,7 @@ auto inline compare_diagnostics(
 
 auto inline assert_invalid_tokens_match_diagnostics(
     std::vector<token> const& tokens,
-    std::vector<lexer_diagnostic> const& diagnostics) -> void
+    std::vector<diagnostic> const& diagnostics) -> void
 {
     auto invalid_tokens = std::vector<token const*>{};
     for(auto const& value : tokens) {
@@ -87,24 +87,24 @@ auto inline assert_invalid_tokens_match_diagnostics(
 auto inline run_case(lexer_case const& current_case) -> void
 {
     auto sources = source_manager{};
-    auto diagnostics = std::vector<lexer_diagnostic>{};
     auto const file = sources.add_source (
         std::filesystem::relative(current_case.source_path, cases_root()).string(),
         current_case.source_text);
 
-    auto lex = lexer{sources, file, diagnostics};
-    auto const tokens = lex.tokenize_all();
-    assert_invalid_tokens_match_diagnostics(tokens, diagnostics);
+    auto preprocessed = preprocess(sources, file);
+    auto result = lex(preprocessed);
+    contract_assert(preprocessed.diagnostics.empty());
+    assert_invalid_tokens_match_diagnostics(result.tokens, result.diagnostics);
 
     auto actual_tokens = std::vector<expected_token>{};
-    actual_tokens.reserve(tokens.size());
-    for (auto const& token : tokens) {
+    actual_tokens.reserve(result.tokens.size());
+    for (auto const& token : result.tokens) {
         actual_tokens.push_back(to_expected_token(sources, token));
     }
 
     auto actual_diagnostics = std::vector<expected_diagnostic>{};
-    actual_diagnostics.reserve(diagnostics.size());
-    for (auto const& diagnostic : diagnostics) {
+    actual_diagnostics.reserve(result.diagnostics.size());
+    for (auto const& diagnostic : result.diagnostics) {
         actual_diagnostics.push_back(to_expected_diagnostic(sources, diagnostic));
     }
 

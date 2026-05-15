@@ -1,4 +1,6 @@
 import std;
+import source;
+import preprocessor;
 import lexer;
 
 #include "assert.hpp"
@@ -6,72 +8,68 @@ import lexer;
 auto main() -> int
 {
     auto sources = source_manager{};
-    auto diagnostics = std::vector<lexer_diagnostic>{};
     auto const first = sources.add_source("peek.lex", "let value = 1;");
     auto const second = sources.add_source("reset.lex", "return value;");
 
-    auto lex = lexer{ sources, first, diagnostics };
-
-    auto const peeked_once = lex.peek();
-    auto const peeked_twice = lex.peek();
-    test_lexer::assert_true(peeked_once == peeked_twice, "peek should be stable");
-    test_lexer::assert_true(peeked_once.kind == token_kind::kw_let, "peek should read first token");
-    test_lexer::assert_true(has_flag(peeked_once.flags, token_flags::start_of_line),
+    auto first_preprocessed = preprocess(sources, first);
+    auto first_result = lex(first_preprocessed);
+    auto const first_token = first_result.tokens[0];
+    test_lexer::assert_true(first_token.kind == token_kind::kw_let, "first token should be let");
+    test_lexer::assert_true(has_flag(first_token.flags, token_flags::start_of_line),
         "first token should be marked start_of_line");
 
-    auto const consumed_after_peek = lex.next();
-    test_lexer::assert_true(consumed_after_peek == peeked_once, "next should consume cached peek token");
-
-    auto const second_token = lex.next();
+    auto const second_token = first_result.tokens[1];
     test_lexer::assert_true(second_token.kind == token_kind::identifier, "second token should be identifier");
     test_lexer::assert_true(std::string{sources.slice(second_token.span)} == "value",
         "identifier lexeme should match");
     test_lexer::assert_true(has_flag(second_token.flags, token_flags::leading_space),
         "identifier after whitespace should record leading_space");
+    test_lexer::assert_true(first_result.diagnostics.empty(), "valid first file should not emit diagnostics");
 
-    lex.reset(second);
-    auto const reset_first = lex.peek();
-    test_lexer::assert_true(reset_first.kind == token_kind::kw_return, "reset should restart from new file");
-    test_lexer::assert_true(has_flag(reset_first.flags, token_flags::start_of_line),
-        "reset should restore line-start state");
-    test_lexer::assert_true(std::string{sources.slice(reset_first.span)} == "return",
-        "reset token span should point to new file text");
-
-    auto const after_reset = lex.next();
-    test_lexer::assert_true(after_reset == reset_first, "cached token should survive after reset");
+    auto second_preprocessed = preprocess(sources, second);
+    auto second_result = lex(second_preprocessed);
+    auto const second_file_first = second_result.tokens[0];
+    test_lexer::assert_true(second_file_first.kind == token_kind::kw_return,
+        "second file should start from its own first token");
+    test_lexer::assert_true(has_flag(second_file_first.flags, token_flags::start_of_line),
+        "independent lex call should restore line-start state");
+    test_lexer::assert_true(std::string{sources.slice(second_file_first.span)} == "return",
+        "second file token span should point to its own source text");
+    test_lexer::assert_true(second_result.diagnostics.empty(), "valid second file should not emit diagnostics");
 
     auto dangling_escape_text = std::string{};
     dangling_escape_text.push_back('\'');
     dangling_escape_text.push_back('\\');
     auto const dangling_escape = sources.add_source("dangling_escape_runtime.lex", dangling_escape_text);
-    lex.reset(dangling_escape);
+    auto dangling_preprocessed = preprocess(sources, dangling_escape);
+    auto dangling_result = lex(dangling_preprocessed);
 
-    auto const dangling_token = lex.next();
+    auto const dangling_token = dangling_result.tokens[0];
     test_lexer::assert_true(dangling_token.kind == token_kind::invalid,
         "dangling escape should produce invalid token");
     test_lexer::assert_true(has_flag(dangling_token.flags, token_flags::unterminated),
         "dangling escape should be unterminated");
     test_lexer::assert_true (
-        diagnostics.back().code == lexer_diagnostic_code::unterminated_char_literal,
+        dangling_result.diagnostics.back().kind == diagnostic_kind::unterminated_char_literal,
         "dangling escape should diagnose unterminated char");
 
     auto const unterminated_block = sources.add_source("unterminated_block_runtime.lex", "/* block\ncomment");
-    lex.reset(unterminated_block);
+    auto block_preprocessed = preprocess(sources, unterminated_block);
+    auto block_result = lex(block_preprocessed);
 
-    auto const block_token = lex.next();
-    test_lexer::assert_true(block_token.kind == token_kind::invalid,
-        "unterminated block comment should produce invalid token");
-    test_lexer::assert_true(has_flag(block_token.flags, token_flags::unterminated),
-        "unterminated block comment should be unterminated");
-    test_lexer::assert_true (
-        diagnostics.back().code == lexer_diagnostic_code::unterminated_block_comment,
-        "unterminated block comment should diagnose correctly");
+    test_lexer::assert_true(block_preprocessed.diagnostics.size() == 1,
+        "unterminated block comment should produce preprocessor diagnostic");
+    test_lexer::assert_true(block_result.diagnostics.empty(),
+        "unterminated block comment should not produce lexer diagnostic");
+    test_lexer::assert_true(block_result.tokens.front().kind == token_kind::eof,
+        "preprocessed unterminated block comment should leave only eof for lexer");
 
     auto const comment_span = sources.add_source("comment_span.lex", "let/* inner */value;");
-    lex.reset(comment_span);
+    auto comment_preprocessed = preprocess(sources, comment_span);
+    auto comment_result = lex(comment_preprocessed);
 
-    auto const first_after_comment = lex.next();
-    auto const second_after_comment = lex.next();
+    auto const first_after_comment = comment_result.tokens[0];
+    auto const second_after_comment = comment_result.tokens[1];
     test_lexer::assert_true(first_after_comment.kind == token_kind::kw_let,
         "token before block comment should still lex correctly");
     test_lexer::assert_true(second_after_comment.kind == token_kind::identifier,
@@ -81,7 +79,6 @@ auto main() -> int
     test_lexer::assert_true(has_flag(second_after_comment.flags, token_flags::leading_space),
         "token after block comment should still observe synthesized separating whitespace");
 
-    diagnostics.clear();
-    test_lexer::assert_true(diagnostics.empty(), "api behavior test should not emit diagnostics");
+    test_lexer::assert_true(comment_result.diagnostics.empty(), "valid comment input should not emit diagnostics");
     return 0;
 }

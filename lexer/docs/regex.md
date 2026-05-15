@@ -30,7 +30,7 @@
 
 ### 3.2 注释
 
-注释由预处理阶段（`preprocessor/scanner/scanner.cppm`）在进入词法分析前
+注释由预处理阶段（`preprocessor/preprocessor.cppm`）在进入词法分析前
 统一剥离：注释字符会被替换为等长的空格，换行原样保留以维持行列对齐。
 因此词法分析器永远不会真正看到注释字符序列，但其等价的正则定义仍然
 适用于规则推导：
@@ -563,13 +563,13 @@ d1 --IDENT_CONT--> d1
 
 ## 10. 最小化 DFA 与当前实现的对应关系
 
-本项目最终没有单独保存一张显式的 NFA 表或 DFA 转移表，而是将最小化 DFA 的行为直接编码到了扫描器实现中。也就是说，当前 `scanner/scanner.cppm` 属于“手写的、等价于最小化 DFA 的识别过程”。
+本项目最终没有单独保存一张显式的 NFA 表或 DFA 转移表，而是将最小化 DFA 的行为直接编码到了扫描器实现中。也就是说，当前 `lexer.cppm` 属于“手写的、等价于最小化 DFA 的识别过程”。
 
 具体对应关系如下：
 
 - 空白与注释跳过
-  - 注释由预处理阶段（`preprocessor/scanner/scanner.cppm`）剥离为等长空格，
-    并以 `preprocess_issue` 形式向词法层透出未闭合块注释等问题
+  - 注释由预处理阶段（`preprocessor/preprocessor.cppm`）剥离为等长空格，
+    未闭合块注释等问题保留为预处理诊断
   - 词法层在 `skip_trivia()` 中只负责吞掉空白字符与维护行首/前导空格状态
   - 整体上对应自动机中对 `WHITESPACE`、`LINE_COMMENT`、`BLOCK_COMMENT`
     分支的接受后丢弃

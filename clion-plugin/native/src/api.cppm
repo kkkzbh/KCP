@@ -1,6 +1,8 @@
 export module cp_lexer_helper;
 
 import std;
+import source;
+import preprocessor;
 import lexer;
 
 export namespace cp_lexer_helper {
@@ -75,38 +77,27 @@ auto escape_json(std::string_view value) -> std::string
     return result;
 }
 
-auto lexer_diagnostic_code_name(lexer_diagnostic_code code) -> std::string_view
-{
-    using enum lexer_diagnostic_code;
-
-    switch(code) {
-    case invalid_character: return "invalid_character";
-    case unterminated_string_literal: return "unterminated_string_literal";
-    case unterminated_char_literal: return "unterminated_char_literal";
-    case unterminated_block_comment: return "unterminated_block_comment";
-    case invalid_char_literal: return "invalid_char_literal";
-    case invalid_escape_sequence: return "invalid_escape_sequence";
-    case invalid_number_suffix: return "invalid_number_suffix";
-    }
-
-    std::unreachable();
-}
-
-auto lexer_diagnostic_severity_name(lexer_diagnostic_severity severity) -> std::string_view
-{
-    using enum lexer_diagnostic_severity;
-
-    switch(severity) {
-    case error: return "error";
-    case warning: return "warning";
-    }
-
-    std::unreachable();
-}
-
 auto bool_json(bool value) -> std::string_view
 {
     return value ? "true" : "false";
+}
+
+auto append_diagnostic_record(
+    std::vector<diagnostic_record>& records,
+    source_manager const& sources,
+    byte_pos file_start,
+    diagnostic const& value) -> void
+{
+    auto const position = sources.position(value.primary_span.start);
+    auto const info = spec(value.kind);
+    records.emplace_back (
+        std::string{ info.code },
+        value.message,
+        std::string{ severity_name(info.severity) },
+        value.primary_span.start - file_start,
+        value.primary_span.end - file_start,
+        position.line,
+        position.column);
 }
 
 auto read_all(std::istream& input) -> std::string
@@ -188,25 +179,20 @@ auto parse_cli(std::span<std::string_view const> args, std::ostream& error) -> s
 auto analyze(std::string_view filename, std::string_view text) -> std::vector<diagnostic_record>
 {
     auto sources = source_manager{};
-    auto sink = std::vector<lexer_diagnostic>{};
     auto const file = sources.add_source(std::string{filename}, std::string{text});
     auto const file_start = sources.file_start(file);
-    auto lex = lexer{sources, file, sink};
-    static_cast<void>(lex.tokenize_all());
+    auto preprocessed = preprocess(sources, file);
+    auto lexical = lex(preprocessed);
 
     auto result = std::vector<diagnostic_record>{};
-    result.reserve(sink.size());
+    result.reserve(preprocessed.diagnostics.size() + lexical.diagnostics.size());
 
-    for(auto const& diagnostic : sink) {
-        auto const position = sources.position(diagnostic.primary_span.start);
-        result.emplace_back (
-            std::string{lexer_diagnostic_code_name(diagnostic.code)},
-            diagnostic.message,
-            std::string{lexer_diagnostic_severity_name(diagnostic.severity)},
-            diagnostic.primary_span.start - file_start,
-            diagnostic.primary_span.end - file_start,
-            position.line,
-            position.column);
+    for(auto const& diagnostic : preprocessed.diagnostics) {
+        append_diagnostic_record(result, sources, file_start, diagnostic);
+    }
+
+    for(auto const& diagnostic : lexical.diagnostics) {
+        append_diagnostic_record(result, sources, file_start, diagnostic);
     }
 
     return result;
@@ -215,13 +201,13 @@ auto analyze(std::string_view filename, std::string_view text) -> std::vector<di
 auto tokenize(std::string_view filename, std::string_view text) -> std::vector<token_record>
 {
     auto sources = source_manager{};
-    auto sink = std::vector<lexer_diagnostic>{};
     auto const file = sources.add_source(std::string{filename}, std::string{text});
     auto const file_start = sources.file_start(file);
-    auto lex = lexer{sources, file, sink};
+    auto preprocessed = preprocess(sources, file);
+    auto lexical = lex(preprocessed);
 
     auto result = std::vector<token_record>{};
-    for(auto const& token : lex.tokenize_all()) {
+    for(auto const& token : lexical.tokens) {
         result.emplace_back (
             std::string{to_string(token.kind)},
             std::string{sources.slice(token.span)},

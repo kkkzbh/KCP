@@ -20,7 +20,7 @@ struct expected_token {
 };
 
 struct expected_diagnostic {
-    lexer_diagnostic_code code{};
+    diagnostic_kind kind{};
     std::string span_lexeme;
     std::size_t start{};
     std::size_t end{};
@@ -113,14 +113,13 @@ auto constexpr inline all_token_kinds = std::array {
     token_kind::question,
 };
 
-auto constexpr inline all_diagnostic_codes = std::array {
-    lexer_diagnostic_code::invalid_character,
-    lexer_diagnostic_code::unterminated_string_literal,
-    lexer_diagnostic_code::unterminated_char_literal,
-    lexer_diagnostic_code::unterminated_block_comment,
-    lexer_diagnostic_code::invalid_char_literal,
-    lexer_diagnostic_code::invalid_escape_sequence,
-    lexer_diagnostic_code::invalid_number_suffix,
+auto constexpr inline all_diagnostic_kinds = std::array {
+    diagnostic_kind::invalid_character,
+    diagnostic_kind::unterminated_string_literal,
+    diagnostic_kind::unterminated_char_literal,
+    diagnostic_kind::invalid_char_literal,
+    diagnostic_kind::invalid_escape_sequence,
+    diagnostic_kind::invalid_number_suffix,
 };
 
 auto inline format_flags(token_flags flags) -> std::string
@@ -173,13 +172,13 @@ auto inline to_expected_token(source_manager const& sources, token const& value)
 
 auto inline to_expected_diagnostic(
     source_manager const& sources,
-    lexer_diagnostic const& value) -> expected_diagnostic
+    diagnostic const& value) -> expected_diagnostic
 {
     auto const position = sources.position(value.primary_span.start);
     auto const [file, local_start] = sources.locate(value.primary_span.start);
     auto const file_start = sources.file_start(file);
     return expected_diagnostic{
-        .code = value.code,
+        .kind = value.kind,
         .span_lexeme = std::string{sources.slice(value.primary_span)},
         .start = local_start,
         .end = value.primary_span.end - file_start,
@@ -201,28 +200,15 @@ auto inline format_token(expected_token const& value) -> std::string
     });
 }
 
-auto inline lexer_diagnostic_code_name(lexer_diagnostic_code code) -> std::string_view
+auto inline diagnostic_kind_name(diagnostic_kind kind) -> std::string_view
 {
-    using enum lexer_diagnostic_code;
-
-    switch (code) {
-    case invalid_character: return "invalid_character";
-    case unterminated_string_literal: return "unterminated_string_literal";
-    case unterminated_char_literal: return "unterminated_char_literal";
-    case unterminated_block_comment: return "unterminated_block_comment";
-    case invalid_char_literal: return "invalid_char_literal";
-    case invalid_escape_sequence: return "invalid_escape_sequence";
-    case invalid_number_suffix: return "invalid_number_suffix";
-    }
-
-    contract_assert(false);
-    std::unreachable();
+    return spec(kind).code;
 }
 
 auto inline format_diagnostic(expected_diagnostic const& value) -> std::string
 {
     return test_support::dump_jsonl_record(test_support::jsonl_record{
-        {"code", std::string{lexer_diagnostic_code_name(value.code)}},
+        {"code", std::string{diagnostic_kind_name(value.kind)}},
         {"span", value.span_lexeme},
         {"start", value.start},
         {"end", value.end},

@@ -1,4 +1,6 @@
 import std;
+import source;
+import preprocessor;
 import lexer;
 
 #include "assert.hpp"
@@ -9,12 +11,12 @@ namespace {
 auto first_token_kind(std::string text) -> token_kind
 {
     auto sources = source_manager{};
-    auto diagnostics = std::vector<lexer_diagnostic>{};
     auto const file = sources.add_source("classification.lex", std::move(text));
-    auto lex = lexer{ sources, file, diagnostics };
-    auto const token = lex.next();
+    auto preprocessed = preprocess(sources, file);
+    auto result = lex(preprocessed);
+    auto const token = result.tokens.front();
 
-    test_lexer::assert_true(diagnostics.empty(),
+    test_lexer::assert_true(result.diagnostics.empty(),
         "classification input should not produce diagnostics");
     return token.kind;
 }

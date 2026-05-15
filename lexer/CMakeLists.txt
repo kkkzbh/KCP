@@ -4,21 +4,18 @@ target_sources(lexer
     PUBLIC
         FILE_SET CXX_MODULES
         FILES
-            token/token.cppm
-            diagnostic/diagnostic.cppm
-            diagnostic/concepts.cppm
-            charset/charset.cppm
-            scanner/reporter.cppm
-            scanner/keyword.cppm
-            scanner/punctuation.cppm
-            scanner/literal.cppm
-            scanner/engine.cppm
-            scanner/scanner.cppm
+            token.cppm
+            charset.cppm
+            cursor.cppm
+            keyword.cppm
+            punctuation.cppm
+            literal.cppm
             lexer.cppm
 )
 
 target_link_libraries(lexer
     PUBLIC
+        diagnostic
         source
         preprocessor
 )

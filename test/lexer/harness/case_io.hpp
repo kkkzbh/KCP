@@ -53,15 +53,15 @@ auto inline parse_token_kind(std::string const& spelling) -> token_kind
 }
 
 [[nodiscard]]
-auto inline parse_diagnostic_code(std::string const& spelling) -> lexer_diagnostic_code
+auto inline parse_diagnostic_kind(std::string const& spelling) -> diagnostic_kind
 {
-    for (auto const code : all_diagnostic_codes) {
-        if (lexer_diagnostic_code_name(code) == spelling) {
-            return code;
+    for (auto const kind : all_diagnostic_kinds) {
+        if (diagnostic_kind_name(kind) == spelling) {
+            return kind;
         }
     }
 
-    fail(std::format("unknown diagnostic code '{}'", spelling));
+    fail(std::format("unknown diagnostic kind '{}'", spelling));
 }
 
 [[nodiscard]]
@@ -129,7 +129,7 @@ auto inline parse_expected_diagnostics(std::filesystem::path const& path)
     auto result = std::vector<expected_diagnostic>{};
     for (auto const& record : test_support::read_jsonl(path, false)) {
         result.emplace_back (
-            parse_diagnostic_code(test_support::required_string(record, path, "code")),
+            parse_diagnostic_kind(test_support::required_string(record, path, "code")),
             test_support::required_string(record, path, "span"),
             test_support::required_size(record, path, "start"),
             test_support::required_size(record, path, "end"),
