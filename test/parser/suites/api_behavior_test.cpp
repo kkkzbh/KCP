@@ -1,4 +1,6 @@
 import std;
+import preprocessor;
+import lexer;
 import parser;
 
 #include "assert.hpp"
@@ -37,6 +39,17 @@ auto type_argument_type(type_argument_syntax const& argument) -> type_id
 {
     return as<type_argument_type_syntax>(argument).type;
 }
+
+auto parse_source(source_manager& sources, file_id file) -> parse_result
+{
+    auto preprocessed = preprocess(sources, file);
+    test_parser::assert_true(preprocessed.diagnostics.empty(), "test source should not emit preprocessor diagnostics");
+
+    auto lexical = lex(preprocessed);
+    test_parser::assert_true(lexical.diagnostics.empty(), "test source should not emit lexer diagnostics");
+
+    return parse_translation_unit(std::move(lexical.tokens));
+}
 } // namespace
 
 auto main() -> int
@@ -53,7 +66,7 @@ main()
 {
     return;
 })");
-    auto module_parsed = parse_translation_unit(sources, module_source);
+    auto module_parsed = parse_source(sources, module_source);
     test_parser::assert_true(module_parsed.accepted, "module source should parse");
     test_parser::assert_true(module_parsed.root != std::nullopt, "module source should produce syntax tree");
     test_parser::assert_true(module_parsed.root->module_header != std::nullopt, "module source should keep module header");
@@ -74,12 +87,11 @@ main()
     return value;
 })");
 
-    auto parsed = parse_translation_unit(sources, valid);
+    auto parsed = parse_source(sources, valid);
 
     test_parser::assert_true(parsed.accepted, "valid source should parse");
     test_parser::assert_true(parsed.root != std::nullopt, "valid source should produce syntax tree");
-    test_parser::assert_true(parsed.lexer_diagnostics.empty(), "valid source should not emit lexer diagnostics");
-    test_parser::assert_true(parsed.parser_diagnostics.empty(), "valid source should not emit parser diagnostics");
+    test_parser::assert_true(parsed.diagnostics.empty(), "valid source should not emit parser diagnostics");
     test_parser::assert_true (
         parsed.root->functions.size() == 1,
         "valid source should contain one function");
@@ -123,10 +135,10 @@ main()
     }
 })");
 
-    auto shaped = parse_translation_unit(sources, shapes);
+    auto shaped = parse_source(sources, shapes);
     test_parser::assert_true(shaped.accepted, "shape-focused source should parse");
     test_parser::assert_true(shaped.root != std::nullopt, "shape-focused source should produce syntax tree");
-    test_parser::assert_true(shaped.parser_diagnostics.empty(), "shape-focused source should not emit parser diagnostics");
+    test_parser::assert_true(shaped.diagnostics.empty(), "shape-focused source should not emit parser diagnostics");
 
     auto const& shaped_function = first_function(shaped);
     auto const& shaped_body = function_body(shaped, shaped_function);
@@ -163,11 +175,11 @@ main()
     module;
     let after = 2;
 })");
-    auto recovered = parse_translation_unit(sources, recovered_source);
+    auto recovered = parse_source(sources, recovered_source);
     test_parser::assert_true(not recovered.accepted, "recovery-focused source should be rejected");
     test_parser::assert_true(recovered.root != std::nullopt, "recovery-focused source should still produce syntax tree");
     test_parser::assert_true (
-        not recovered.parser_diagnostics.empty(),
+        not recovered.diagnostics.empty(),
         "recovery-focused source should emit parser diagnostics");
     auto const& recovered_function = first_function(recovered);
     auto const& recovered_body = function_body(recovered, recovered_function);
@@ -183,11 +195,11 @@ main()
     let broken = call(;
     let after = 2;
 })");
-    auto unclosed = parse_translation_unit(sources, unclosed_source);
+    auto unclosed = parse_source(sources, unclosed_source);
     test_parser::assert_true(not unclosed.accepted, "unclosed recovery source should be rejected");
     test_parser::assert_true(unclosed.root != std::nullopt, "unclosed recovery source should still produce syntax tree");
     test_parser::assert_true (
-        not unclosed.parser_diagnostics.empty(),
+        not unclosed.diagnostics.empty(),
         "unclosed recovery source should emit parser diagnostics");
     auto const& unclosed_function = first_function(unclosed);
     auto const& unclosed_body = function_body(unclosed, unclosed_function);
@@ -228,22 +240,6 @@ main()
         else_if.else_branch
             and is<block_statement_syntax>(shaped.ast.statement(*else_if.else_branch)),
         "else-if chains should keep the trailing else block");
-
-    auto const invalid = sources.add_source("api_invalid.cp", "main() { let value = @; }");
-    auto rejected = parse_translation_unit(sources, invalid);
-    contract_assert(not rejected.lexer_diagnostics.empty());
-    test_parser::assert_true(not rejected.accepted, "lexically invalid source should be rejected");
-    test_parser::assert_true(not rejected.root, "lexically invalid source should not produce syntax tree");
-    test_parser::assert_true(not rejected.lexer_diagnostics.empty(), "lexically invalid source should keep lexer diagnostics");
-    test_parser::assert_true(
-        rejected.parser_diagnostics.size() == 1,
-        "lexically invalid source should emit parser lexical failure");
-    test_parser::assert_true (
-        rejected.parser_diagnostics.front().code == parser_diagnostic_code::lexical_failure,
-        "lexically invalid source should emit lexical_failure");
-    test_parser::assert_true (
-        std::string(sources.slice(rejected.parser_diagnostics.front().primary_span)) == "@",
-        "lexical_failure should point at the lexer-reported invalid lexeme");
 
     return 0;
 }

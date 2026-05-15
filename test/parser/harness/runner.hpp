@@ -39,7 +39,17 @@ auto inline run_case(parser_case const& current_case) -> void
         std::filesystem::relative(current_case.source_path, cases_root()).string(),
         current_case.source_text);
 
-    auto result = parse_translation_unit(sources, file);
+    auto preprocessed = preprocess(sources, file);
+    assert_true(
+        preprocessed.diagnostics.empty(),
+        std::format("{} should not emit preprocessor diagnostics", current_case.source_path.string()));
+
+    auto lexical = lex(preprocessed);
+    assert_true (
+        lexical.diagnostics.empty(),
+        std::format("{} should not emit lexer diagnostics", current_case.source_path.string()));
+
+    auto result = parse_translation_unit(std::move(lexical.tokens));
     if(result.accepted != current_case.accepted) {
         fail(std::format (
             "acceptance mismatch in {}: expected {}, got {}",
@@ -48,16 +58,12 @@ auto inline run_case(parser_case const& current_case) -> void
             result.accepted ? "accepted" : "rejected"));
     }
 
-    assert_true (
-        result.lexer_diagnostics.empty(),
-        std::format("{} should not emit lexer diagnostics", current_case.source_path.string()));
     if(current_case.accepted) {
         assert_true(result.root != std::nullopt, "accepted case should produce syntax tree");
     }
 
     auto actual = std::vector<expected_diagnostic>{};
-    actual.reserve(result.parser_diagnostics.size());
-    for(auto const& diagnostic : result.parser_diagnostics) {
+    for(auto const& diagnostic : result.diagnostics) {
         actual.push_back(to_expected_diagnostic(sources, diagnostic));
     }
 

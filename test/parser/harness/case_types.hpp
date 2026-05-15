@@ -6,7 +6,7 @@ namespace test_parser {
 
 struct expected_diagnostic
 {
-    parser_diagnostic_code code{};
+    diagnostic_kind kind{};
     std::string span_lexeme;
     std::size_t start{};
     std::size_t end{};
@@ -27,13 +27,13 @@ struct parser_case
 
 auto inline to_expected_diagnostic(
     source_manager const& sources,
-    parser_diagnostic const& value) -> expected_diagnostic
+    diagnostic const& value) -> expected_diagnostic
 {
     auto const position = sources.position(value.primary_span.start);
     auto const [file, local_start] = sources.locate(value.primary_span.start);
     auto const file_start = sources.file_start(file);
     return expected_diagnostic {
-        .code = value.code,
+        .kind = value.kind,
         .span_lexeme = std::string(sources.slice(value.primary_span)),
         .start = local_start,
         .end = value.primary_span.end - file_start,
@@ -45,7 +45,7 @@ auto inline to_expected_diagnostic(
 auto inline format_diagnostic(expected_diagnostic const& value) -> std::string
 {
     return test_support::dump_jsonl_record(test_support::jsonl_record {
-        {"code", std::string(to_string(value.code))},
+        {"code", std::string(spec(value.kind).code)},
         {"span", value.span_lexeme},
         {"start", value.start},
         {"end", value.end},

@@ -35,24 +35,23 @@ auto inline normalize_source_text(std::string text) -> std::string
 }
 
 [[nodiscard]]
-auto inline parse_diagnostic_code(std::string const& spelling)
-    -> parser_diagnostic_code
+auto inline parse_diagnostic_kind(std::string const& spelling)
+    -> diagnostic_kind
 {
-    for(auto const code : {
-            parser_diagnostic_code::unexpected_token,
-            parser_diagnostic_code::expected_token,
-            parser_diagnostic_code::expected_identifier,
-            parser_diagnostic_code::expected_expression,
-            parser_diagnostic_code::expected_statement,
-            parser_diagnostic_code::expected_type,
-            parser_diagnostic_code::lexical_failure,
+    for(auto const kind : {
+            diagnostic_kind::unexpected_token,
+            diagnostic_kind::expected_token,
+            diagnostic_kind::expected_identifier,
+            diagnostic_kind::expected_expression,
+            diagnostic_kind::expected_statement,
+            diagnostic_kind::expected_type,
         }) {
-        if(to_string(code) == spelling) {
-            return code;
+        if(spec(kind).code == spelling) {
+            return kind;
         }
     }
 
-    fail(std::format("unknown parser diagnostic code '{}'", spelling));
+    fail(std::format("unknown parser diagnostic kind '{}'", spelling));
 }
 
 [[nodiscard]]
@@ -62,7 +61,7 @@ auto inline parse_expected_diagnostics(std::filesystem::path const& path)
     auto result = std::vector<expected_diagnostic>{};
     for(auto const& record : test_support::read_jsonl(path, false)) {
         result.emplace_back (
-            parse_diagnostic_code(test_support::required_string(record, path, "code")),
+            parse_diagnostic_kind(test_support::required_string(record, path, "code")),
             test_support::required_string(record, path, "span"),
             test_support::required_size(record, path, "start"),
             test_support::required_size(record, path, "end"),
