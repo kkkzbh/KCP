@@ -22,5 +22,7 @@
         <lang.commenter language="cp" implementationClass="org.cp.lang.clion.CpCommenter" />
         <lang.braceMatcher language="cp" implementationClass="org.cp.lang.clion.CpBraceMatcher" />
         <externalAnnotator language="cp" implementationClass="org.cp.lang.clion.CpExternalAnnotator" />
+        <highlightErrorFilter implementation="org.cp.lang.clion.CpMarkdownErrorFilter" />
+        <daemon.externalAnnotatorsFilter implementation="org.cp.lang.clion.CpExternalAnnotatorsFilter" />
     </extensions>
 </idea-plugin>

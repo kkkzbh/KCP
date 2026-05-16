@@ -1,0 +1,15 @@
+version = 1
+name = "cp"
+
+[setup]
+script = ""
+
+[[actions]]
+name = "Build and Install kcp"
+icon = "tool"
+command = "bash -lc 'set -euo pipefail; if [ ! -f build/CMakeCache.txt ]; then cmake -S . -B build -G Ninja; else cmake -S . -B build; fi; cmake --build build --target cp -j \"$(nproc)\"; install -Dm755 build/compiler/cp \"$HOME/.local/bin/kcp\"; \"$HOME/.local/bin/kcp\" --help'"
+
+[[actions]]
+name = "Build CLion Plugin"
+icon = "tool"
+command = "bash -lc 'set -euo pipefail; cd clion-plugin; ./gradlew buildPlugin'"

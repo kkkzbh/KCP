@@ -48,6 +48,7 @@ dependencies {
 
     intellijPlatform {
         local(clionLocalPath)
+        bundledPlugin("org.intellij.plugins.markdown")
         testFramework(TestFrameworkType.Platform)
     }
 }
