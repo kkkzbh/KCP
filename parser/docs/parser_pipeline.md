@@ -13,4 +13,3 @@ AST 采用 typed id + arena + `std::variant`：
 - 节点所有权集中在 `ast_arena`。
 - `expr_id`、`stmt_id`、`type_id`、`function_id`、`translation_unit_id` 用于跨节点引用。
 - 表达式和语句节点使用明确 struct 组成的 `std::variant`，不使用继承和 `virtual`。
-- C++26 reflection 暂不进入核心 AST 路径，后续可用于 dump、trace 或 JSON 快照。

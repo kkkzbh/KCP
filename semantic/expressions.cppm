@@ -8,7 +8,7 @@ auto semantic_analyzer::check_expression(
     std::optional<semantic_type_id> expected
 ) -> expression_info
 {
-    auto const& expression = ast.expression(id);
+    auto const& expression = ast.node(id);
     auto info = (
         std::visit (
             overloaded {

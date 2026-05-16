@@ -74,7 +74,7 @@ auto semantic_analyzer::infer_function_body_return(std::size_t unit_index, funct
 {
     auto const& unit = units[unit_index];
     auto const& ast = unit.ast;
-    auto const& function = ast.function(id);
+    auto const& function = ast.node(id);
 
     auto old_unit = return_unit;
     auto old_return_scopes = std::move(return_scopes);
@@ -106,7 +106,7 @@ auto semantic_analyzer::infer_statement_returns(
     std::vector<semantic_type_id>& observed
 ) -> void
 {
-    auto const& statement = ast.statement(id);
+    auto const& statement = ast.node(id);
     std::visit (
         overloaded {
             [&](block_statement_syntax const& node) {
@@ -185,7 +185,7 @@ auto semantic_analyzer::infer_expression_type(
     std::optional<semantic_type_id> expected
 ) -> expression_info
 {
-    auto const& expression = ast.expression(id);
+    auto const& expression = ast.node(id);
     return std::visit (
         overloaded {
             [&](name_expr_syntax const& node) {
@@ -352,7 +352,7 @@ auto semantic_analyzer::infer_callable_return(symbol_id symbol) -> semantic_type
 
 auto semantic_analyzer::callee_function_symbol(ast_arena const& ast, expr_id id) -> std::optional<symbol_id>
 {
-    auto const& expression = ast.expression(id);
+    auto const& expression = ast.node(id);
     if(not is<name_expr_syntax>(expression)) {
         return std::nullopt;
     }
@@ -401,7 +401,7 @@ auto semantic_analyzer::update_inferred_function_return(std::size_t unit_index, 
 
 auto semantic_analyzer::report_cannot_infer_return_type(std::size_t unit_index, function_id id) -> void
 {
-    auto const& function = units[unit_index].ast.function(id);
+    auto const& function = units[unit_index].ast.node(id);
     report(
         diagnostic_kind::cannot_infer_return_type,
         function.full_span,

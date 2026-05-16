@@ -20,7 +20,7 @@ auto semantic_analyzer::check_function(std::size_t unit_index, function_id id) -
     active_ast = &active_unit->ast;
     active_function = id;
 
-    auto const& function = active_ast->function(active_function);
+    auto const& function = active_ast->node(active_function);
     auto signature_id = result.signature_of(active_unit_index, active_function);
     if(not signature_id.valid()) {
         return;
@@ -113,7 +113,7 @@ auto semantic_analyzer::pop_loop() -> void
 
 auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> void
 {
-    auto const& statement = active_ast->statement(id);
+    auto const& statement = active_ast->node(id);
     std::visit (
         overloaded {
             [&](block_statement_syntax const& node) {

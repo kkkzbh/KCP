@@ -8,88 +8,76 @@ import parser.ast.expr;
 import parser.ast.stmt;
 import parser.ast.item;
 
+export template<typename Node>
+concept ast_arena_syntax_node = (
+    std::same_as<std::remove_cvref_t<Node>, expr_syntax>
+    or std::same_as<std::remove_cvref_t<Node>, statement_syntax>
+    or std::same_as<std::remove_cvref_t<Node>, type_syntax>
+    or std::same_as<std::remove_cvref_t<Node>, function_syntax>
+);
+
+export template<typename Id>
+concept ast_arena_id = (
+    std::same_as<std::remove_cvref_t<Id>, expr_id>
+    or std::same_as<std::remove_cvref_t<Id>, stmt_id>
+    or std::same_as<std::remove_cvref_t<Id>, type_id>
+    or std::same_as<std::remove_cvref_t<Id>, function_id>
+);
+
 export struct ast_arena
 {
-    auto add(expr_syntax node) -> expr_id
+    template<ast_arena_syntax_node Node>
+    auto add(Node node) -> ast_arena_id auto
     {
-        auto id = expr_id{static_cast<std::uint32_t>(expressions.size())};
-        expressions.emplace_back(std::move(node));
-        return id;
+        using syntax_node = std::remove_cvref_t<Node>;
+
+        if constexpr(std::same_as<syntax_node, expr_syntax>) {
+            auto id = expr_id{static_cast<std::uint32_t>(expressions.size())};
+            expressions.emplace_back(std::move(node));
+            return id;
+        } else if constexpr(std::same_as<syntax_node, statement_syntax>) {
+            auto id = stmt_id{static_cast<std::uint32_t>(statements.size())};
+            statements.emplace_back(std::move(node));
+            return id;
+        } else if constexpr(std::same_as<syntax_node, type_syntax>) {
+            auto id = type_id{static_cast<std::uint32_t>(types.size())};
+            types.emplace_back(std::move(node));
+            return id;
+        } else {
+            auto id = function_id{static_cast<std::uint32_t>(functions.size())};
+            functions.emplace_back(std::move(node));
+            return id;
+        }
     }
 
-    auto add(statement_syntax node) -> stmt_id
+    template<ast_arena_id Id>
+    auto node(this auto& self, Id id) -> decltype(auto)
     {
-        auto id = stmt_id{static_cast<std::uint32_t>(statements.size())};
-        statements.emplace_back(std::move(node));
-        return id;
+        using id_type = std::remove_cvref_t<Id>;
+
+        if constexpr(std::same_as<id_type, expr_id>) {
+            return (self.expressions[id.value]);
+        } else if constexpr(std::same_as<id_type, stmt_id>) {
+            return (self.statements[id.value]);
+        } else if constexpr(std::same_as<id_type, type_id>) {
+            return (self.types[id.value]);
+        } else {
+            return (self.functions[id.value]);
+        }
     }
 
-    auto add(type_syntax node) -> type_id
+    template<ast_arena_id Id>
+    auto span(Id id) const -> source_span
     {
-        auto id = type_id{static_cast<std::uint32_t>(types.size())};
-        types.emplace_back(std::move(node));
-        return id;
-    }
+        using id_type = std::remove_cvref_t<Id>;
 
-    auto add(function_syntax node) -> function_id
-    {
-        auto id = function_id{static_cast<std::uint32_t>(functions.size())};
-        functions.emplace_back(std::move(node));
-        return id;
-    }
+        auto const& syntax = node(id);
 
-    auto expression(expr_id id) -> expr_syntax&
-    {
-        return expressions[id.value];
-    }
-
-    auto expression(expr_id id) const -> expr_syntax const&
-    {
-        return expressions[id.value];
-    }
-
-    auto statement(stmt_id id) -> statement_syntax&
-    {
-        return statements[id.value];
-    }
-
-    auto statement(stmt_id id) const -> statement_syntax const&
-    {
-        return statements[id.value];
-    }
-
-    auto type(type_id id) -> type_syntax&
-    {
-        return types[id.value];
-    }
-
-    auto type(type_id id) const -> type_syntax const&
-    {
-        return types[id.value];
-    }
-
-    auto function(function_id id) -> function_syntax&
-    {
-        return functions[id.value];
-    }
-
-    auto function(function_id id) const -> function_syntax const&
-    {
-        return functions[id.value];
-    }
-
-    auto span(type_id id) const -> source_span
-    {
-        return type(id).full_span;
-    }
-
-    auto span(expr_id id) const -> source_span;
-
-    auto span(stmt_id id) const -> source_span;
-
-    auto span(function_id id) const -> source_span
-    {
-        return function(id).full_span;
+        if constexpr(std::same_as<id_type, expr_id> or std::same_as<id_type, stmt_id>) {
+            return std::visit([](auto const& item) { return item.full_span; }, syntax);
+        } else {
+            return syntax.full_span;
+        }
     }
 
     std::vector<expr_syntax> expressions{};
@@ -97,13 +85,3 @@ export struct ast_arena
     std::vector<type_syntax> types{};
     std::vector<function_syntax> functions{};
 };
-
-auto ast_arena::span(expr_id id) const -> source_span
-{
-    return std::visit([](auto const& node) { return node.full_span; }, expression(id));
-}
-
-auto ast_arena::span(stmt_id id) const -> source_span
-{
-    return std::visit([](auto const& node) { return node.full_span; }, statement(id));
-}

@@ -177,7 +177,7 @@ struct function_lowerer
 
     auto lower() -> bool
     {
-        auto const& syntax = parsed.ast.function(function_id_value);
+        auto const& syntax = parsed.ast.node(function_id_value);
         auto signature_id = semantics.signature_of(unit_index, function_id_value);
         auto symbol = semantics.function_symbol_of(unit_index, function_id_value);
         if(not signature_id.valid() or not symbol.valid()) {
@@ -356,7 +356,7 @@ struct function_lowerer
 
     auto emit_statement(stmt_id id) -> bool
     {
-        auto const& statement = parsed.ast.statement(id);
+        auto const& statement = parsed.ast.node(id);
         return std::visit (
             overloaded {
                 [&](block_statement_syntax const& node) {
@@ -611,7 +611,7 @@ struct function_lowerer
 
     auto emit_expression(expr_id id) -> ir_value_id
     {
-        auto const& expression = parsed.ast.expression(id);
+        auto const& expression = parsed.ast.node(id);
         auto value = std::visit (
             overloaded {
                 [&](name_expr_syntax const& node) {
@@ -885,7 +885,7 @@ struct function_lowerer
 
     auto emit_address(expr_id id) -> ir_value_id
     {
-        auto const& expression = parsed.ast.expression(id);
+        auto const& expression = parsed.ast.node(id);
         if(auto const* name = std::get_if<name_expr_syntax>(&expression)) {
             auto symbol = semantics.resolved_name(unit_index, id);
             if(not symbol.valid()) {

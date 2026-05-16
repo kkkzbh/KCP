@@ -77,7 +77,7 @@ auto semantic_analyzer::collect_function_declaration(
     function_id id
 ) -> void
 {
-    auto const& function = ast.function(id);
+    auto const& function = ast.node(id);
     auto name = std::string{ ast_source.identifier(function.name) };
     auto const& state = units[unit_index];
     auto& local_names = module_functions[state.module_key];

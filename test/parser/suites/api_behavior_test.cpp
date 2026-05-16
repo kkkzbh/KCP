@@ -10,28 +10,28 @@ namespace {
 auto first_function(parse_result const& parsed) -> function_syntax const&
 {
     auto const& unit = *parsed.root;
-    return parsed.ast.function(unit.functions.front());
+    return parsed.ast.node(unit.functions.front());
 }
 
 [[nodiscard]]
 auto function_body(parse_result const& parsed, function_syntax const& function)
     -> block_statement_syntax const&
 {
-    return as<block_statement_syntax>(parsed.ast.statement(function.body));
+    return as<block_statement_syntax>(parsed.ast.node(function.body));
 }
 
 [[nodiscard]]
 auto declaration(parse_result const& parsed, stmt_id statement)
     -> declaration_statement_syntax const&
 {
-    return as<declaration_statement_syntax>(parsed.ast.statement(statement));
+    return as<declaration_statement_syntax>(parsed.ast.node(statement));
 }
 
 [[nodiscard]]
 auto expression_statement(parse_result const& parsed, stmt_id statement)
     -> expression_statement_syntax const&
 {
-    return as<expression_statement_syntax>(parsed.ast.statement(statement));
+    return as<expression_statement_syntax>(parsed.ast.node(statement));
 }
 
 [[nodiscard]]
@@ -104,7 +104,7 @@ main()
 
     auto const& rows = declaration(parsed, body.statements.front());
     test_parser::assert_true(rows.declared_type != std::nullopt, "first declaration should preserve its explicit type");
-    auto const& rows_type = parsed.ast.type(*rows.declared_type);
+    auto const& rows_type = parsed.ast.node(*rows.declared_type);
     test_parser::assert_true (
         ast_source.identifier(rows_type.name) == "array",
         "first declaration type should be array");
@@ -146,7 +146,7 @@ main()
 
     auto const& pointer = declaration(shaped, shaped_body.statements[0]);
     test_parser::assert_true(pointer.declared_type != std::nullopt, "pointer declaration should keep explicit type");
-    auto const& pointer_type = shaped.ast.type(*pointer.declared_type);
+    auto const& pointer_type = shaped.ast.node(*pointer.declared_type);
     test_parser::assert_true(pointer_type.is_const, "pointer declaration should keep final pointee const information");
     test_parser::assert_true (
         pointer_type.suffix_operators.size() == 3
@@ -157,12 +157,12 @@ main()
 
     auto const& nested = declaration(shaped, shaped_body.statements[1]);
     test_parser::assert_true(nested.declared_type != std::nullopt, "nested generic declaration should keep explicit type");
-    auto const& outer_type = shaped.ast.type(*nested.declared_type);
+    auto const& outer_type = shaped.ast.node(*nested.declared_type);
     test_parser::assert_true (
         ast_source.identifier(outer_type.name) == "outer",
         "nested generic declaration should preserve the outer type name");
     auto const inner_type_id = type_argument_type(outer_type.arguments.front());
-    auto const& inner_type = shaped.ast.type(inner_type_id);
+    auto const& inner_type = shaped.ast.node(inner_type_id);
     test_parser::assert_true (
         outer_type.arguments.size() == 1 and inner_type.arguments.size() == 1,
         "nested generic declaration should preserve inner type arguments split from >>");
@@ -208,37 +208,37 @@ main()
         "statement recovery should stop at semicolon even after an unclosed parenthesis");
 
     auto const& empty_array = declaration(shaped, shaped_body.statements[2]);
-    auto const& empty_array_expr = shaped.ast.expression(empty_array.initializer);
+    auto const& empty_array_expr = shaped.ast.node(empty_array.initializer);
     test_parser::assert_true (
         is<array_literal_expr_syntax>(empty_array_expr)
             and as<array_literal_expr_syntax>(empty_array_expr).elements.empty(),
         "empty array literal should parse as an array literal with no operands");
 
     auto const& empty_sequence = declaration(shaped, shaped_body.statements[3]);
-    auto const& empty_sequence_expr = shaped.ast.expression(empty_sequence.initializer);
+    auto const& empty_sequence_expr = shaped.ast.node(empty_sequence.initializer);
     test_parser::assert_true (
         is<sequence_literal_expr_syntax>(empty_sequence_expr)
             and as<sequence_literal_expr_syntax>(empty_sequence_expr).elements.empty(),
         "empty sequence literal should parse as a sequence literal with no operands");
 
     auto const& increment_stmt = expression_statement(shaped, shaped_body.statements[4]);
-    auto const& increment = as<unary_expr_syntax>(shaped.ast.expression(increment_stmt.expression));
+    auto const& increment = as<unary_expr_syntax>(shaped.ast.node(increment_stmt.expression));
     test_parser::assert_true (
         increment.operator_kind == token_kind::plus_plus and increment.position == unary_position::postfix,
         "postfix increment should remain an expression statement with unary ++");
 
     auto const& decrement_stmt = expression_statement(shaped, shaped_body.statements[5]);
-    auto const& decrement = as<unary_expr_syntax>(shaped.ast.expression(decrement_stmt.expression));
+    auto const& decrement = as<unary_expr_syntax>(shaped.ast.node(decrement_stmt.expression));
     test_parser::assert_true (
         decrement.operator_kind == token_kind::minus_minus and decrement.position == unary_position::postfix,
         "postfix decrement should remain an expression statement with unary --");
 
-    auto const& if_stmt = as<if_statement_syntax>(shaped.ast.statement(shaped_body.statements[6]));
+    auto const& if_stmt = as<if_statement_syntax>(shaped.ast.node(shaped_body.statements[6]));
     test_parser::assert_true(if_stmt.else_branch != std::nullopt, "if statement should keep else-if branch");
-    auto const& else_if = as<if_statement_syntax>(shaped.ast.statement(*if_stmt.else_branch));
+    auto const& else_if = as<if_statement_syntax>(shaped.ast.node(*if_stmt.else_branch));
     test_parser::assert_true (
         else_if.else_branch
-            and is<block_statement_syntax>(shaped.ast.statement(*else_if.else_branch)),
+            and is<block_statement_syntax>(shaped.ast.node(*else_if.else_branch)),
         "else-if chains should keep the trailing else block");
 
     return 0;

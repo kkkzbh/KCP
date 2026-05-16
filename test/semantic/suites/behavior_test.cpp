@@ -78,7 +78,7 @@ auto function_return_type(
     auto source = ast_source_view{ sources };
     auto const& unit = *parsed.root;
     for(auto id : unit.functions) {
-        auto const& function = parsed.ast.function(id);
+        auto const& function = parsed.ast.node(id);
         if(source.identifier(function.name) == name) {
             auto signature = checked.signature_of(id);
             test_parser::assert_true(signature.valid(), std::format("{} should have a signature", name));
@@ -120,9 +120,9 @@ auto check_side_tables() -> void
     test_parser::assert_true(checked.accepted(), "side table source should pass semantic analysis");
 
     auto const& unit = *parsed.root;
-    auto const& function = parsed.ast.function(unit.functions.front());
-    auto const& body = as<block_statement_syntax>(parsed.ast.statement(function.body));
-    auto const& data = as<declaration_statement_syntax>(parsed.ast.statement(body.statements.front()));
+    auto const& function = parsed.ast.node(unit.functions.front());
+    auto const& body = as<block_statement_syntax>(parsed.ast.node(function.body));
+    auto const& data = as<declaration_statement_syntax>(parsed.ast.node(body.statements.front()));
     auto data_type = checked.type_of(data.initializer);
     test_parser::assert_true(data_type.valid(), "array literal should have a semantic type");
     test_parser::assert_true(

@@ -289,7 +289,7 @@ auto add_token_highlights(
 
 auto collect_type_highlights(highlight_collector& collector, ast_arena const& ast, type_id id) -> void
 {
-    auto const& type = ast.type(id);
+    auto const& type = ast.node(id);
     collector.add("type", type.name);
     for(auto const& argument : type.arguments) {
         std::visit(overloaded {
@@ -312,7 +312,7 @@ auto collect_expression_highlights(
     bool call_callee = false
 ) -> void
 {
-    auto const& expression = ast.expression(id);
+    auto const& expression = ast.node(id);
     std::visit(overloaded {
         [&](name_expr_syntax const& node) {
             if(call_callee) {
@@ -392,7 +392,7 @@ auto collect_statement_highlights(
     stmt_id id
 ) -> void
 {
-    auto const& statement = ast.statement(id);
+    auto const& statement = ast.node(id);
     std::visit(overloaded {
         [&](block_statement_syntax const& node) {
             for(auto child : node.statements) {
@@ -481,7 +481,7 @@ auto collect_ast_highlights(
     }
 
     for(auto id : root.functions) {
-        auto const& function = parsed.ast.function(id);
+        auto const& function = parsed.ast.node(id);
         collector.add("function.declaration", function.name);
         for(auto const& parameter : function.parameters) {
             collector.add("parameter.declaration", parameter.name);

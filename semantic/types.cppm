@@ -4,7 +4,7 @@ import semantic;
 
 auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic_type_id
 {
-    auto const& syntax = ast.type(id);
+    auto const& syntax = ast.node(id);
     auto name = ast_source.identifier(syntax.name);
     auto lowered = semantic_type_id{};
     if(auto builtin = is_builtin_name(name)) {
@@ -400,7 +400,7 @@ auto semantic_analyzer::binary_type(token_kind operator_kind, semantic_type_id l
 auto semantic_analyzer::function_style_cast_type(ast_arena const& ast, call_expr_syntax const& node)
     -> std::optional<semantic_type_id>
 {
-    auto const& callee = ast.expression(node.callee);
+    auto const& callee = ast.node(node.callee);
     if(not is<name_expr_syntax>(callee)) {
         return std::nullopt;
     }
