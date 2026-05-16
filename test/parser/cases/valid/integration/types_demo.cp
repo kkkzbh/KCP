@@ -8,7 +8,6 @@ export literals_and_casts() -> i32
     let ratio = 0.5;
     let title: str = "cp";
 
-    let seq: sequence<i32,3> = {1, 2, 3};
     let data: array<i32,3> = [4, 5, 6];
     let triple: tuple<i32,f64,char> = (count, ratio, letter);
 

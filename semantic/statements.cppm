@@ -179,7 +179,7 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                     report(
                         diagnostic_kind::invalid_range,
                         node.full_span,
-                        "for range must be array<T,N> or sequence<T,N>"
+                        "for range must be array<T,N>"
                     );
                     element = semantic_type_ids::error;
                 }

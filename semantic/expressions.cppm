@@ -34,10 +34,7 @@ auto semantic_analyzer::check_expression(
                     return check_cast_expression(ast, node);
                 },
                 [&](array_literal_expr_syntax const& node) {
-                    return check_array_like_literal(ast, node.full_span, node.elements, expected, true);
-                },
-                [&](sequence_literal_expr_syntax const& node) {
-                    return check_array_like_literal(ast, node.full_span, node.elements, expected, false);
+                    return check_array_literal(ast, node.full_span, node.elements, expected);
                 },
                 [&](tuple_literal_expr_syntax const& node) {
                     return check_tuple_literal(ast, node, expected);
@@ -409,15 +406,14 @@ auto semantic_analyzer::check_cast_expression(ast_arena const& ast, cast_expr_sy
     return expression_info{ .type = target };
 }
 
-auto semantic_analyzer::check_array_like_literal(
+auto semantic_analyzer::check_array_literal(
     ast_arena const& ast,
     source_span span,
     std::vector<expr_id> const& elements,
-    std::optional<semantic_type_id> expected,
-    bool is_array
+    std::optional<semantic_type_id> expected
 ) -> expression_info
 {
-    if(auto aggregate = aggregate_context_for(expected, is_array)) {
+    if(auto aggregate = aggregate_context_for(expected)) {
         if(aggregate->length != elements.size()) {
             report(
                 diagnostic_kind::aggregate_length_mismatch,
@@ -435,7 +431,7 @@ auto semantic_analyzer::check_array_like_literal(
         report(
             diagnostic_kind::type_mismatch,
             span,
-            is_array ? "array literal requires array context" : "sequence literal requires sequence context"
+            "array literal requires array context"
         );
     }
 
@@ -454,16 +450,8 @@ auto semantic_analyzer::check_array_like_literal(
     }
 
     auto joined = join_same_class_numeric_or_equal(element_types, span);
-    if(is_array) {
-        return expression_info {
-            .type = intern_type (array_type {
-                .element = joined,
-                .length = elements.size(),
-            }),
-        };
-    }
     return expression_info {
-        .type = intern_type (sequence_type {
+        .type = intern_type (array_type {
             .element = joined,
             .length = elements.size(),
         }),

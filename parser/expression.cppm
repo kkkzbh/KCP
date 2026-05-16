@@ -70,7 +70,6 @@ auto parser::starts_expression(token_kind kind) const -> bool
         kw_false,
         l_paren,
         l_bracket,
-        l_brace,
         plus,
         minus,
         kw_not,
@@ -336,10 +335,7 @@ auto parser::parse_primary() -> std::optional<expr_id>
             break;
         }
         case token_kind::l_bracket:
-            expression = parse_bracket_literal(token_kind::l_bracket, token_kind::r_bracket);
-            break;
-        case token_kind::l_brace:
-            expression = parse_bracket_literal(token_kind::l_brace, token_kind::r_brace);
+            expression = parse_array_literal();
             break;
         case token_kind::l_paren:
             expression = parse_paren_expression();
@@ -357,18 +353,15 @@ auto parser::parse_primary() -> std::optional<expr_id>
     return expression;
 }
 
-auto parser::parse_bracket_literal(
-    token_kind open_kind,
-    token_kind close_kind
-) -> std::optional<expr_id>
+auto parser::parse_array_literal() -> std::optional<expr_id>
 {
-    auto open = expect(open_kind);
+    auto open = expect(token_kind::l_bracket);
     if(not open) {
         return std::nullopt;
     }
 
     auto elements = std::vector<expr_id>{};
-    if(not check(close_kind)) {
+    if(not check(token_kind::r_bracket)) {
         if(not expect_expression_start()) {
             return std::nullopt;
         }
@@ -391,23 +384,14 @@ auto parser::parse_bracket_literal(
         }
     }
 
-    auto close = expect(close_kind);
+    auto close = expect(token_kind::r_bracket);
     if(not close) {
         return std::nullopt;
     }
 
     auto span = combine_spans(open->span, close->span);
-    if(open_kind == token_kind::l_bracket) {
-        return arena.add(expr_syntax {
-            array_literal_expr_syntax {
-                .full_span = span,
-                .elements = std::move(elements),
-            }
-        });
-    }
-
     return arena.add(expr_syntax {
-        sequence_literal_expr_syntax {
+        array_literal_expr_syntax {
             .full_span = span,
             .elements = std::move(elements),
         }

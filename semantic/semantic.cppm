@@ -155,8 +155,7 @@ private:
     auto join_same_class_numeric_or_equal(std::vector<semantic_type_id> const& values, source_span span)
         -> semantic_type_id;
     auto terminal_pointee_const(semantic_type_id pointee, bool target_const) -> bool;
-    auto lower_array_or_sequence_type(ast_arena const& ast, type_syntax const& syntax, bool is_array)
-        -> semantic_type_id;
+    auto lower_array_type(ast_arena const& ast, type_syntax const& syntax) -> semantic_type_id;
     auto lower_tuple_type(ast_arena const& ast, type_syntax const& syntax) -> semantic_type_id;
     auto parse_length(source_span span) -> std::uint64_t;
 
@@ -165,8 +164,7 @@ private:
     auto binary_type(token_kind operator_kind, semantic_type_id left, semantic_type_id right) -> expression_info;
     auto function_style_cast_type(ast_arena const& ast, call_expr_syntax const& node)
         -> std::optional<semantic_type_id>;
-    auto aggregate_context_for(std::optional<semantic_type_id> expected, bool is_array)
-        -> std::optional<aggregate_context>;
+    auto aggregate_context_for(std::optional<semantic_type_id> expected) -> std::optional<aggregate_context>;
     auto join_return_types(std::vector<semantic_type_id> const& values) -> semantic_type_id;
 
     auto infer_return_types() -> void;
@@ -178,11 +176,10 @@ private:
         -> expression_info;
     auto infer_name_expression(name_expr_syntax const& node) -> expression_info;
     auto infer_call_expression(ast_arena const& ast, call_expr_syntax const& node) -> expression_info;
-    auto infer_array_like_literal(
+    auto infer_array_literal(
         ast_arena const& ast,
         std::vector<expr_id> const& elements,
-        std::optional<semantic_type_id> expected,
-        bool is_array
+        std::optional<semantic_type_id> expected
     ) -> expression_info;
     auto infer_tuple_literal(
         ast_arena const& ast,
@@ -224,12 +221,11 @@ private:
     auto compound_assignment_operator(token_kind operator_kind) -> std::optional<token_kind>;
     auto check_call_expression(ast_arena const& ast, call_expr_syntax const& node) -> expression_info;
     auto check_cast_expression(ast_arena const& ast, cast_expr_syntax const& node) -> expression_info;
-    auto check_array_like_literal(
+    auto check_array_literal(
         ast_arena const& ast,
         source_span span,
         std::vector<expr_id> const& elements,
-        std::optional<semantic_type_id> expected,
-        bool is_array
+        std::optional<semantic_type_id> expected
     ) -> expression_info;
     auto check_tuple_literal(
         ast_arena const& ast,
@@ -241,21 +237,21 @@ private:
     auto parse_char_literal(std::string_view text) -> char;
     auto parse_string_literal(std::string_view text) -> std::string;
 
-    ast_source_view ast_source;
-    diagnostic_collector diagnostics{};
-    semantic_result result{};
-    std::vector<semantic_unit_state> units{};
-    std::map<std::string, std::map<std::string, symbol_id>> module_functions{};
-    std::map<std::string, std::map<std::string, symbol_id>> module_exports{};
-    std::size_t active_unit_index{};
-    semantic_unit_state const* active_unit{};
-    ast_arena const* active_ast{};
-    function_id active_function{};
-    std::vector<std::map<std::string, symbol_id>> scopes{};
-    std::vector<loop_label> loops{};
-    std::map<return_inference_key, return_inference_state> return_states{};
-    std::vector<std::map<std::string, return_inference_binding>> return_scopes{};
-    std::size_t return_unit{};
+    ast_source_view ast_source; ///< 读取源码切片、标识符文本和模块名的 AST 源码视图。
+    diagnostic_collector diagnostics{}; ///< 当前语义分析过程累计的诊断信息。
+    semantic_result result{}; ///< 正在构建的语义结果，保存类型、符号、绑定和转换信息。
+    std::vector<semantic_unit_state> units{}; ///< 待分析的翻译单元状态列表。
+    std::map<std::string, std::map<std::string, symbol_id>> module_functions{}; ///< 按内部模块 key 索引的本模块函数符号表。
+    std::map<std::string, std::map<std::string, symbol_id>> module_exports{}; ///< 按模块名索引的导出函数符号表。
+    std::size_t active_unit_index{}; ///< 当前函数体检查所在的翻译单元下标。
+    semantic_unit_state const* active_unit{}; ///< 当前函数体检查所在的翻译单元状态。
+    ast_arena const* active_ast{}; ///< 当前函数体检查使用的 AST arena。
+    function_id active_function{}; ///< 当前正在检查的函数语法节点 id。
+    std::vector<std::map<std::string, symbol_id>> scopes{}; ///< 函数体检查阶段的词法作用域栈。
+    std::vector<loop_label> loops{}; ///< 当前嵌套循环标签栈，用于校验跳转语句。
+    std::map<return_inference_key, return_inference_state> return_states{}; ///< 函数返回类型推断状态表。
+    std::vector<std::map<std::string, return_inference_binding>> return_scopes{}; ///< 返回类型推断阶段的词法绑定栈。
+    std::size_t return_unit{}; ///< 当前返回类型推断所在的翻译单元下标。
 };
 
 export auto analyze_semantics(source_manager const& sources, std::span<parse_result const> units) -> semantic_result

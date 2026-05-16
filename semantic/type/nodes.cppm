@@ -39,14 +39,6 @@ export struct array_type
     std::uint64_t length{};
 };
 
-export struct sequence_type
-{
-    auto constexpr operator==(sequence_type const&) const -> bool = default;
-
-    semantic_type_id element{};
-    std::uint64_t length{};
-};
-
 export struct tuple_type
 {
     tuple_type() = default;
@@ -101,7 +93,6 @@ export using semantic_type_kind = std::variant <
     inferred_type,
     builtin_type,
     array_type,
-    sequence_type,
     tuple_type,
     reference_type,
     pointer_type,

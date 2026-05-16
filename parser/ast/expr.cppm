@@ -81,14 +81,6 @@ export struct array_literal_expr_syntax
     std::vector<expr_id> elements{};
 };
 
-export struct sequence_literal_expr_syntax
-{
-    auto constexpr operator==(sequence_literal_expr_syntax const& other) const -> bool = default;
-
-    source_span full_span{};
-    std::vector<expr_id> elements{};
-};
-
 export struct tuple_literal_expr_syntax
 {
     auto constexpr operator==(tuple_literal_expr_syntax const& other) const -> bool = default;
@@ -114,6 +106,5 @@ export using expr_syntax = std::variant<
     call_expr_syntax,
     cast_expr_syntax,
     array_literal_expr_syntax,
-    sequence_literal_expr_syntax,
     tuple_literal_expr_syntax,
     grouped_expr_syntax>;

@@ -81,7 +81,7 @@ class CpAnnotatorTest : BasePlatformTestCase() {
                 "literals_and_casts" to CpSyntaxHighlighter.FUNCTION_DECLARATION,
                 "types_demo" to CpSyntaxHighlighter.MODULE_NAME,
                 "count" to CpSyntaxHighlighter.LOCAL_VARIABLE,
-                "sequence" to CpSyntaxHighlighter.TYPE,
+                "array" to CpSyntaxHighlighter.TYPE,
                 "i32" to CpSyntaxHighlighter.TYPE,
             ),
         )

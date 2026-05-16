@@ -50,9 +50,6 @@ struct llvm_type_lowerer
             [&](array_type const& type) -> llvm::Type* {
                 return llvm::ArrayType::get(lower(type.element), type.length);
             },
-            [&](sequence_type const& type) -> llvm::Type* {
-                return llvm::ArrayType::get(lower(type.element), type.length);
-            },
             [&](tuple_type const& type) -> llvm::Type* {
                 auto elements = std::vector<llvm::Type*>{};
                 for(auto element : type.elements) {

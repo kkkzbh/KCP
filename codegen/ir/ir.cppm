@@ -560,7 +560,7 @@ struct function_lowerer
         auto range_type = semantics.info_of(unit_index, node.range).read_type;
         auto shape = aggregate_shape_of(range_type);
         if(not shape) {
-            return fail("for range lowering requires array or sequence type");
+            return fail("for range lowering requires array type");
         }
 
         auto symbol = semantics.binding_of(unit_index, id);
@@ -648,9 +648,6 @@ struct function_lowerer
                 [&](array_literal_expr_syntax const& node) {
                     return emit_array_like_literal(node.elements, semantics.info_of(unit_index, id).read_type);
                 },
-                [&](sequence_literal_expr_syntax const& node) {
-                    return emit_array_like_literal(node.elements, semantics.info_of(unit_index, id).read_type);
-                },
                 [&](tuple_literal_expr_syntax const& node) {
                     return emit_tuple_literal(node.elements, semantics.info_of(unit_index, id).read_type);
                 },
@@ -667,7 +664,7 @@ struct function_lowerer
     {
         auto shape = aggregate_shape_of(type);
         if(not shape) {
-            return unsupported_expression("array or sequence literal is missing aggregate type");
+            return unsupported_expression("array literal is missing aggregate type");
         }
         auto aggregate = emit_aggregate_undef(type);
         for(auto index = 0uz; index < elements.size(); ++index) {
@@ -962,12 +959,6 @@ struct function_lowerer
             return aggregate_shape {
                 .element = array->element,
                 .length = static_cast<std::size_t>(array->length),
-            };
-        }
-        if(auto const* sequence = std::get_if<sequence_type>(&kind)) {
-            return aggregate_shape {
-                .element = sequence->element,
-                .length = static_cast<std::size_t>(sequence->length),
             };
         }
         return std::nullopt;

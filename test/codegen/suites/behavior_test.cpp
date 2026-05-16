@@ -112,7 +112,6 @@ auto check_aggregate_literals() -> void
         "aggregates.cp",
         R"(answer() -> i32
 {
-    let seq: sequence<i32,3> = {1, 2, 3};
     let data: array<i32,3> = [4, 5, 6];
     let pair: tuple<i32,f64> = (1, 2.0);
     return 42;

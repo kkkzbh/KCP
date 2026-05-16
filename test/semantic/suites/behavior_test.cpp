@@ -112,7 +112,6 @@ auto check_side_tables() -> void
         R"(main()
 {
     let data = [1, 2, 3];
-    let seq = {1, 2, 3};
     let value: i64 = 1;
     return value;
 })");

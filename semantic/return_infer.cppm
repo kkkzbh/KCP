@@ -217,10 +217,7 @@ auto semantic_analyzer::infer_expression_type(
                 return expression_info{ .type = lower_type(ast, node.type) };
             },
             [&](array_literal_expr_syntax const& node) {
-                return infer_array_like_literal(ast, node.elements, expected, true);
-            },
-            [&](sequence_literal_expr_syntax const& node) {
-                return infer_array_like_literal(ast, node.elements, expected, false);
+                return infer_array_literal(ast, node.elements, expected);
             },
             [&](tuple_literal_expr_syntax const& node) {
                 return infer_tuple_literal(ast, node.elements, expected);
@@ -275,11 +272,10 @@ auto semantic_analyzer::infer_call_expression(ast_arena const& ast, call_expr_sy
     return expression_info{ .type = semantic_type_ids::error };
 }
 
-auto semantic_analyzer::infer_array_like_literal(
+auto semantic_analyzer::infer_array_literal(
     ast_arena const& ast,
     std::vector<expr_id> const& elements,
-    std::optional<semantic_type_id> expected,
-    bool is_array
+    std::optional<semantic_type_id> expected
 ) -> expression_info
 {
     if(expected) {
@@ -300,16 +296,8 @@ auto semantic_analyzer::infer_array_like_literal(
     if(is_error(joined) or is_inferred(joined)) {
         return expression_info{ .type = joined };
     }
-    if(is_array) {
-        return expression_info {
-            .type = intern_type (array_type {
-                .element = joined,
-                .length = elements.size(),
-            }),
-        };
-    }
     return expression_info {
-        .type = intern_type (sequence_type {
+        .type = intern_type (array_type {
             .element = joined,
             .length = elements.size(),
         }),

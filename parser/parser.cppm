@@ -38,7 +38,7 @@ struct parser
     auto parse_unary() -> std::optional<expr_id>;
     auto parse_postfix() -> std::optional<expr_id>;
     auto parse_primary() -> std::optional<expr_id>;
-    auto parse_bracket_literal(token_kind open_kind, token_kind close_kind) -> std::optional<expr_id>;
+    auto parse_array_literal() -> std::optional<expr_id>;
     auto parse_paren_expression() -> std::optional<expr_id>;
 
     auto parse_statement() -> std::optional<stmt_id>;

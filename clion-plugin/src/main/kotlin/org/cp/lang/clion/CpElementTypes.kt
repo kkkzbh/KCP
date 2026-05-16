@@ -40,7 +40,6 @@ object CpElements {
     @JvmField val CALL_EXPRESSION = element("call_expression")
     @JvmField val CAST_EXPRESSION = element("cast_expression")
     @JvmField val ARRAY_LITERAL = element("array_literal")
-    @JvmField val SEQUENCE_LITERAL = element("sequence_literal")
     @JvmField val TUPLE_LITERAL = element("tuple_literal")
     @JvmField val GROUPED_EXPRESSION = element("grouped_expression")
     @JvmField val ARGUMENT_LIST = element("argument_list")

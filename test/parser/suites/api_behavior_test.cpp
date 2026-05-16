@@ -123,7 +123,6 @@ main()
     let pointer: i32 const**& = value;
     let nested: outer<inner<i32>> = seed;
     let empty_array = [];
-    let empty_sequence = {};
     counter++;
     other--;
     if(flag) {
@@ -142,7 +141,7 @@ main()
 
     auto const& shaped_function = first_function(shaped);
     auto const& shaped_body = function_body(shaped, shaped_function);
-    test_parser::assert_true(shaped_body.statements.size() == 7, "shape-focused source should contain seven statements");
+    test_parser::assert_true(shaped_body.statements.size() == 6, "shape-focused source should contain six statements");
 
     auto const& pointer = declaration(shaped, shaped_body.statements[0]);
     test_parser::assert_true(pointer.declared_type != std::nullopt, "pointer declaration should keep explicit type");
@@ -214,26 +213,19 @@ main()
             and as<array_literal_expr_syntax>(empty_array_expr).elements.empty(),
         "empty array literal should parse as an array literal with no operands");
 
-    auto const& empty_sequence = declaration(shaped, shaped_body.statements[3]);
-    auto const& empty_sequence_expr = shaped.ast.node(empty_sequence.initializer);
-    test_parser::assert_true (
-        is<sequence_literal_expr_syntax>(empty_sequence_expr)
-            and as<sequence_literal_expr_syntax>(empty_sequence_expr).elements.empty(),
-        "empty sequence literal should parse as a sequence literal with no operands");
-
-    auto const& increment_stmt = expression_statement(shaped, shaped_body.statements[4]);
+    auto const& increment_stmt = expression_statement(shaped, shaped_body.statements[3]);
     auto const& increment = as<unary_expr_syntax>(shaped.ast.node(increment_stmt.expression));
     test_parser::assert_true (
         increment.operator_kind == token_kind::plus_plus and increment.position == unary_position::postfix,
         "postfix increment should remain an expression statement with unary ++");
 
-    auto const& decrement_stmt = expression_statement(shaped, shaped_body.statements[5]);
+    auto const& decrement_stmt = expression_statement(shaped, shaped_body.statements[4]);
     auto const& decrement = as<unary_expr_syntax>(shaped.ast.node(decrement_stmt.expression));
     test_parser::assert_true (
         decrement.operator_kind == token_kind::minus_minus and decrement.position == unary_position::postfix,
         "postfix decrement should remain an expression statement with unary --");
 
-    auto const& if_stmt = as<if_statement_syntax>(shaped.ast.node(shaped_body.statements[6]));
+    auto const& if_stmt = as<if_statement_syntax>(shaped.ast.node(shaped_body.statements[5]));
     test_parser::assert_true(if_stmt.else_branch != std::nullopt, "if statement should keep else-if branch");
     auto const& else_if = as<if_statement_syntax>(shaped.ast.node(*if_stmt.else_branch));
     test_parser::assert_true (

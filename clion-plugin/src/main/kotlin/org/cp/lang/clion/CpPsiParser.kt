@@ -415,7 +415,6 @@ private class CpBuilder(
                 marker
             }
             at(CpTypes.L_BRACKET) -> parseDelimitedExpressionList(CpTypes.L_BRACKET, CpTypes.R_BRACKET, CpElements.ARRAY_LITERAL)
-            at(CpTypes.L_BRACE) -> parseDelimitedExpressionList(CpTypes.L_BRACE, CpTypes.R_BRACE, CpElements.SEQUENCE_LITERAL)
             at(CpTypes.L_PAREN) -> parseParenExpression()
             else -> {
                 builder.error("expected expression")

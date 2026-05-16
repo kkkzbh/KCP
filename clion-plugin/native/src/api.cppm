@@ -368,11 +368,6 @@ auto collect_expression_highlights(
                 collect_expression_highlights(collector, ast, checked, unit_index, element);
             }
         },
-        [&](sequence_literal_expr_syntax const& node) {
-            for(auto element : node.elements) {
-                collect_expression_highlights(collector, ast, checked, unit_index, element);
-            }
-        },
         [&](tuple_literal_expr_syntax const& node) {
             for(auto element : node.elements) {
                 collect_expression_highlights(collector, ast, checked, unit_index, element);

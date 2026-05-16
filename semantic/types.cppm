@@ -17,8 +17,8 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
             );
             lowered = semantic_type_ids::error;
         }
-    } else if(name == "array" or name == "sequence") {
-        lowered = lower_array_or_sequence_type(ast, syntax, name == "array");
+    } else if(name == "array") {
+        lowered = lower_array_type(ast, syntax);
     } else if(name == "tuple") {
         lowered = lower_tuple_type(ast, syntax);
     } else {
@@ -46,9 +46,6 @@ auto semantic_analyzer::range_element_type(semantic_type_id type) -> semantic_ty
     auto const& kind = result.types.get(value);
     if(auto const* array = std::get_if<array_type>(&kind)) {
         return array->element;
-    }
-    if(auto const* sequence = std::get_if<sequence_type>(&kind)) {
-        return sequence->element;
     }
     return {};
 }
@@ -235,14 +232,13 @@ auto semantic_analyzer::terminal_pointee_const(semantic_type_id pointee, bool ta
            and not std::holds_alternative<reference_type>(kind);
 }
 
-auto semantic_analyzer::lower_array_or_sequence_type(ast_arena const& ast, type_syntax const& syntax, bool is_array)
-    -> semantic_type_id
+auto semantic_analyzer::lower_array_type(ast_arena const& ast, type_syntax const& syntax) -> semantic_type_id
 {
     if(syntax.arguments.size() != 2uz) {
         report (
             diagnostic_kind::invalid_type_argument,
             syntax.full_span,
-            is_array ? "array requires <type,length>" : "sequence requires <type,length>"
+            "array requires <type,length>"
         );
         return semantic_type_ids::error;
     }
@@ -254,20 +250,14 @@ auto semantic_analyzer::lower_array_or_sequence_type(ast_arena const& ast, type_
         report (
             diagnostic_kind::invalid_type_argument,
             syntax.full_span,
-            is_array ? "array requires <type,length>" : "sequence requires <type,length>"
+            "array requires <type,length>"
         );
         return semantic_type_ids::error;
     }
 
     auto element = lower_type(ast, as<type_argument_type_syntax>(syntax.arguments.front()).type);
     auto length = parse_length(as<type_argument_literal_syntax>(syntax.arguments.back()).literal);
-    if(is_array) {
-        return result.types.intern (array_type {
-            .element = element,
-            .length = length,
-        });
-    }
-    return result.types.intern (sequence_type {
+    return result.types.intern (array_type {
         .element = element,
         .length = length,
     });
@@ -305,7 +295,7 @@ auto semantic_analyzer::parse_length(source_span span) -> std::uint64_t
     auto value = std::uint64_t{};
     auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
     if(parsed.ec != std::errc{}) {
-        report(diagnostic_kind::invalid_type_argument, span, "invalid array or sequence length");
+        report(diagnostic_kind::invalid_type_argument, span, "invalid array length");
         return 0;
     }
     return value;
@@ -412,26 +402,17 @@ auto semantic_analyzer::function_style_cast_type(ast_arena const& ast, call_expr
     return std::nullopt;
 }
 
-auto semantic_analyzer::aggregate_context_for(std::optional<semantic_type_id> expected, bool is_array)
+auto semantic_analyzer::aggregate_context_for(std::optional<semantic_type_id> expected)
     -> std::optional<aggregate_context>
 {
     if(not expected) {
         return std::nullopt;
     }
     auto const& type = result.types.get(*expected);
-    if(is_array) {
-        if(auto const* array = std::get_if<array_type>(&type)) {
-            return aggregate_context {
-                .element = array->element,
-                .length = array->length,
-            };
-        }
-        return std::nullopt;
-    }
-    if(auto const* sequence = std::get_if<sequence_type>(&type)) {
+    if(auto const* array = std::get_if<array_type>(&type)) {
         return aggregate_context {
-            .element = sequence->element,
-            .length = sequence->length,
+            .element = array->element,
+            .length = array->length,
         };
     }
     return std::nullopt;
