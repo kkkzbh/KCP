@@ -41,6 +41,7 @@ export enum class diagnostic_kind : std::uint16_t
     unknown_name,
     unknown_module,
     import_conflict,
+    export_requires_module,
     not_callable,
     argument_count_mismatch,
     type_mismatch,
@@ -150,6 +151,8 @@ export auto spec(diagnostic_kind kind) -> diagnostic_spec
             return { semantic, error, "unknown_module"sv, "unknown module"sv };
         case import_conflict:
             return { semantic, error, "import_conflict"sv, "import conflict"sv };
+        case export_requires_module:
+            return { semantic, error, "export_requires_module"sv, "export requires module"sv };
         case not_callable:
             return { semantic, error, "not_callable"sv, "not callable"sv };
         case argument_count_mismatch:

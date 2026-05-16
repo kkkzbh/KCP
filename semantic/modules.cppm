@@ -11,10 +11,15 @@ auto semantic_analyzer::build_module_index() -> void
 
 auto semantic_analyzer::collect_modules() -> void
 {
-    for(auto& state : units) {
+    for(auto unit_index : std::views::iota(0uz, units.size())) {
+        auto& state = units[unit_index];
         auto const& syntax = state.root;
         if(syntax.module_header) {
             state.module_name = ast_source.module_name(syntax.module_header->name);
+            state.module_key = state.module_name;
+            state.named_module = true;
+        } else {
+            state.module_key = std::format("$anonymous.{}", unit_index);
         }
     }
 }
@@ -35,7 +40,7 @@ auto semantic_analyzer::resolve_imports() -> void
 {
     for(auto& state : units) {
         auto const& syntax = state.root;
-        if(auto local = module_functions.find(state.module_name); local != module_functions.end()) {
+        if(auto local = module_functions.find(state.module_key); local != module_functions.end()) {
             state.visible_functions.insert_range(local->second);
         }
 
@@ -74,8 +79,8 @@ auto semantic_analyzer::collect_function_declaration(
 {
     auto const& function = ast.function(id);
     auto name = std::string{ ast_source.identifier(function.name) };
-    auto const& module_name = units[unit_index].module_name;
-    auto& local_names = module_functions[module_name];
+    auto const& state = units[unit_index];
+    auto& local_names = module_functions[state.module_key];
     if(local_names.contains(name)) {
         report(
             diagnostic_kind::duplicate_symbol,
@@ -125,8 +130,15 @@ auto semantic_analyzer::collect_function_declaration(
     );
     result.function_symbols.emplace(semantic_node_key{unit_index, id}, symbol);
 
-    if(function.exported) {
-        auto& exports = module_exports[module_name];
+    if(function.exported and not state.named_module) {
+        report(
+            diagnostic_kind::export_requires_module,
+            function.name,
+            "exported function requires an export module declaration"
+        );
+    }
+    if(function.exported and state.named_module) {
+        auto& exports = module_exports[state.module_name];
         exports.emplace(name, symbol);
     }
     local_names.emplace(std::move(name), symbol);

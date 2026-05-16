@@ -270,6 +270,38 @@ auto check_contiguous_unit_batch() -> void
     test_parser::assert_true(checked.accepted(), "contiguous parse_result batch should pass semantic analysis");
 }
 
+auto check_anonymous_modules() -> void
+{
+    {
+        auto sources = source_manager{};
+        auto units = std::array {
+            parse_source(sources, "first.cp", "helper() { return 1; }"),
+            parse_source(sources, "second.cp", "helper() { return true; }"),
+        };
+
+        auto checked = analyze_semantics(sources, std::span<parse_result const>{ units });
+        test_parser::assert_true(checked.accepted(), "anonymous units should keep independent local functions");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto units = std::array {
+            parse_source(sources, "helper.cp", "helper() { return 1; }"),
+            parse_source(sources, "main.cp", "main() { return helper(); }"),
+        };
+
+        auto checked = analyze_semantics(sources, std::span<parse_result const>{ units });
+        test_parser::assert_true(
+            has_diagnostic(checked, diagnostic_kind::unknown_name),
+            "anonymous units should not see each other's local functions");
+    }
+
+    expect_diagnostic(
+        "anonymous_export.cp",
+        "export helper() { return; }",
+        diagnostic_kind::export_requires_module);
+}
+
 auto check_reference_pointer_types() -> void
 {
     {
@@ -386,6 +418,7 @@ auto main() -> int
     check_fixed_type_ids();
     check_inferred_return_types();
     check_contiguous_unit_batch();
+    check_anonymous_modules();
     check_reference_pointer_types();
     check_negative_cases();
     return 0;

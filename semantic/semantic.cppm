@@ -44,6 +44,8 @@ struct semantic_unit_state
     ast_arena const& ast;
     translation_unit_syntax const& root;
     std::string module_name{};
+    std::string module_key{};
+    bool named_module{};
     std::map<std::string, symbol_id> visible_functions{};
 };
 
