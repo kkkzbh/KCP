@@ -90,7 +90,7 @@ auto semantic_analyzer::check_expression(
         and can_implicitly_convert(info, *expected)
         and read_type(info.type) != read_type(*expected)
     ) {
-        result.expression_conversions[semantic_node_key{active_unit_index, id}] = *expected;
+        result.expression_conversions[node_key(id)] = *expected;
     }
     return info;
 }
@@ -101,12 +101,16 @@ auto semantic_analyzer::check_name_expression(name_expr_syntax const& node, expr
     auto symbol = resolve(name);
     if(not symbol.valid()) {
         if(auto field = self_field(name)) {
-            result.expression_fields[semantic_node_key{active_unit_index, id}] = *field;
+            result.expression_fields[node_key(id)] = *field;
             auto const& item = result.structs[field->struct_index];
             auto const& value = item.fields[field->field_index];
             auto self = result.symbols[active_self.value];
+            auto field_type = value.type;
+            if(auto const* instance = std::get_if<struct_type>(&result.types.get(read_type(self.type)))) {
+                field_type = substitute_type(value.type, instance->arguments);
+            }
             return expression_info {
-                .type = value.type,
+                .type = field_type,
                 .is_lvalue = true,
                 .is_const = self.is_const,
             };
@@ -119,7 +123,7 @@ auto semantic_analyzer::check_name_expression(name_expr_syntax const& node, expr
         return expression_info{ .type = semantic_type_ids::error };
     }
 
-    result.expression_symbols[semantic_node_key{active_unit_index, id}] = symbol;
+    result.expression_symbols[node_key(id)] = symbol;
     record_lambda_capture(symbol, id);
     auto const& value = result.symbols[symbol.value];
     auto const* reference = std::get_if<reference_type>(&result.types.get(value.type));
@@ -140,7 +144,7 @@ auto semantic_analyzer::check_name_expression(name_expr_syntax const& node, expr
 auto semantic_analyzer::check_literal_expression(literal_expr_syntax const& node, expr_id id) -> expression_info
 {
     auto text = ast_source.slice(node.full_span);
-    auto key = semantic_node_key{active_unit_index, id};
+    auto key = node_key(id);
     if(text == "true" or text == "false") {
         result.literal_values[key] = semantic_literal_value {
             .value = text == "true",
@@ -442,7 +446,7 @@ auto semantic_analyzer::check_builtin_call(
         return std::nullopt;
     }
 
-    auto key = semantic_node_key{active_unit_index, id};
+    auto key = node_key(id);
     if(name == "alloc") {
         if(node.type_arguments.size() != 1uz) {
             report(diagnostic_kind::invalid_type_argument, node.full_span, "alloc expects one type argument");
@@ -583,6 +587,10 @@ auto semantic_analyzer::check_call_expression(ast_arena const& ast, call_expr_sy
         return expression_info{ .type = *cast_type };
     }
 
+    if(auto generic = check_generic_function_call(ast, node, id)) {
+        return *generic;
+    }
+
     if(not node.type_arguments.empty()) {
         report(
             diagnostic_kind::invalid_type_argument,
@@ -648,18 +656,23 @@ auto semantic_analyzer::check_member_call(
 {
     auto object = check_expression(ast, callee.object, std::nullopt);
     auto struct_index = struct_index_of(object.type);
+    auto variant_index = variant_index_of(object.type);
     auto name = std::string{ ast_source.identifier(callee.name) };
-    if(not struct_index) {
-        report(diagnostic_kind::unknown_member, callee.full_span, "member call requires a struct value");
+    if(not struct_index and not variant_index) {
+        report(diagnostic_kind::unknown_member, callee.full_span, "member call requires a struct or variant value");
         for(auto argument : node.arguments) {
             check_expression(ast, argument, std::nullopt);
         }
         return expression_info{ .type = semantic_type_ids::error };
     }
 
-    auto const& item = result.structs[*struct_index];
-    auto found = item.methods.find(name);
-    if(found == item.methods.end()) {
+    auto found = struct_index
+        ? result.structs[*struct_index].methods.find(name)
+        : result.variants[*variant_index].methods.find(name);
+    auto end = struct_index
+        ? result.structs[*struct_index].methods.end()
+        : result.variants[*variant_index].methods.end();
+    if(found == end) {
         report(diagnostic_kind::unknown_member, callee.name, std::format("unknown member function '{}'", name));
         for(auto argument : node.arguments) {
             check_expression(ast, argument, std::nullopt);
@@ -667,8 +680,57 @@ auto semantic_analyzer::check_member_call(
         return expression_info{ .type = semantic_type_ids::error };
     }
 
-    result.expression_symbols[semantic_node_key{active_unit_index, node.callee}] = found->second;
-    auto const* callable = std::get_if<function_type>(&result.types.get(result.symbols[found->second.value].type));
+    auto symbol = found->second;
+    auto explicit_arguments = std::vector<semantic_type_id>{};
+    if(not node.type_arguments.empty()) {
+        auto parsed = explicit_type_arguments(ast, node);
+        if(not parsed) {
+            return expression_info{ .type = semantic_type_ids::error };
+        }
+        explicit_arguments = std::move(*parsed);
+    }
+
+    if(function_is_generic(result.symbols[symbol.value].unit_index, result.symbols[symbol.value].function)) {
+        auto arguments = std::vector<expression_info>{ object };
+        arguments.reserve(node.arguments.size() + 1uz);
+        for(auto argument : node.arguments) {
+            arguments.emplace_back(check_expression(ast, argument, std::nullopt));
+        }
+        auto const* instance = instantiate_function_symbol(
+            symbol,
+            read_type(object.type),
+            arguments,
+            std::move(explicit_arguments),
+            node.full_span
+        );
+        if(instance == nullptr) {
+            return expression_info{ .type = semantic_type_ids::error };
+        }
+        symbol = instance->symbol;
+        auto const& signature = result.signatures[instance->signature.value];
+        auto expected_count = signature.parameters.empty() ? 0uz : signature.parameters.size() - 1uz;
+        if(expected_count != node.arguments.size()) {
+            report(diagnostic_kind::argument_count_mismatch, node.full_span, "method argument count does not match signature");
+        }
+        if(not signature.parameters.empty() and not can_implicitly_convert(object, signature.parameters.front())) {
+            report(diagnostic_kind::type_mismatch, callee.full_span, "method receiver type mismatch");
+        }
+        auto count = std::min(expected_count, node.arguments.size());
+        for(auto index = 0uz; index < count; ++index) {
+            if(not can_implicitly_convert(arguments[index + 1uz], signature.parameters[index + 1uz])) {
+                report(diagnostic_kind::type_mismatch, ast.span(node.arguments[index]), "method argument type mismatch");
+            }
+        }
+        result.expression_symbols[node_key(node.callee)] = symbol;
+        return expression_info{ .type = signature.returns };
+    }
+
+    if(not explicit_arguments.empty()) {
+        report(diagnostic_kind::invalid_type_argument, node.full_span, "non-generic method call does not take type arguments");
+    }
+
+    result.expression_symbols[node_key(node.callee)] = symbol;
+    auto const* callable = std::get_if<function_type>(&result.types.get(result.symbols[symbol.value].type));
     if(callable == nullptr) {
         return expression_info{ .type = semantic_type_ids::error };
     }
@@ -700,48 +762,95 @@ auto semantic_analyzer::check_associated_call(
     if(auto variant_index = variant_index_of(type)) {
         auto const& variant = result.variants[*variant_index];
         auto found = variant.case_indices.find(name);
-        if(found == variant.case_indices.end()) {
-            report(diagnostic_kind::unknown_variant_case, callee.name, std::format("unknown variant case '{}'", name));
-            return expression_info{ .type = semantic_type_ids::error };
-        }
-
-        auto const& variant_case = variant.cases[found->second];
-        auto payloads = variant_case_payload_types(type, variant_case);
-        if(payloads.empty()) {
-            report(diagnostic_kind::not_callable, node.full_span, "unit variant case is not callable");
+        if(found != variant.case_indices.end()) {
+            auto const& variant_case = variant.cases[found->second];
+            auto payloads = variant_case_payload_types(type, variant_case);
+            if(payloads.empty()) {
+                report(diagnostic_kind::not_callable, node.full_span, "unit variant case is not callable");
+                return expression_info{ .type = type };
+            }
+            if(payloads.size() != node.arguments.size()) {
+                report(diagnostic_kind::argument_count_mismatch, node.full_span, "variant case argument count mismatch");
+            }
+            auto count = std::min(payloads.size(), node.arguments.size());
+            for(auto index = 0uz; index < count; ++index) {
+                check_expression(ast, node.arguments[index], payloads[index]);
+            }
+            for(auto index = count; index < node.arguments.size(); ++index) {
+                check_expression(ast, node.arguments[index], std::nullopt);
+            }
+            result.expression_variant_cases[node_key(node.callee)] = semantic_variant_case_access {
+                .variant_index = *variant_index,
+                .case_index = found->second,
+            };
             return expression_info{ .type = type };
         }
-        if(payloads.size() != node.arguments.size()) {
-            report(diagnostic_kind::argument_count_mismatch, node.full_span, "variant case argument count mismatch");
-        }
-        auto count = std::min(payloads.size(), node.arguments.size());
-        for(auto index = 0uz; index < count; ++index) {
-            check_expression(ast, node.arguments[index], payloads[index]);
-        }
-        for(auto index = count; index < node.arguments.size(); ++index) {
-            check_expression(ast, node.arguments[index], std::nullopt);
-        }
-        result.expression_variant_cases[semantic_node_key{active_unit_index, node.callee}] = semantic_variant_case_access {
-            .variant_index = *variant_index,
-            .case_index = found->second,
-        };
-        return expression_info{ .type = type };
     }
 
     auto struct_index = struct_index_of(type);
-    if(not struct_index) {
-        report(diagnostic_kind::unknown_member, callee.full_span, "associated call requires a struct type");
+    auto associated_variant_index = variant_index_of(type);
+    if(not struct_index and not associated_variant_index) {
+        report(diagnostic_kind::unknown_member, callee.full_span, "associated call requires a struct or variant type");
         return expression_info{ .type = semantic_type_ids::error };
     }
-    auto const& item = result.structs[*struct_index];
-    auto found = item.associated_functions.find(name);
-    if(found == item.associated_functions.end()) {
+    auto found = struct_index
+        ? result.structs[*struct_index].associated_functions.find(name)
+        : result.variants[*associated_variant_index].associated_functions.find(name);
+    auto end = struct_index
+        ? result.structs[*struct_index].associated_functions.end()
+        : result.variants[*associated_variant_index].associated_functions.end();
+    if(found == end) {
         report(diagnostic_kind::unknown_member, callee.name, std::format("unknown associated function '{}'", name));
         return expression_info{ .type = semantic_type_ids::error };
     }
 
-    result.expression_symbols[semantic_node_key{active_unit_index, node.callee}] = found->second;
-    auto const* callable = std::get_if<function_type>(&result.types.get(result.symbols[found->second.value].type));
+    auto symbol = found->second;
+    auto explicit_arguments = std::vector<semantic_type_id>{};
+    if(not node.type_arguments.empty()) {
+        auto parsed = explicit_type_arguments(ast, node);
+        if(not parsed) {
+            return expression_info{ .type = semantic_type_ids::error };
+        }
+        explicit_arguments = std::move(*parsed);
+    }
+
+    if(function_is_generic(result.symbols[symbol.value].unit_index, result.symbols[symbol.value].function)) {
+        auto arguments = std::vector<expression_info>{};
+        arguments.reserve(node.arguments.size());
+        for(auto argument : node.arguments) {
+            arguments.emplace_back(check_expression(ast, argument, std::nullopt));
+        }
+        auto const* instance = instantiate_function_symbol(
+            symbol,
+            read_type(type),
+            arguments,
+            std::move(explicit_arguments),
+            node.full_span
+        );
+        if(instance == nullptr) {
+            return expression_info{ .type = semantic_type_ids::error };
+        }
+        symbol = instance->symbol;
+        auto const& signature = result.signatures[instance->signature.value];
+        if(signature.parameters.size() != node.arguments.size()) {
+            report(diagnostic_kind::argument_count_mismatch, node.full_span, "associated function argument count does not match signature");
+        }
+        auto count = std::min(signature.parameters.size(), node.arguments.size());
+        for(auto index = 0uz; index < count; ++index) {
+            if(not can_implicitly_convert(arguments[index], signature.parameters[index])) {
+                report(diagnostic_kind::type_mismatch, ast.span(node.arguments[index]), "associated function argument type mismatch");
+            }
+        }
+        result.expression_symbols[node_key(node.callee)] = symbol;
+        return expression_info{ .type = signature.returns };
+    }
+
+    if(not explicit_arguments.empty()) {
+        report(diagnostic_kind::invalid_type_argument, node.full_span, "non-generic associated call does not take type arguments");
+    }
+
+    result.expression_symbols[node_key(node.callee)] = symbol;
+    auto const* callable = std::get_if<function_type>(&result.types.get(result.symbols[symbol.value].type));
     if(callable == nullptr) {
         return expression_info{ .type = semantic_type_ids::error };
     }
@@ -773,7 +882,7 @@ auto semantic_analyzer::check_member_expression(ast_arena const& ast, member_exp
         report(diagnostic_kind::unknown_field, node.name, std::format("unknown field '{}'", name));
         return expression_info{ .type = semantic_type_ids::error };
     }
-    result.expression_fields[semantic_node_key{active_unit_index, id}] = semantic_field_access {
+    result.expression_fields[node_key(id)] = semantic_field_access {
         .struct_index = *struct_index,
         .field_index = *field,
     };
@@ -884,7 +993,7 @@ auto semantic_analyzer::check_associated_name_expression(associated_name_expr_sy
             report(diagnostic_kind::not_callable, node.full_span, "variant case with payload must be called");
             return expression_info{ .type = semantic_type_ids::error };
         }
-        result.expression_variant_cases[semantic_node_key{active_unit_index, id}] = semantic_variant_case_access {
+        result.expression_variant_cases[node_key(id)] = semantic_variant_case_access {
             .variant_index = *variant_index,
             .case_index = found->second,
         };
@@ -1117,12 +1226,12 @@ auto semantic_analyzer::check_struct_initializer(
             arguments.emplace_back(check_expression(ast, argument, std::nullopt));
         }
         if(auto constructor = choose_constructor(*struct_index, arguments, node.full_span)) {
-            result.expression_symbols[semantic_node_key{active_unit_index, id}] = *constructor;
+            result.expression_symbols[node_key(id)] = *constructor;
             auto const* callable = std::get_if<function_type>(&result.types.get(result.symbols[constructor->value].type));
             for(auto index = 0uz; callable and index < positional.size(); ++index) {
                 if(can_implicitly_convert(arguments[index], callable->parameters[index])
                    and read_type(arguments[index].type) != read_type(callable->parameters[index])) {
-                    result.expression_conversions[semantic_node_key{active_unit_index, positional[index]}] = callable->parameters[index];
+                    result.expression_conversions[node_key(positional[index])] = callable->parameters[index];
                 }
             }
             return expression_info{ .type = type };
@@ -1255,7 +1364,7 @@ auto semantic_analyzer::check_match_expression(ast_arena const& ast, match_expr_
                             .function = active_function,
                         });
                         if(symbol.valid()) {
-                            result.pattern_bindings[semantic_parameter_key{active_unit_index, binding.start}] = symbol;
+                            result.pattern_bindings[parameter_key(binding)] = symbol;
                         }
                     }
                 },
@@ -1295,7 +1404,7 @@ auto semantic_analyzer::check_lambda_expression(
     }
 
     apply_lambda_parameter_context(node, expected);
-    result.expression_symbols[semantic_node_key{active_unit_index, id}] = symbol;
+    result.expression_symbols[node_key(id)] = symbol;
     auto info = result.lambda_of(active_unit_index, node.function);
     if(not info.valid()) {
         info = check_lambda_body(node);

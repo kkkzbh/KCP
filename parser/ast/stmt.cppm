@@ -74,6 +74,24 @@ export struct for_statement_syntax
     stmt_id body{};
 };
 
+export enum class template_for_binding_kind : std::uint8_t
+{
+    let_binding,
+    const_binding,
+    type_binding,
+};
+
+export struct template_for_statement_syntax
+{
+    auto constexpr operator==(template_for_statement_syntax const& other) const -> bool = default;
+
+    source_span full_span{};
+    template_for_binding_kind binding_kind{};
+    source_span name{};
+    source_span pack_name{};
+    stmt_id body{};
+};
+
 export struct break_statement_syntax
 {
     auto constexpr operator==(break_statement_syntax const& other) const -> bool = default;
@@ -114,6 +132,7 @@ export using statement_syntax = std::variant<
     while_statement_syntax,
     do_while_statement_syntax,
     for_statement_syntax,
+    template_for_statement_syntax,
     break_statement_syntax,
     continue_statement_syntax,
     return_statement_syntax,

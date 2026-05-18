@@ -602,6 +602,11 @@ auto parser::parse_concept_requires_primary() -> std::optional<concept_requires_
         peek(1uz).kind != token_kind::colon
         and peek(1uz).kind != token_kind::colon_colon
         and peek(1uz).kind != token_kind::equal_equal
+        and not (
+            peek(1uz).kind == token_kind::dot
+            and peek(2uz).kind == token_kind::dot
+            and peek(3uz).kind == token_kind::dot
+        )
     ) {
         auto name = consume();
         return concept_requires_constraint_syntax {
@@ -615,6 +620,11 @@ auto parser::parse_concept_requires_primary() -> std::optional<concept_requires_
     auto left = parse_type();
     if(not left) {
         return std::nullopt;
+    }
+
+    auto is_pack = false;
+    if(consume_ellipsis()) {
+        is_pack = true;
     }
 
     if(check(token_kind::colon)) {
@@ -632,6 +642,11 @@ auto parser::parse_concept_requires_primary() -> std::optional<concept_requires_
             and peek(2uz).kind != token_kind::colon
             and peek(2uz).kind != token_kind::colon_colon
             and peek(2uz).kind != token_kind::equal_equal
+            and not (
+                peek(2uz).kind == token_kind::dot
+                and peek(3uz).kind == token_kind::dot
+                and peek(4uz).kind == token_kind::dot
+            )
         ) {
             consume();
             auto next = expect_identifier("concept bound");
@@ -645,9 +660,15 @@ auto parser::parse_concept_requires_primary() -> std::optional<concept_requires_
             concept_type_bound_constraint_syntax {
                 .full_span = combine_spans(arena.span(*left), end),
                 .type = *left,
+                .is_pack = is_pack,
                 .concept_bounds = std::move(bounds),
             }
         };
+    }
+
+    if(is_pack) {
+        report_current(diagnostic_kind::expected_token, "type pack constraints must use ':'");
+        return std::nullopt;
     }
 
     auto equal = expect(token_kind::equal_equal);
@@ -872,8 +893,21 @@ auto parser::parse_impl_item(type_syntax const& impl_type) -> std::optional<func
     }
 
     auto name = expect_identifier("impl item name");
+    if(not name) {
+        return std::nullopt;
+    }
+
+    auto generic_parameters = std::vector<generic_parameter_syntax>{};
+    if(check(token_kind::less)) {
+        auto parsed = parse_generic_parameter_list();
+        if(not parsed) {
+            return std::nullopt;
+        }
+        generic_parameters = std::move(*parsed);
+    }
+
     auto l_paren = expect(token_kind::l_paren);
-    if(not name or not l_paren) {
+    if(not l_paren) {
         return std::nullopt;
     }
 
@@ -914,6 +948,7 @@ auto parser::parse_impl_item(type_syntax const& impl_type) -> std::optional<func
         .full_span = combine_spans(name->span, arena.span(*body)),
         .kind = function_syntax_kind::impl_function,
         .name = name->span,
+        .generic_parameters = std::move(generic_parameters),
         .parameters = std::move(*parameters),
         .return_type = return_type,
         .requires_clause = std::move(requires_clause),
@@ -996,10 +1031,17 @@ auto parser::parse_parameter() -> std::optional<parameter_syntax>
     if(not type) {
         return std::nullopt;
     }
+    auto is_pack = false;
+    auto end = arena.span(*type);
+    if(auto ellipsis = consume_ellipsis()) {
+        is_pack = true;
+        end = *ellipsis;
+    }
     auto full_start = const_span.value_or(name->span);
     return parameter_syntax {
-        .full_span = combine_spans(full_start, arena.span(*type)),
+        .full_span = combine_spans(full_start, end),
         .is_const = is_const,
+        .is_pack = is_pack,
         .name = name->span,
         .type = *type,
     };
@@ -1051,6 +1093,7 @@ auto parser::parse_lambda_parameter() -> std::optional<parameter_syntax>
     }
 
     auto type = std::optional<type_id>{};
+    auto is_pack = false;
     auto end = name->span;
     if(check(token_kind::colon)) {
         consume();
@@ -1062,12 +1105,17 @@ auto parser::parse_lambda_parameter() -> std::optional<parameter_syntax>
             return std::nullopt;
         }
         end = arena.span(*type);
+        if(auto ellipsis = consume_ellipsis()) {
+            is_pack = true;
+            end = *ellipsis;
+        }
     }
 
     auto full_start = const_span.value_or(name->span);
     return parameter_syntax {
         .full_span = combine_spans(full_start, end),
         .is_const = is_const,
+        .is_pack = is_pack,
         .name = name->span,
         .type = type,
     };

@@ -53,6 +53,13 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
             );
             lowered = semantic_type_ids::error;
         }
+    } else if(active_type_pack_substitutions and active_type_pack_substitutions->contains(std::string{ name })) {
+        report (
+            diagnostic_kind::invalid_type_argument,
+            syntax.full_span,
+            "type parameter pack must be expanded with '...'"
+        );
+        lowered = semantic_type_ids::error;
     } else if(active_generic_parameters.contains(std::string{ name })) {
         lowered = active_generic_parameters.find(std::string{ name })->second;
         if(not syntax.arguments.empty()) {
@@ -171,8 +178,8 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
 
     for(auto associated : syntax.associated_names) {
         auto key = std::string{ ast_source.identifier(associated) };
-        auto found_types = associated_types.find(read_type(lowered));
-        if(found_types == associated_types.end()) {
+        auto found = associated_type(read_type(lowered), key);
+        if(not found) {
             report(
                 diagnostic_kind::unknown_type,
                 associated,
@@ -181,17 +188,7 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
             lowered = semantic_type_ids::error;
             break;
         }
-        auto found = found_types->second.find(key);
-        if(found == found_types->second.end()) {
-            report(
-                diagnostic_kind::unknown_type,
-                associated,
-                std::format("unknown associated type '{}'", key)
-            );
-            lowered = semantic_type_ids::error;
-            break;
-        }
-        lowered = found->second;
+        lowered = *found;
     }
 
     for(auto suffix : syntax.suffix_operators) {
@@ -202,6 +199,37 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
         }
     }
     return lowered;
+}
+
+auto semantic_analyzer::associated_type(semantic_type_id owner, std::string_view name)
+    -> std::optional<semantic_type_id>
+{
+    auto key = std::string{ name };
+    if(auto found_types = associated_types.find(owner); found_types != associated_types.end()) {
+        if(auto found = found_types->second.find(key); found != found_types->second.end()) {
+            return found->second;
+        }
+    }
+
+    for(auto const& [pattern, aliases] : associated_types) {
+        auto found = aliases.find(key);
+        if(found == aliases.end()) {
+            continue;
+        }
+        auto inferred = std::map<std::uint32_t, semantic_type_id>{};
+        if(not infer_type_argument(pattern, owner, inferred)) {
+            continue;
+        }
+        auto type_arguments = std::vector<semantic_type_id>{};
+        for(auto const& [index, value] : inferred) {
+            if(index >= type_arguments.size()) {
+                type_arguments.resize(index + 1uz, semantic_type_ids::error);
+            }
+            type_arguments[index] = value;
+        }
+        return substitute_type(found->second, type_arguments);
+    }
+    return std::nullopt;
 }
 
 auto semantic_analyzer::lower_type_with_substitutions(
@@ -441,7 +469,172 @@ auto semantic_analyzer::range_element_type(semantic_type_id type) -> semantic_ty
     if(auto const* array = std::get_if<array_type>(&kind)) {
         return array->element;
     }
+    auto iterable = resolve_concept_symbol(active_unit_index, "iterable");
+    if(iterable and target_implements(*iterable, value)) {
+        if(auto item = associated_type(value, "iter_item")) {
+            return *item;
+        }
+    }
+    auto iterator = resolve_concept_symbol(active_unit_index, "iterator");
+    if(iterator and target_implements(*iterator, value)) {
+        if(auto item = associated_type(value, "iter_item")) {
+            return *item;
+        }
+    }
     return {};
+}
+
+auto semantic_analyzer::method_symbol(semantic_type_id owner, std::string_view name) const -> std::optional<symbol_id>
+{
+    auto key = std::string{ name };
+    if(auto struct_index = struct_index_of(owner)) {
+        auto const& methods = result.structs[*struct_index].methods;
+        if(auto found = methods.find(key); found != methods.end()) {
+            return found->second;
+        }
+    }
+    if(auto variant_index = variant_index_of(owner)) {
+        auto const& methods = result.variants[*variant_index].methods;
+        if(auto found = methods.find(key); found != methods.end()) {
+            return found->second;
+        }
+    }
+    return std::nullopt;
+}
+
+auto semantic_analyzer::concrete_method_symbol(
+    symbol_id symbol,
+    semantic_type_id receiver_type,
+    std::vector<expression_info> const& arguments,
+    source_span span
+) -> std::optional<symbol_id>
+{
+    auto const& value = result.symbols[symbol.value];
+    if(not function_is_generic(value.unit_index, value.function)) {
+        return symbol;
+    }
+
+    auto instance = instantiate_function_symbol(
+        symbol,
+        read_type(receiver_type),
+        arguments,
+        {},
+        span
+    );
+    if(instance == nullptr) {
+        return std::nullopt;
+    }
+    return instance->symbol;
+}
+
+auto semantic_analyzer::range_info(expression_info range, source_span span) -> semantic_for_range_info
+{
+    auto value = read_type(range.type);
+    auto const& kind = result.types.get(value);
+    if(auto const* array = std::get_if<array_type>(&kind)) {
+        return semantic_for_range_info {
+            .kind = semantic_for_range_kind::array,
+            .element_type = array->element,
+        };
+    }
+
+    auto iterable = resolve_concept_symbol(active_unit_index, "iterable");
+    auto iterator = resolve_concept_symbol(active_unit_index, "iterator");
+    auto iterator_type = semantic_type_id{};
+    auto iter_symbol = symbol_id{};
+    if(iterable and target_implements(*iterable, value)) {
+        auto associated_iter = associated_type(value, "iter_type");
+        auto associated_item = associated_type(value, "iter_item");
+        if(not associated_iter or not associated_item) {
+            report(diagnostic_kind::missing_concept_item, span, "iterable range is missing iter_type or iter_item");
+            return {};
+        }
+        auto method = method_symbol(value, "iter");
+        if(not method) {
+            report(diagnostic_kind::unknown_member, span, "iterable range is missing iter()");
+            return {};
+        }
+        auto arguments = std::vector<expression_info>{ range };
+        auto concrete = concrete_method_symbol(*method, value, arguments, span);
+        if(not concrete) {
+            return {};
+        }
+        iter_symbol = *concrete;
+        auto const* callable = std::get_if<function_type>(&result.types.get(result.symbols[iter_symbol.value].type));
+        if(callable == nullptr or callable->parameters.empty() or not can_implicitly_convert(range, callable->parameters.front())) {
+            report(diagnostic_kind::type_mismatch, span, "iterable iter() receiver type mismatch");
+            return {};
+        }
+        if(read_type(callable->returns) != read_type(*associated_iter)) {
+            report(diagnostic_kind::type_mismatch, span, "iterable iter() return type mismatch");
+            return {};
+        }
+        iterator_type = *associated_iter;
+    } else if(iterator and target_implements(*iterator, value)) {
+        iterator_type = value;
+    } else {
+        return {};
+    }
+
+    auto item = associated_type(iterator_type, "iter_item");
+    if(not item) {
+        report(diagnostic_kind::missing_concept_item, span, "iterator range is missing iter_item");
+        return {};
+    }
+
+    auto next = method_symbol(iterator_type, "next");
+    if(not next) {
+        report(diagnostic_kind::unknown_member, span, "iterator range is missing next()");
+        return {};
+    }
+    auto iterator_argument = expression_info {
+        .type = iterator_type,
+        .is_lvalue = true,
+        .is_const = false,
+    };
+    auto next_symbol = concrete_method_symbol(*next, iterator_type, { iterator_argument }, span);
+    if(not next_symbol) {
+        return {};
+    }
+    auto const* next_callable = std::get_if<function_type>(&result.types.get(result.symbols[next_symbol->value].type));
+    if(next_callable == nullptr or next_callable->parameters.empty()) {
+        report(diagnostic_kind::type_mismatch, span, "iterator next() signature is invalid");
+        return {};
+    }
+    if(not can_implicitly_convert(iterator_argument, next_callable->parameters.front())) {
+        report(diagnostic_kind::type_mismatch, span, "iterator next() receiver type mismatch");
+        return {};
+    }
+
+    auto returned = read_type(next_callable->returns);
+    auto optional_variant = variant_index_of(returned);
+    if(not optional_variant) {
+        report(diagnostic_kind::type_mismatch, span, "iterator next() must return optional<T>");
+        return {};
+    }
+    auto const& variant = result.variants[*optional_variant];
+    auto some = variant.case_indices.find("some");
+    auto none = variant.case_indices.find("none");
+    if(some == variant.case_indices.end() or none == variant.case_indices.end()) {
+        report(diagnostic_kind::type_mismatch, span, "iterator next() result must have some and none cases");
+        return {};
+    }
+    auto payloads = variant_case_payload_types(returned, variant.cases[some->second]);
+    if(payloads.size() != 1uz or read_type(payloads.front()) != read_type(*item)) {
+        report(diagnostic_kind::type_mismatch, span, "iterator next() some payload must match iter_item");
+        return {};
+    }
+
+    return semantic_for_range_info {
+        .kind = semantic_for_range_kind::iterator_protocol,
+        .element_type = *item,
+        .iterator_type = iterator_type,
+        .iter_symbol = iter_symbol,
+        .next_symbol = *next_symbol,
+        .optional_variant_index = *optional_variant,
+        .some_case_index = some->second,
+        .none_case_index = none->second,
+    };
 }
 
 auto semantic_analyzer::pointer_pointee(semantic_type_id type) -> std::optional<expression_info>

@@ -524,6 +524,174 @@ main() -> i32
     );
 }
 
+auto check_generic_function_semantics() -> void
+{
+    auto result = analyze_one(
+        "generic_function.cp",
+        R"(concept marker {
+}
+
+struct value {
+    item: i32;
+}
+
+impl marker for value {
+}
+
+id<T>(input: T) -> T
+{
+    return input;
+}
+
+accept<T: marker>(input: T) -> i32
+{
+    return 1;
+}
+
+use<T>(input: T) -> i32
+requires T: marker
+{
+    return 2;
+}
+
+zero<T>(values: array<T,0>) -> i32
+{
+    return 0;
+}
+
+main() -> i32
+{
+    let first = id<i32>(20);
+    let second = id(21);
+    let ok = id<bool>(true);
+    let item = value{ .item = 1 };
+    if(ok) {
+        return first + second + accept(item) + use(item) + zero<i32>([]) - 2;
+    }
+    return 0;
+})"
+    );
+    test_parser::assert_true(result.accepted(), "generic function source should pass semantic analysis");
+    test_parser::assert_true(result.function_instances.size() == 5, "generic calls should create concrete function instances");
+    test_parser::assert_true(
+        std::ranges::all_of(result.function_instances, [](semantic_function_instance const& instance) {
+            return instance.context_index != 0uz and instance.symbol.valid() and instance.signature.valid();
+        }),
+        "generic function instances should expose context, symbol, and signature metadata");
+
+    using enum diagnostic_kind;
+    expect_diagnostic(
+        "generic_function_too_many_type_args.cp",
+        "id<T>(input: T) -> T { return input; } main() -> i32 { return id<i32,bool>(1); }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "generic_function_cannot_infer_type_arg.cp",
+        "make<T>() -> T { return 1; } main() -> i32 { return make(); }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "generic_function_argument_mismatch.cp",
+        "id<T>(input: T) -> T { return input; } main() -> i32 { return id<bool>(1); }",
+        type_mismatch
+    );
+    expect_diagnostic(
+        "generic_function_missing_bound.cp",
+        "concept marker { } accept<T: marker>(input: T) -> i32 { return 1; } main() -> i32 { return accept(1); }",
+        missing_concept_item
+    );
+    expect_diagnostic(
+        "generic_function_inferred_return.cp",
+        "id<T>(input: T) { return input; } main() -> i32 { return id(1); }",
+        cannot_infer_return_type
+    );
+}
+
+auto check_parameter_pack_semantics() -> void
+{
+    auto result = analyze_one(
+        "parameter_pack.cp",
+        R"(concept mark {
+}
+
+struct value {
+    item: i32;
+}
+
+impl mark for value {
+}
+
+sum<T...: mark>(values: T...) -> i32
+requires T...: mark
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + value.item;
+    }
+    return total;
+}
+
+type_count<T...>() -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (type U : T...) {
+        type current = U;
+        total = total + 1;
+    }
+    return total;
+}
+
+empty<T...>(values: T...) -> i32
+{
+    let total = 3;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + value.item;
+    }
+    return total;
+}
+
+main() -> i32
+{
+    return sum(value{ .item = 20 }, value{ .item = 19 }) + type_count<value, value, value>() + empty();
+})"
+    );
+    test_parser::assert_true(result.accepted(), "parameter pack source should pass semantic analysis");
+    test_parser::assert_true(result.function_instances.size() == 3, "parameter pack calls should create concrete function instances");
+    auto expansion_count = 0uz;
+    for(auto const& [key, expansions] : result.template_for_expansions) {
+        static_cast<void>(key);
+        expansion_count += expansions.size();
+    }
+    test_parser::assert_true(expansion_count == 5, "template for should record value/type pack expansions");
+
+    using enum diagnostic_kind;
+    expect_diagnostic(
+        "parameter_pack_missing_bound.cp",
+        "concept mark { } sum<T...: mark>(values: T...) -> i32 { return 0; } main() -> i32 { return sum(1); }",
+        missing_concept_item
+    );
+    expect_diagnostic(
+        "parameter_pack_unknown_value_pack.cp",
+        "bad<T...>(values: T...) -> i32 { template fo" "r (let value : missing...) { } return 0; } main() -> i32 { return bad(1); }",
+        invalid_range
+    );
+    expect_diagnostic(
+        "parameter_pack_direct_type_use.cp",
+        "bad<T...>(values: T...) -> T { return 0; } main() -> i32 { return bad(1); }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "parameter_pack_non_final_value_pack.cp",
+        "bad<T...>(values: T..., last: i32) -> i32 { return last; } main() -> i32 { return bad(1, 2); }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "template_for_break_outer_loop.cp",
+        "bad<T...>(values: T...) -> i32 { while(true) { template fo" "r (let value : values...) { break; } } return 0; } main() -> i32 { return bad(1); }",
+        invalid_break
+    );
+}
+
 auto check_concept_semantics() -> void
 {
     auto result = analyze_one(
@@ -891,6 +1059,8 @@ auto main() -> int
     check_reference_pointer_types();
     check_struct_impl_semantics();
     check_generic_struct_semantics();
+    check_generic_function_semantics();
+    check_parameter_pack_semantics();
     check_concept_semantics();
     check_function_type_and_memory_semantics();
     check_string_index_semantics();

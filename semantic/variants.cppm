@@ -73,7 +73,9 @@ auto semantic_analyzer::collect_variant_cases(
     auto variant_index = result.symbols[symbol->value].variant_index;
     auto& item = result.variants[variant_index];
     auto old_parameters = std::move(active_generic_parameters);
+    auto old_packs = std::move(active_generic_parameter_packs);
     active_generic_parameters.clear();
+    active_generic_parameter_packs.clear();
     for(auto index = 0uz; index < syntax.generic_parameters.size(); ++index) {
         active_generic_parameters.emplace(
             std::string{ ast_source.identifier(syntax.generic_parameters[index].name) },
@@ -105,6 +107,7 @@ auto semantic_analyzer::collect_variant_cases(
     }
 
     active_generic_parameters = std::move(old_parameters);
+    active_generic_parameter_packs = std::move(old_packs);
 }
 
 auto semantic_analyzer::variant_index_of(semantic_type_id type) const -> std::optional<std::uint32_t>

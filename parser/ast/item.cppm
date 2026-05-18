@@ -11,6 +11,7 @@ export struct parameter_syntax
 
     source_span full_span{};
     bool is_const{};
+    bool is_pack{};
     source_span name{};
     std::optional<type_id> type{};
 };
@@ -39,6 +40,7 @@ export struct concept_type_bound_constraint_syntax
 
     source_span full_span{};
     type_id type{};
+    bool is_pack{};
     std::vector<source_span> concept_bounds{};
 };
 

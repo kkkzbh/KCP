@@ -294,6 +294,98 @@ answer() -> i32
     test_parser::assert_true(emitted.ir.contains("@cp_free"), "LLVM IR should define/call cp_free");
     test_parser::assert_true(emitted.ir.contains("getelementptr i32"), "LLVM IR should use typed pointer arithmetic");
 }
+
+auto check_generic_function_codegen() -> void
+{
+    auto sources = source_manager{};
+    auto parsed = parse_source(
+        sources,
+        "generic_function.cp",
+        R"(id<T>(input: T) -> T
+{
+    return input;
+}
+
+choose<T>(left: T, right: T, flag: bool) -> T
+{
+    if(flag) {
+        return left;
+    }
+    return right;
+}
+
+main() -> i32
+{
+    let first = id<i32>(20);
+    let second = id(22);
+    let ok = id<bool>(true);
+    if(ok) {
+        return choose(first, second, false);
+    }
+    return 1;
+})");
+    auto checked = analyze_single(sources, parsed);
+    test_parser::assert_true(checked.accepted(), "generic function source should pass semantic analysis");
+    test_parser::assert_true(checked.function_instances.size() == 3, "generic codegen should keep one instance per concrete signature");
+
+    auto ir = emit_ir(sources, parsed, checked);
+    test_parser::assert_true(ir.accepted, ir.error.empty() ? "IR emission should pass" : ir.error);
+    auto text = dump_ir(ir.module);
+    test_parser::assert_true(text.contains("func id.mono."), "MIR dump should contain monomorphized id functions");
+    test_parser::assert_true(text.contains("func choose.mono."), "MIR dump should contain monomorphized choose function");
+
+    auto emitted = emit_llvm_ir(ir.module);
+    test_parser::assert_true(emitted.verified, emitted.error.empty() ? "LLVM module should verify" : emitted.error);
+    test_parser::assert_true(emitted.ir.contains("define internal i32 @id.mono."), "LLVM IR should define i32 id instance");
+    test_parser::assert_true(emitted.ir.contains("define internal i8 @id.mono."), "LLVM IR should define bool id instance");
+    test_parser::assert_true(emitted.ir.contains("call i32 @choose.mono."), "LLVM IR should call concrete choose instance");
+}
+
+auto check_parameter_pack_codegen() -> void
+{
+    auto sources = source_manager{};
+    auto parsed = parse_source(
+        sources,
+        "parameter_pack.cp",
+        R"(sum<T...>(values: T...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + value;
+    }
+    return total;
+}
+
+type_count<T...>() -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (type U : T...) {
+        type current = U;
+        total = total + 1;
+    }
+    return total;
+}
+
+main() -> i32
+{
+    return sum(10, 20, 9) + type_count<i32, bool, i32>();
+})");
+    auto checked = analyze_single(sources, parsed);
+    test_parser::assert_true(checked.accepted(), "parameter pack source should pass semantic analysis");
+    test_parser::assert_true(checked.function_instances.size() == 2, "parameter pack codegen should instantiate pack functions");
+
+    auto ir = emit_ir(sources, parsed, checked);
+    test_parser::assert_true(ir.accepted, ir.error.empty() ? "IR emission should pass" : ir.error);
+    auto text = dump_ir(ir.module);
+    test_parser::assert_true(text.contains("values.0"), "MIR dump should contain expanded pack parameter");
+    test_parser::assert_true(text.contains("func sum.mono."), "MIR dump should contain monomorphized pack sum");
+    test_parser::assert_true(text.contains("func type_count.mono."), "MIR dump should contain monomorphized type pack function");
+
+    auto emitted = emit_llvm_ir(ir.module);
+    test_parser::assert_true(emitted.verified, emitted.error.empty() ? "LLVM module should verify" : emitted.error);
+    test_parser::assert_true(emitted.ir.contains("define internal i32 @sum.mono."), "LLVM IR should define sum pack instance");
+    test_parser::assert_true(emitted.ir.contains("define internal i32 @type_count.mono."), "LLVM IR should define type pack instance");
+}
 } // namespace
 
 auto main() -> int
@@ -307,5 +399,7 @@ auto main() -> int
     check_labeled_loop_jumps();
     check_variant_match_codegen();
     check_function_pointer_and_memory_codegen();
+    check_generic_function_codegen();
+    check_parameter_pack_codegen();
     return 0;
 }

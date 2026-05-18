@@ -75,9 +75,9 @@ export struct semantic_symbol
     bool is_const{};
     std::size_t unit_index{};
     function_id function{};
-    std::uint32_t struct_index{};
-    std::uint32_t variant_index{};
-    std::uint32_t concept_index{};
+    std::uint32_t struct_index{ std::numeric_limits<std::uint32_t>::max() };
+    std::uint32_t variant_index{ std::numeric_limits<std::uint32_t>::max() };
+    std::uint32_t concept_index{ std::numeric_limits<std::uint32_t>::max() };
     semantic_function_kind function_kind{ semantic_function_kind::free_function };
 };
 

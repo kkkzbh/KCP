@@ -7,8 +7,8 @@ auto semantic_analyzer::apply_lambda_parameter_context(
     std::optional<semantic_type_id> expected
 ) -> void
 {
-    auto signature_id = result.signature_of(active_unit_index, node.function);
-    auto symbol = result.function_symbol_of(active_unit_index, node.function);
+    auto signature_id = result.signature_of(active_context_index, active_unit_index, node.function);
+    auto symbol = result.function_symbol_of(active_context_index, active_unit_index, node.function);
     if(not signature_id.valid() or not symbol.valid()) {
         return;
     }
@@ -50,8 +50,8 @@ auto semantic_analyzer::check_lambda_body(lambda_expr_syntax const& node) -> sem
 {
     infer_lambda_return_from_current_value_scope(active_unit_index, node.function);
 
-    auto symbol = result.function_symbol_of(active_unit_index, node.function);
-    auto signature_id = result.signature_of(active_unit_index, node.function);
+    auto symbol = result.function_symbol_of(active_context_index, active_unit_index, node.function);
+    auto signature_id = result.signature_of(active_context_index, active_unit_index, node.function);
     if(not symbol.valid() or not signature_id.valid()) {
         return {};
     }
@@ -85,7 +85,7 @@ auto semantic_analyzer::check_lambda_body(lambda_expr_syntax const& node) -> sem
             })
         );
         if(parameter_symbol.valid()) {
-            result.parameter_bindings[semantic_parameter_key{active_unit_index, parameter.name.start}] = parameter_symbol;
+            result.parameter_bindings[parameter_key(parameter.name)] = parameter_symbol;
         }
     }
 
@@ -111,7 +111,7 @@ auto semantic_analyzer::build_lambda_info(
     function_type callable
 ) -> semantic_lambda_info
 {
-    auto function_symbol = result.function_symbol_of(active_unit_index, node.function);
+    auto function_symbol = result.function_symbol_of(active_context_index, active_unit_index, node.function);
     auto info = semantic_lambda_info {
         .function = node.function,
         .function_symbol = function_symbol,
@@ -149,10 +149,10 @@ auto semantic_analyzer::build_lambda_info(
             .unit_index = active_unit_index,
             .function = node.function,
         });
-        result.closure_lambda_infos[struct_index] = semantic_node_key{active_unit_index, node.function};
+        result.closure_lambda_infos[struct_index] = node_key(node.function);
     }
 
-    result.lambda_infos[semantic_node_key{active_unit_index, node.function}] = info;
+    result.lambda_infos[node_key(node.function)] = info;
     return info;
 }
 
@@ -178,7 +178,7 @@ auto semantic_analyzer::record_lambda_capture(symbol_id symbol, expr_id id) -> v
         capture.captures.emplace_back(symbol, value.name, value.span, read_type(value.type), value.is_const);
     }
 
-    result.lambda_capture_accesses[semantic_node_key{active_unit_index, id}] = semantic_lambda_capture_access {
+    result.lambda_capture_accesses[node_key(id)] = semantic_lambda_capture_access {
         .function = capture.function,
         .field_index = found->second,
     };

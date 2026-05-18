@@ -8,7 +8,8 @@ auto semantic_analyzer::check_bodies() -> void
         auto const& unit = units[unit_index];
         auto const& syntax = unit.root;
         for(auto function_id : syntax.functions) {
-            if(unit.ast.node(function_id).kind == function_syntax_kind::lambda) {
+            auto const& function = unit.ast.node(function_id);
+            if(function.kind == function_syntax_kind::lambda or function_is_generic(unit_index, function_id)) {
                 continue;
             }
             check_function(unit_index, function_id);
@@ -16,13 +17,17 @@ auto semantic_analyzer::check_bodies() -> void
         for(auto impl_id : syntax.impls) {
             auto const& impl = unit.ast.node(impl_id);
             for(auto function_id : impl.functions) {
-                check_function(unit_index, function_id);
+                if(not function_is_generic(unit_index, function_id)) {
+                    check_function(unit_index, function_id);
+                }
             }
         }
         for(auto impl_id : syntax.concept_impls) {
             auto const& impl = unit.ast.node(impl_id);
             for(auto function_id : impl.functions) {
-                check_function(unit_index, function_id);
+                if(not function_is_generic(unit_index, function_id)) {
+                    check_function(unit_index, function_id);
+                }
             }
         }
     }
@@ -30,17 +35,82 @@ auto semantic_analyzer::check_bodies() -> void
 
 auto semantic_analyzer::check_function(std::size_t unit_index, function_id id) -> void
 {
+    auto signature_id = result.signature_of(unit_index, id);
+    auto function_symbol = result.function_symbol_of(unit_index, id);
+    check_function_body(unit_index, id, 0uz, signature_id, function_symbol, nullptr, nullptr);
+}
+
+auto semantic_analyzer::check_function_instance(std::size_t instance_index) -> void
+{
+    auto instance = result.function_instances[instance_index];
+    check_function_body(
+        instance.key.unit_index,
+        function_id{ instance.key.function_id_value },
+        instance.context_index,
+        instance.signature,
+        instance.symbol,
+        &instance.substitutions,
+        &instance.pack_substitutions
+    );
+}
+
+auto semantic_analyzer::check_function_body(
+    std::size_t unit_index,
+    function_id id,
+    std::size_t context_index,
+    function_signature_id signature_id,
+    symbol_id function_symbol,
+    std::map<std::string, semantic_type_id> const* substitutions,
+    std::map<std::string, std::vector<semantic_type_id>> const* pack_substitutions
+) -> void
+{
+    auto old_context = active_context_index;
+    auto old_unit_index = active_unit_index;
+    auto old_unit = active_unit;
+    auto old_ast = active_ast;
+    auto old_function = active_function;
+    auto old_substitutions = active_type_substitutions;
+    auto old_pack_substitutions = active_type_pack_substitutions;
+    auto old_self = active_self;
+    auto old_scopes = scopes;
+    auto old_type_scopes = type_scopes;
+    auto old_value_packs = std::move(active_value_packs);
+    auto old_loops = loops;
+    auto old_template_for_depth = active_template_for_depth;
+
+    active_context_index = context_index;
     active_unit_index = unit_index;
     active_unit = &units[unit_index];
     active_ast = &active_unit->ast;
     active_function = id;
+    active_type_substitutions = substitutions;
+    active_type_pack_substitutions = pack_substitutions;
+    active_value_packs.clear();
+    active_template_for_depth = 0uz;
+
+    auto restore_state = [&] {
+        active_type_substitutions = old_substitutions;
+        active_type_pack_substitutions = old_pack_substitutions;
+        active_function = old_function;
+        active_self = old_self;
+        scopes = std::move(old_scopes);
+        type_scopes = std::move(old_type_scopes);
+        active_value_packs = std::move(old_value_packs);
+        loops = std::move(old_loops);
+        active_template_for_depth = old_template_for_depth;
+        active_ast = old_ast;
+        active_unit = old_unit;
+        active_unit_index = old_unit_index;
+        active_context_index = old_context;
+    };
 
     auto const& function = active_ast->node(active_function);
     if(function.defaulted) {
+        restore_state();
         return;
     }
-    auto signature_id = result.signature_of(active_unit_index, active_function);
     if(not signature_id.valid()) {
+        restore_state();
         return;
     }
 
@@ -53,7 +123,6 @@ auto semantic_analyzer::check_function(std::size_t unit_index, function_id id) -
         returns.declared_return = signature.returns;
     }
 
-    auto const function_symbol = result.function_symbol_of(active_unit_index, active_function);
     auto implicit_destructor_self = (
         function_symbol.valid()
         and result.symbols[function_symbol.value].function_kind == semantic_function_kind::destructor
@@ -74,22 +143,52 @@ auto semantic_analyzer::check_function(std::size_t unit_index, function_id id) -
         active_self = symbol;
     }
 
+    auto signature_parameter_index = 0uz;
     for(auto index = 0uz; index < function.parameters.size(); ++index) {
         auto const& parameter = function.parameters[index];
         auto name = std::string{ ast_source.slice(parameter.name) };
+        if(parameter.is_pack) {
+            auto bindings = std::vector<symbol_id>{};
+            auto remaining_syntax_parameters = function.parameters.size() - index - 1uz;
+            auto pack_end = signature.parameters.size() >= remaining_syntax_parameters
+                ? signature.parameters.size() - remaining_syntax_parameters
+                : signature_parameter_index;
+            while(signature_parameter_index < pack_end) {
+                auto symbol = (
+                    bind_symbol (semantic_symbol {
+                        .kind = symbol_kind::parameter,
+                        .name = std::format("{}.{}", name, bindings.size()),
+                        .span = parameter.name,
+                        .type = signature.parameters[signature_parameter_index++],
+                        .is_const = parameter.is_const,
+                        .unit_index = active_unit_index,
+                        .function = active_function,
+                    })
+                );
+                if(symbol.valid()) {
+                    bindings.emplace_back(symbol);
+                }
+            }
+            active_value_packs[name] = bindings;
+            result.parameter_pack_bindings[parameter_key(parameter.name)] = std::move(bindings);
+            continue;
+        }
+        if(signature_parameter_index >= signature.parameters.size()) {
+            continue;
+        }
         auto symbol = (
             bind_symbol (semantic_symbol {
                 .kind = symbol_kind::parameter,
                 .name = name,
                 .span = parameter.name,
-                .type = signature.parameters[index],
+                .type = signature.parameters[signature_parameter_index++],
                 .is_const = parameter.is_const,
                 .unit_index = active_unit_index,
                 .function = active_function,
             })
         );
         if(symbol.valid()) {
-            result.parameter_bindings[semantic_parameter_key{active_unit_index, parameter.name.start}] = symbol;
+            result.parameter_bindings[parameter_key(parameter.name)] = symbol;
             if(name == "self") {
                 active_self = symbol;
             }
@@ -97,6 +196,7 @@ auto semantic_analyzer::check_function(std::size_t unit_index, function_id id) -
     }
 
     check_statement(function.body, returns);
+    restore_state();
 }
 
 auto semantic_analyzer::enter_function_scope() -> void
@@ -207,6 +307,7 @@ auto semantic_analyzer::pop_scope() -> void
 
 auto semantic_analyzer::push_loop(loop_label label) -> void
 {
+    label.template_for_depth = active_template_for_depth;
     loops.emplace_back(std::move(label));
 }
 
@@ -282,7 +383,7 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                         })
                     );
                         if(symbol.valid()) {
-                            result.local_bindings[semantic_parameter_key{active_unit_index, binding.start}] = symbol;
+                            result.local_bindings[parameter_key(binding)] = symbol;
                         }
                     }
                     return;
@@ -322,8 +423,8 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                 })
             );
                 if(symbol.valid()) {
-                    result.statement_bindings[semantic_node_key{active_unit_index, id}] = symbol;
-                    result.local_bindings[semantic_parameter_key{active_unit_index, node.name.start}] = symbol;
+                    result.statement_bindings[node_key(id)] = symbol;
+                    result.local_bindings[parameter_key(node.name)] = symbol;
                 }
             },
             [&](type_alias_statement_syntax const& node) {
@@ -350,21 +451,24 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
             },
             [&](for_statement_syntax const& node) {
                 auto range = check_expression(*active_ast, node.range, std::nullopt);
-                auto element = range_element_type(range.type);
-                if(not element.valid()) {
+                auto range_metadata = range_info(range, node.full_span);
+                auto element = range_metadata.element_type;
+                if(not range_metadata.valid()) {
                     report(
                         diagnostic_kind::invalid_range,
                         node.full_span,
-                        "for range must be array<T,N>"
+                        "for range must be array<T,N>, iterable, or iterator"
                     );
                     element = semantic_type_ids::error;
                 }
+                result.for_ranges[node_key(id)] = range_metadata;
 
                 auto label = loop_label{};
                 if(node.label) {
                     label = loop_label {
                         .name = std::string{ ast_source.slice(*node.label) },
                         .span = *node.label,
+                        .template_for_depth = active_template_for_depth,
                     };
                 }
                 push_loop(label);
@@ -381,11 +485,14 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                 })
             );
                 if(symbol.valid()) {
-                    result.statement_bindings[semantic_node_key{active_unit_index, id}] = symbol;
+                    result.statement_bindings[node_key(id)] = symbol;
                 }
                 check_statement(node.body, returns);
                 pop_scope();
                 pop_loop();
+            },
+            [&](template_for_statement_syntax const& node) {
+                check_template_for_statement(node, id, returns);
             },
             [&](break_statement_syntax const& node) {
                 check_loop_jump(node.full_span, node.label, true);
@@ -419,6 +526,86 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
     );
 }
 
+auto semantic_analyzer::check_template_for_statement(
+    template_for_statement_syntax const& node,
+    stmt_id id,
+    return_state& returns
+) -> void
+{
+    auto pack_name = std::string{ ast_source.slice(node.pack_name) };
+    auto expansions = std::vector<semantic_template_for_expansion>{};
+    auto parent_context = active_context_index;
+    auto binding_name = std::string{ ast_source.slice(node.name) };
+
+    if(node.binding_kind == template_for_binding_kind::type_binding) {
+        if(active_type_pack_substitutions == nullptr) {
+            report(diagnostic_kind::invalid_range, node.full_span, "unknown type parameter pack");
+            return;
+        }
+        auto pack = active_type_pack_substitutions->find(pack_name);
+        if(pack == active_type_pack_substitutions->end()) {
+            report(diagnostic_kind::invalid_range, node.pack_name, std::format("unknown type parameter pack '{}'", pack_name));
+            return;
+        }
+
+        for(auto type : pack->second) {
+            auto expansion_context = next_context_index++;
+            active_context_index = expansion_context;
+            ++active_template_for_depth;
+            push_scope();
+            bind_type_alias(node.name, type);
+            check_statement(node.body, returns);
+            pop_scope();
+            --active_template_for_depth;
+            auto& expansion = expansions.emplace_back();
+            expansion.kind = semantic_template_for_expansion_kind::type;
+            expansion.context_index = expansion_context;
+            expansion.bound_type = type;
+        }
+        active_context_index = parent_context;
+        result.template_for_expansions[semantic_node_key{parent_context, active_unit_index, id}] = std::move(expansions);
+        return;
+    }
+
+    auto pack = active_value_packs.find(pack_name);
+    if(pack == active_value_packs.end()) {
+        report(diagnostic_kind::invalid_range, node.pack_name, std::format("unknown value parameter pack '{}'", pack_name));
+        return;
+    }
+
+    for(auto pack_symbol : pack->second) {
+        auto expansion_context = next_context_index++;
+        active_context_index = expansion_context;
+        ++active_template_for_depth;
+        push_scope();
+        auto const& source_symbol = result.symbols[pack_symbol.value];
+        auto binding_symbol = bind_symbol(semantic_symbol {
+            .kind = symbol_kind::local,
+            .name = binding_name,
+            .span = node.name,
+            .type = source_symbol.type,
+            .is_const = node.binding_kind == template_for_binding_kind::const_binding or source_symbol.is_const,
+            .unit_index = active_unit_index,
+            .function = active_function,
+        });
+        if(binding_symbol.valid()) {
+            result.statement_bindings[semantic_node_key{expansion_context, active_unit_index, id}] = binding_symbol;
+            result.local_bindings[semantic_parameter_key{expansion_context, active_unit_index, node.name.start}] = binding_symbol;
+        }
+        check_statement(node.body, returns);
+        pop_scope();
+        --active_template_for_depth;
+        auto& expansion = expansions.emplace_back();
+        expansion.kind = semantic_template_for_expansion_kind::value;
+        expansion.context_index = expansion_context;
+        expansion.binding_symbol = binding_symbol;
+        expansion.pack_symbol = pack_symbol;
+        expansion.bound_type = source_symbol.type;
+    }
+    active_context_index = parent_context;
+    result.template_for_expansions[semantic_node_key{parent_context, active_unit_index, id}] = std::move(expansions);
+}
+
 auto semantic_analyzer::check_condition(expr_id condition) -> void
 {
     auto checked = check_expression(*active_ast, condition, semantic_type_ids::bool_);
@@ -443,6 +630,13 @@ auto semantic_analyzer::check_loop_jump(source_span span, std::optional<source_s
     }
 
     if(not label) {
+        if(loops.back().template_for_depth < active_template_for_depth) {
+            report(
+                is_break ? diagnostic_kind::invalid_break : diagnostic_kind::invalid_continue,
+                span,
+                is_break ? "break cannot target a loop outside template for" : "continue cannot target a loop outside template for"
+            );
+        }
         return;
     }
 
@@ -453,6 +647,14 @@ auto semantic_analyzer::check_loop_jump(source_span span, std::optional<source_s
             diagnostic_kind::unknown_label,
             *label,
             std::format("unknown loop label '{}'", name)
+        );
+        return;
+    }
+    if(found->template_for_depth < active_template_for_depth) {
+        report(
+            is_break ? diagnostic_kind::invalid_break : diagnostic_kind::invalid_continue,
+            span,
+            is_break ? "break cannot target a loop outside template for" : "continue cannot target a loop outside template for"
         );
     }
 }

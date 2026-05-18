@@ -8,7 +8,8 @@ auto semantic_analyzer::infer_return_types() -> void
         auto const& unit = units[unit_index];
         auto const& syntax = unit.root;
         for(auto function_id : syntax.functions) {
-            if(unit.ast.node(function_id).kind == function_syntax_kind::lambda) {
+            auto const& function = unit.ast.node(function_id);
+            if(function.kind == function_syntax_kind::lambda or function_is_generic(unit_index, function_id)) {
                 continue;
             }
             auto signature_id = result.signature_of(unit_index, function_id);
@@ -23,6 +24,9 @@ auto semantic_analyzer::infer_return_types() -> void
         for(auto impl_id : syntax.impls) {
             auto const& impl = unit.ast.node(impl_id);
             for(auto function_id : impl.functions) {
+                if(function_is_generic(unit_index, function_id)) {
+                    continue;
+                }
                 auto signature_id = result.signature_of(unit_index, function_id);
                 if(not signature_id.valid()) {
                     continue;
@@ -36,6 +40,9 @@ auto semantic_analyzer::infer_return_types() -> void
         for(auto impl_id : syntax.concept_impls) {
             auto const& impl = unit.ast.node(impl_id);
             for(auto function_id : impl.functions) {
+                if(function_is_generic(unit_index, function_id)) {
+                    continue;
+                }
                 auto signature_id = result.signature_of(unit_index, function_id);
                 if(not signature_id.valid()) {
                     continue;
@@ -238,6 +245,9 @@ auto semantic_analyzer::infer_statement_returns(
                 infer_statement_returns(ast, node.body, observed);
                 type_scopes.pop_back();
                 return_scopes.pop_back();
+            },
+            [&](template_for_statement_syntax const& node) {
+                infer_statement_returns(ast, node.body, observed);
             },
             [&](return_statement_syntax const& node) {
                 observed.emplace_back (

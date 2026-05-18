@@ -9,6 +9,10 @@ import parser;
 
 auto parser::parse_statement() -> std::optional<stmt_id>
 {
+    if(check_contextual("template") and peek(1uz).kind == token_kind::kw_for) {
+        return parse_template_for_statement();
+    }
+
     if (
         check_contextual("type")
         and peek(1uz).kind == token_kind::identifier
@@ -332,6 +336,56 @@ auto parser::parse_for_statement() -> std::optional<stmt_id>
         .body = *body,
     };
     return arena.add(statement_syntax{ std::move(statement) });
+}
+
+auto parser::parse_template_for_statement() -> std::optional<stmt_id>
+{
+    auto start = expect_identifier("template");
+    auto for_kw = expect(token_kind::kw_for);
+    auto l_paren = expect(token_kind::l_paren);
+    if(not start or not for_kw or not l_paren) {
+        return std::nullopt;
+    }
+
+    auto binding_kind = template_for_binding_kind::let_binding;
+    if(check(token_kind::kw_let)) {
+        consume();
+    } else if(check(token_kind::kw_const)) {
+        consume();
+        binding_kind = template_for_binding_kind::const_binding;
+    } else if(check_contextual("type")) {
+        consume();
+        binding_kind = template_for_binding_kind::type_binding;
+    } else {
+        report_current(
+            diagnostic_kind::expected_token,
+            "expected 'let', 'const', or 'type' in template for binding"
+        );
+        return std::nullopt;
+    }
+
+    auto name = expect_identifier("template for binding name");
+    auto colon = expect(token_kind::colon);
+    auto pack_name = expect_identifier("template for pack name");
+    auto ellipsis = consume_ellipsis();
+    auto r_paren = expect(token_kind::r_paren);
+    auto body = parse_block_statement();
+    if(not name or not colon or not pack_name or not ellipsis or not r_paren or not body) {
+        if(not ellipsis) {
+            report_current(diagnostic_kind::expected_token, "expected '...' after template for pack name");
+        }
+        return std::nullopt;
+    }
+
+    return arena.add(statement_syntax {
+        template_for_statement_syntax {
+            .full_span = combine_spans(start->span, arena.span(*body)),
+            .binding_kind = binding_kind,
+            .name = name->span,
+            .pack_name = pack_name->span,
+            .body = *body,
+        }
+    });
 }
 
 auto parser::parse_break_continue_statement(bool is_break) -> std::optional<stmt_id>

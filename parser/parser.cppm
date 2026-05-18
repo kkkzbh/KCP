@@ -95,6 +95,7 @@ struct parser
     auto parse_while_statement() -> std::optional<stmt_id>;
     auto parse_do_while_statement() -> std::optional<stmt_id>;
     auto parse_for_statement() -> std::optional<stmt_id>;
+    auto parse_template_for_statement() -> std::optional<stmt_id>;
     auto parse_break_continue_statement(bool is_break) -> std::optional<stmt_id>;
     auto parse_return_statement() -> std::optional<stmt_id>;
     auto parse_expression_statement() -> std::optional<stmt_id>;

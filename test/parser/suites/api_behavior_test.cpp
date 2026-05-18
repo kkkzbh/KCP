@@ -163,8 +163,43 @@ main()
 	    auto const& match_statement = expression_statement(concept_parsed, concept_body.statements[4]);
 	    auto const& match = as<match_expr_syntax>(concept_parsed.ast.node(match_statement.expression));
 	    test_parser::assert_true(match.arms.size() == 2, "match expression should preserve arms");
-	    auto const& some_pattern = as<match_case_pattern_syntax>(match.arms.front().pattern);
-	    test_parser::assert_true(some_pattern.bindings.size() == 1, "match case pattern should preserve bindings");
+    auto const& some_pattern = as<match_case_pattern_syntax>(match.arms.front().pattern);
+    test_parser::assert_true(some_pattern.bindings.size() == 1, "match case pattern should preserve bindings");
+
+    auto const pack_source = sources.add_source (
+        "api_template_for_pack.cp",
+        R"(sum<T...>(values: T...) -> i32
+requires T...: display
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + value;
+    }
+    template fo)" "r" R"( (type U : T...) {
+        type current = U;
+    }
+    return total;
+})");
+    auto pack_parsed = parse_source(sources, pack_source);
+    test_parser::assert_true(pack_parsed.accepted, "template for pack source should parse");
+    auto const& pack_function = first_function(pack_parsed);
+    test_parser::assert_true(pack_function.generic_parameters.size() == 1, "pack function should preserve generic parameter");
+    test_parser::assert_true(pack_function.generic_parameters.front().is_pack, "generic parameter should preserve pack marker");
+    test_parser::assert_true(pack_function.parameters.size() == 1, "pack function should preserve value parameter");
+    test_parser::assert_true(pack_function.parameters.front().is_pack, "value parameter should preserve pack marker");
+    test_parser::assert_true(pack_function.requires_clause != std::nullopt, "pack function should preserve requires clause");
+    auto const& pack_constraint = pack_function.requires_clause->constraints.front();
+    auto const& pack_bound = as<concept_type_bound_constraint_syntax>(pack_constraint);
+    test_parser::assert_true(pack_bound.is_pack, "requires clause should preserve type pack marker");
+    auto const& pack_body = function_body(pack_parsed, pack_function);
+    auto const& value_template_for = as<template_for_statement_syntax>(pack_parsed.ast.node(pack_body.statements[1]));
+    test_parser::assert_true(
+        value_template_for.binding_kind == template_for_binding_kind::let_binding,
+        "template for value binding should preserve binding kind");
+    auto const& type_template_for = as<template_for_statement_syntax>(pack_parsed.ast.node(pack_body.statements[2]));
+    test_parser::assert_true(
+        type_template_for.binding_kind == template_for_binding_kind::type_binding,
+        "template for type binding should preserve binding kind");
 
     auto const bad_concept_impl_source = sources.add_source (
         "api_bad_concept_impl.cp",

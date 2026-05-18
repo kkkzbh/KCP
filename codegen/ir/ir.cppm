@@ -173,20 +173,117 @@ struct function_lowerer
         semantic_result const& semantics,
         ir_module& module,
         std::size_t unit_index,
-        function_id id
+        function_id id,
+        std::size_t context_index = 0uz
     ) :
         ast_source(sources),
         parsed(parsed),
         semantics(semantics),
         module(module),
         unit_index(unit_index),
-        function_id_value(id) {}
+        function_id_value(id),
+        context_index(context_index) {}
+
+    auto signature_of(function_id id) const -> function_signature_id
+    {
+        return semantics.signature_of(current_context_index(), unit_index, id);
+    }
+
+    auto function_symbol_of(function_id id) const -> symbol_id
+    {
+        return semantics.function_symbol_of(current_context_index(), unit_index, id);
+    }
+
+    auto binding_of(stmt_id id) const -> symbol_id
+    {
+        return semantics.binding_of(current_context_index(), unit_index, id);
+    }
+
+    auto for_range_of(stmt_id id) const -> semantic_for_range_info
+    {
+        return semantics.for_range_of(current_context_index(), unit_index, id);
+    }
+
+    auto template_for_expansions_of(stmt_id id) const -> std::vector<semantic_template_for_expansion>
+    {
+        return semantics.template_for_expansions_of(current_context_index(), unit_index, id);
+    }
+
+    auto local_binding_of(source_span name) const -> symbol_id
+    {
+        return semantics.local_binding_of(current_context_index(), unit_index, name);
+    }
+
+    auto parameter_binding_of(source_span name) const -> symbol_id
+    {
+        return semantics.parameter_binding_of(current_context_index(), unit_index, name);
+    }
+
+    auto parameter_pack_bindings_of(source_span name) const -> std::vector<symbol_id>
+    {
+        return semantics.parameter_pack_bindings_of(current_context_index(), unit_index, name);
+    }
+
+    auto info_of(expr_id id) const -> semantic_expression_info
+    {
+        return semantics.info_of(current_context_index(), unit_index, id);
+    }
+
+    auto conversion_of(expr_id id) const -> semantic_type_id
+    {
+        return semantics.conversion_of(current_context_index(), unit_index, id);
+    }
+
+    auto literal_of(expr_id id) const -> semantic_literal_value
+    {
+        return semantics.literal_of(current_context_index(), unit_index, id);
+    }
+
+    auto builtin_call_of(expr_id id) const -> semantic_builtin_call
+    {
+        return semantics.builtin_call_of(current_context_index(), unit_index, id);
+    }
+
+    auto field_access_of(expr_id id) const -> semantic_field_access
+    {
+        return semantics.field_access_of(current_context_index(), unit_index, id);
+    }
+
+    auto variant_case_of(expr_id id) const -> semantic_variant_case_access
+    {
+        return semantics.variant_case_of(current_context_index(), unit_index, id);
+    }
+
+    auto lambda_of(function_id id) const -> semantic_lambda_info
+    {
+        return semantics.lambda_of(current_context_index(), unit_index, id);
+    }
+
+    auto lambda_capture_of(expr_id id) const -> semantic_lambda_capture_access
+    {
+        return semantics.lambda_capture_of(current_context_index(), unit_index, id);
+    }
+
+    auto pattern_binding_of(source_span name) const -> symbol_id
+    {
+        return semantics.pattern_binding_of(current_context_index(), unit_index, name);
+    }
+
+    auto resolved_name(expr_id id) const -> symbol_id
+    {
+        return semantics.resolved_name(current_context_index(), unit_index, id);
+    }
+
+    auto current_context_index() const -> std::size_t
+    {
+        return context_stack.empty() ? context_index : context_stack.back();
+    }
 
     auto lower() -> bool
     {
         auto const& syntax = parsed.ast.node(function_id_value);
-        auto signature_id = semantics.signature_of(unit_index, function_id_value);
-        auto symbol = semantics.function_symbol_of(unit_index, function_id_value);
+        auto signature_id = signature_of(function_id_value);
+        auto symbol = function_symbol_of(function_id_value);
         if(not signature_id.valid() or not symbol.valid()) {
             return fail("function is missing semantic signature or symbol");
         }
@@ -202,7 +299,7 @@ struct function_lowerer
 
         auto const& signature = semantics.signatures[signature_id.value];
         auto parameter_index = 0uz;
-        auto lambda = semantics.lambda_of(unit_index, function_id_value);
+        auto lambda = lambda_of(function_id_value);
         if(lambda.valid() and lambda.env_symbol.valid()) {
             bind_parameter(lambda.env_symbol, semantics.symbols[lambda.env_symbol.value].type, "closure.env");
         }
@@ -216,7 +313,18 @@ struct function_lowerer
 
         for(auto index = 0uz; index < syntax.parameters.size(); ++index) {
             auto const& parameter = syntax.parameters[index];
-            auto parameter_symbol = semantics.parameter_binding_of(unit_index, parameter.name);
+            if(parameter.is_pack) {
+                auto parameter_symbols = parameter_pack_bindings_of(parameter.name);
+                for(auto pack_index = 0uz; pack_index < parameter_symbols.size(); ++pack_index) {
+                    bind_parameter(
+                        parameter_symbols[pack_index],
+                        signature.parameters[parameter_index++],
+                        std::format("{}.{}", ast_source.slice(parameter.name), pack_index)
+                    );
+                }
+                continue;
+            }
+            auto parameter_symbol = parameter_binding_of(parameter.name);
             if(not parameter_symbol.valid()) {
                 return fail("parameter is missing semantic binding");
             }
@@ -267,8 +375,12 @@ struct function_lowerer
         auto module_name = parsed_module_name();
         if(value.function_kind != semantic_function_kind::free_function) {
             auto owner_module = module_name.empty() ? "local" : module_name;
-            auto const& owner = module.structs[value.struct_index];
-            return std::format("cp.{}.{}.{}.{}", owner_module, owner.name, value.name, symbol.value);
+            auto owner_name = (
+                value.struct_index != std::numeric_limits<std::uint32_t>::max()
+                    ? module.structs[value.struct_index].name
+                    : module.variants[value.variant_index].name
+            );
+            return std::format("cp.{}.{}.{}.{}", owner_module, owner_name, value.name, symbol.value);
         }
         if(module_name.empty() and value.name == "main") {
             return "main";
@@ -281,7 +393,10 @@ struct function_lowerer
 
     auto lowered_function_linkage(function_syntax const& syntax) -> ir_linkage
     {
-        auto symbol = semantics.function_symbol_of(unit_index, function_id_value);
+        auto symbol = function_symbol_of(function_id_value);
+        if(context_index != 0uz) {
+            return ir_linkage::internal;
+        }
         if(symbol.valid() and semantics.symbols[symbol.value].function_kind != semantic_function_kind::free_function) {
             return ir_linkage::internal;
         }
@@ -523,7 +638,7 @@ struct function_lowerer
                     if(not node.binding_names.empty()) {
                         return emit_destructuring_declaration(node);
                     }
-                    auto symbol = semantics.binding_of(unit_index, id);
+                    auto symbol = binding_of(id);
                     if(not symbol.valid()) {
                         return fail("declaration is missing semantic binding");
                     }
@@ -568,7 +683,7 @@ struct function_lowerer
                         emit_cleanups_to(0uz);
                         emit_void(ir_instruction {
                             .opcode = ir_opcode::return_,
-                            .type = semantics.info_of(unit_index, *node.value).read_type,
+                            .type = info_of(*node.value).read_type,
                             .operands = { value },
                         });
                     } else {
@@ -607,14 +722,48 @@ struct function_lowerer
                 [&](for_statement_syntax const& node) {
                     return emit_for_statement(node, id);
                 },
+                [&](template_for_statement_syntax const& node) {
+                    return emit_template_for_statement(node, id);
+                },
             },
             statement
         );
     }
 
+    auto emit_template_for_statement(template_for_statement_syntax const& node, stmt_id id) -> bool
+    {
+        auto expansions = template_for_expansions_of(id);
+        for(auto const& expansion : expansions) {
+            if(current_block().terminated()) {
+                return true;
+            }
+
+            auto depth = cleanup_depth();
+            context_stack.emplace_back(expansion.context_index);
+            if(expansion.kind == semantic_template_for_expansion_kind::value) {
+                auto source_address = emit_symbol_address(expansion.pack_symbol);
+                if(not source_address.valid()) {
+                    context_stack.pop_back();
+                    return fail("template for value expansion is missing source parameter address");
+                }
+                bind(expansion.binding_symbol, source_address);
+            }
+            if(not emit_statement(node.body)) {
+                context_stack.pop_back();
+                return false;
+            }
+            context_stack.pop_back();
+            if(not current_block().terminated()) {
+                emit_cleanups_to(depth);
+            }
+            discard_cleanups_to(depth);
+        }
+        return true;
+    }
+
     auto emit_destructuring_declaration(declaration_statement_syntax const& node) -> bool
     {
-        auto initializer_type = semantics.info_of(unit_index, node.initializer).read_type;
+        auto initializer_type = info_of(node.initializer).read_type;
         auto const* tuple = std::get_if<tuple_type>(&module.types.get(initializer_type));
         if(tuple == nullptr) {
             return fail("destructuring declaration requires tuple type metadata");
@@ -637,7 +786,7 @@ struct function_lowerer
         auto count = std::min(tuple->elements.size(), node.binding_names.size());
         for(auto index = 0uz; index < count; ++index) {
             auto binding = node.binding_names[index];
-            auto symbol = semantics.local_binding_of(unit_index, binding);
+            auto symbol = local_binding_of(binding);
             if(not symbol.valid()) {
                 return fail("destructuring binding is missing semantic symbol");
             }
@@ -764,17 +913,22 @@ struct function_lowerer
 
     auto emit_for_statement(for_statement_syntax const& node, stmt_id id) -> bool
     {
+        auto metadata = for_range_of(id);
+        if(metadata.kind == semantic_for_range_kind::iterator_protocol) {
+            return emit_protocol_for_statement(node, id, metadata);
+        }
+
         auto range = emit_expression(node.range);
         if(not range.valid()) {
             return false;
         }
-        auto range_type = semantics.info_of(unit_index, node.range).read_type;
+        auto range_type = info_of(node.range).read_type;
         auto shape = aggregate_shape_of(range_type);
         if(not shape) {
             return fail("for range lowering requires array type");
         }
 
-        auto symbol = semantics.binding_of(unit_index, id);
+        auto symbol = binding_of(id);
         if(not symbol.valid()) {
             return fail("for binding is missing semantic binding");
         }
@@ -824,6 +978,113 @@ struct function_lowerer
         return true;
     }
 
+    auto emit_protocol_for_statement(
+        for_statement_syntax const& node,
+        stmt_id id,
+        semantic_for_range_info const& metadata
+    ) -> bool
+    {
+        auto const* next_function = callable_type(semantics.symbols[metadata.next_symbol.value].type);
+        if(next_function == nullptr or next_function->parameters.empty()) {
+            return fail("range next() is missing function type");
+        }
+
+        auto iterator_address = ir_value_id{};
+        if(metadata.iter_symbol.valid()) {
+            iterator_address = emit_alloca(metadata.iterator_type, "for.iter");
+            auto const* iter_function = callable_type(semantics.symbols[metadata.iter_symbol.value].type);
+            if(iter_function == nullptr or iter_function->parameters.empty()) {
+                return fail("range iter() is missing function type");
+            }
+            auto receiver = ir_value_id{};
+            if(is_reference(iter_function->parameters.front())) {
+                receiver = emit_address(node.range);
+            } else {
+                receiver = emit_expression(node.range);
+            }
+            if(not receiver.valid()) {
+                return false;
+            }
+            auto instruction = emit_value_instruction(ir_opcode::call, metadata.iterator_type);
+            instruction.symbol = metadata.iter_symbol;
+            instruction.operands = { receiver };
+            auto iterator_value = emit(std::move(instruction));
+            emit_store(iterator_address, iterator_value, metadata.iterator_type);
+        } else if(is_reference(next_function->parameters.front()) and info_of(node.range).is_lvalue) {
+            iterator_address = emit_address(node.range);
+            if(not iterator_address.valid()) {
+                return false;
+            }
+        } else {
+            iterator_address = emit_alloca(metadata.iterator_type, "for.iter");
+            auto iterator_value = emit_expression(node.range);
+            if(not iterator_value.valid()) {
+                return false;
+            }
+            emit_store(iterator_address, iterator_value, metadata.iterator_type);
+        }
+
+        auto symbol = binding_of(id);
+        if(not symbol.valid()) {
+            return fail("for binding is missing semantic binding");
+        }
+        auto value_address = emit_alloca(metadata.element_type, std::string{ ast_source.slice(node.name) });
+        bind(symbol, value_address);
+
+        auto condition_block = add_block("for.next");
+        auto body_block = add_block("for.body");
+        auto end_block = add_block("for.end");
+        emit_void(ir_instruction{ .opcode = ir_opcode::branch, .targets = { condition_block } });
+
+        current = condition_block;
+        auto next_receiver = ir_value_id{};
+        if(is_reference(next_function->parameters.front())) {
+            next_receiver = iterator_address;
+        } else {
+            next_receiver = emit_load(iterator_address, metadata.iterator_type);
+        }
+        auto next_instruction = emit_value_instruction(ir_opcode::call, next_function->returns);
+        next_instruction.symbol = metadata.next_symbol;
+        next_instruction.operands = { next_receiver };
+        auto next_value = emit(std::move(next_instruction));
+        auto tag = emit_extract_value(next_value, semantic_type_ids::i32, 0uz);
+        auto some_tag = emit_integer_literal(semantic_type_ids::i32, metadata.some_case_index);
+        auto condition = emit_value_instruction(ir_opcode::binary, semantic_type_ids::bool_);
+        condition.operator_kind = token_kind::equal_equal;
+        condition.operands = { tag, some_tag };
+        auto condition_value = emit(std::move(condition));
+        emit_void(ir_instruction {
+            .opcode = ir_opcode::cond_branch,
+            .operands = { condition_value },
+            .targets = { body_block, end_block },
+        });
+
+        current = body_block;
+        auto payload = emit_extract_value(
+            next_value,
+            metadata.element_type,
+            std::vector<std::uint64_t>{ metadata.some_case_index + 1uz, 0uz }
+        );
+        emit_store(value_address, payload, metadata.element_type);
+        auto label = node.label
+            ? std::optional<std::string>{ std::string{ ast_source.slice(*node.label) } }
+            : std::nullopt;
+        auto depth = cleanup_depth();
+        register_cleanup(symbol, value_address, metadata.element_type);
+        loop_targets.emplace_back(end_block, condition_block, depth, label);
+        if(not emit_statement(node.body)) {
+            return false;
+        }
+        loop_targets.pop_back();
+        if(not current_block().terminated()) {
+            emit_cleanups_to(depth);
+            emit_void(ir_instruction{ .opcode = ir_opcode::branch, .targets = { condition_block } });
+        }
+        discard_cleanups_to(depth);
+        current = end_block;
+        return true;
+    }
+
     auto emit_expression(expr_id id) -> ir_value_id
     {
         auto const& expression = parsed.ast.node(id);
@@ -833,9 +1094,9 @@ struct function_lowerer
                     return emit_name_expression(node, id);
                 },
                 [&](literal_expr_syntax const&) {
-                    auto info = semantics.info_of(unit_index, id);
+                    auto info = info_of(id);
                     auto instruction = emit_value_instruction(ir_opcode::literal, info.read_type);
-                    instruction.literal = semantics.literal_of(unit_index, id);
+                    instruction.literal = literal_of(id);
                     return emit(std::move(instruction));
                 },
                 [&](unary_expr_syntax const& node) {
@@ -855,20 +1116,20 @@ struct function_lowerer
                     if(not address.valid()) {
                         return ir_value_id{};
                     }
-                    return emit_load(address, semantics.info_of(unit_index, id).read_type);
+                    return emit_load(address, info_of(id).read_type);
                 },
                 [&](index_expr_syntax const& node) {
-                    if(as_builtin(semantics.info_of(unit_index, node.object).read_type) == builtin_type_kind::str) {
+                    if(as_builtin(info_of(node.object).read_type) == builtin_type_kind::str) {
                         return emit_string_index(node);
                     }
                     auto address = emit_address(id);
                     if(not address.valid()) {
                         return ir_value_id{};
                     }
-                    return emit_load(address, semantics.info_of(unit_index, id).read_type);
+                    return emit_load(address, info_of(id).read_type);
                 },
                 [&](associated_name_expr_syntax const&) {
-                    auto access = semantics.variant_case_of(unit_index, id);
+                    auto access = variant_case_of(id);
                     if(access.valid()) {
                         return emit_variant_case_value(id, access, {});
                     }
@@ -879,16 +1140,16 @@ struct function_lowerer
                     if(not operand.valid()) {
                         return ir_value_id{};
                     }
-                    return emit_cast(operand, semantics.info_of(unit_index, id).read_type);
+                    return emit_cast(operand, info_of(id).read_type);
                 },
                 [&](grouped_expr_syntax const& node) {
                     return emit_expression(node.expression);
                 },
                 [&](array_literal_expr_syntax const& node) {
-                    return emit_array_like_literal(node.elements, semantics.info_of(unit_index, id).read_type);
+                    return emit_array_like_literal(node.elements, info_of(id).read_type);
                 },
                 [&](tuple_literal_expr_syntax const& node) {
-                    return emit_tuple_literal(node.elements, semantics.info_of(unit_index, id).read_type);
+                    return emit_tuple_literal(node.elements, info_of(id).read_type);
                 },
                 [&](struct_init_expr_syntax const& node) {
                     return emit_struct_initializer(node, id);
@@ -900,11 +1161,11 @@ struct function_lowerer
                     return emit_match_expression(node, id);
                 },
                 [&](lambda_expr_syntax const& node) {
-                    auto lambda = semantics.lambda_of(unit_index, node.function);
+                    auto lambda = lambda_of(node.function);
                     if(lambda.valid() and lambda.closure_type.valid()) {
                         return emit_lambda_closure(lambda);
                     }
-                    auto symbol = semantics.resolved_name(unit_index, id);
+                    auto symbol = resolved_name(id);
                     if(not symbol.valid()) {
                         return unsupported_expression("lambda expression is missing resolved symbol");
                     }
@@ -970,8 +1231,8 @@ struct function_lowerer
 
     auto emit_struct_initializer(struct_init_expr_syntax const& node, expr_id id) -> ir_value_id
     {
-        auto constructor = semantics.resolved_name(unit_index, id);
-        auto type = semantics.info_of(unit_index, id).read_type;
+        auto constructor = resolved_name(id);
+        auto type = info_of(id).read_type;
         if(constructor.valid() and not parsed.ast.node(semantics.symbols[constructor.value].function).defaulted) {
             auto const* function = std::get_if<function_type>(&module.types.get(semantics.symbols[constructor.value].type));
             if(function == nullptr) {
@@ -984,7 +1245,7 @@ struct function_lowerer
                 if(not value.valid()) {
                     return {};
                 }
-                arguments.emplace_back(cast_to(value, semantics.info_of(unit_index, positional[index]).read_type, function->parameters[index]));
+                arguments.emplace_back(cast_to(value, info_of(positional[index]).read_type, function->parameters[index]));
             }
             auto instruction = emit_value_instruction(ir_opcode::call, type);
             instruction.symbol = constructor;
@@ -1077,7 +1338,7 @@ struct function_lowerer
                 return {};
             }
         } else {
-            value = emit_default_value(semantics.info_of(unit_index, id).read_type);
+            value = emit_default_value(info_of(id).read_type);
         }
         if(not current_block().terminated()) {
             emit_cleanups_to(depth);
@@ -1092,7 +1353,7 @@ struct function_lowerer
         std::vector<expr_id> const& arguments
     ) -> ir_value_id
     {
-        auto type = semantics.info_of(unit_index, id).read_type;
+        auto type = info_of(id).read_type;
         auto aggregate = emit_aggregate_undef(type);
         auto tag = emit_integer_literal(semantic_type_ids::i32, access.case_index);
         aggregate = emit_insert_value(aggregate, tag, type, 0uz);
@@ -1106,7 +1367,7 @@ struct function_lowerer
             }
             aggregate = emit_insert_value(
                 aggregate,
-                cast_to(value, semantics.info_of(unit_index, arguments[index]).read_type, payloads[index]),
+                cast_to(value, info_of(arguments[index]).read_type, payloads[index]),
                 type,
                 std::vector<std::uint64_t>{ access.case_index + 1uz, index }
             );
@@ -1120,13 +1381,13 @@ struct function_lowerer
         if(not matched.valid()) {
             return {};
         }
-        auto matched_type = semantics.info_of(unit_index, node.value).read_type;
+        auto matched_type = info_of(node.value).read_type;
         auto variant_index = variant_index_of(matched_type);
         if(not variant_index) {
             return unsupported_expression("match expression is missing variant type");
         }
 
-        auto result_type = semantics.info_of(unit_index, id).read_type;
+        auto result_type = info_of(id).read_type;
         auto result_address = is_unit(result_type) ? ir_value_id{} : emit_alloca(result_type, "match.result");
         auto end_block = add_block("match.end");
         auto fallback_block = end_block;
@@ -1211,7 +1472,7 @@ struct function_lowerer
         auto payloads = variant_case_payload_types(matched_type, variant.cases[case_index]);
         auto count = std::min(payloads.size(), case_pattern->bindings.size());
         for(auto index = 0uz; index < count; ++index) {
-            auto symbol = semantics.pattern_binding_of(unit_index, case_pattern->bindings[index]);
+            auto symbol = pattern_binding_of(case_pattern->bindings[index]);
             if(not symbol.valid()) {
                 continue;
             }
@@ -1228,9 +1489,9 @@ struct function_lowerer
 
     auto emit_name_expression(name_expr_syntax const&, expr_id id) -> ir_value_id
     {
-        auto capture = semantics.lambda_capture_of(unit_index, id);
+        auto capture = lambda_capture_of(id);
         if(capture.valid()) {
-            auto lambda = semantics.lambda_of(unit_index, capture.function);
+            auto lambda = lambda_of(capture.function);
             if(capture.field_index >= lambda.captures.size()) {
                 return unsupported_expression("lambda capture field is out of bounds");
             }
@@ -1241,8 +1502,8 @@ struct function_lowerer
             return emit_load(address, lambda.captures[capture.field_index].type);
         }
 
-        auto symbol = semantics.resolved_name(unit_index, id);
-        auto field = semantics.field_access_of(unit_index, id);
+        auto symbol = resolved_name(id);
+        auto field = field_access_of(id);
         if(field.valid()) {
             auto self = self_symbol();
             if(not self.valid()) {
@@ -1259,7 +1520,7 @@ struct function_lowerer
                 struct_field_type(self_type, field),
                 field.field_index
             );
-            return emit_load(address, semantics.info_of(unit_index, id).read_type);
+            return emit_load(address, info_of(id).read_type);
         }
         if(not symbol.valid()) {
             return unsupported_expression("name expression is missing resolved symbol");
@@ -1269,7 +1530,7 @@ struct function_lowerer
             instruction.symbol = symbol;
             return emit(std::move(instruction));
         }
-        return emit_symbol_read(symbol, semantics.info_of(unit_index, id).read_type);
+        return emit_symbol_read(symbol, info_of(id).read_type);
     }
 
     auto emit_unary_expression(unary_expr_syntax const& node, expr_id id) -> ir_value_id
@@ -1282,13 +1543,13 @@ struct function_lowerer
             if(not pointer.valid()) {
                 return {};
             }
-            return emit_load(pointer, semantics.info_of(unit_index, id).read_type);
+            return emit_load(pointer, info_of(id).read_type);
         }
         auto operand = emit_expression(node.operand);
         if(not operand.valid()) {
             return {};
         }
-        auto instruction = emit_value_instruction(ir_opcode::unary, semantics.info_of(unit_index, id).read_type);
+        auto instruction = emit_value_instruction(ir_opcode::unary, info_of(id).read_type);
         instruction.operator_kind = node.operator_kind;
         instruction.operands = { operand };
         return emit(std::move(instruction));
@@ -1302,10 +1563,10 @@ struct function_lowerer
             return {};
         }
         if(auto pointer = pointer_arithmetic_pointee(node, id)) {
-            auto instruction = emit_value_instruction(ir_opcode::binary, semantics.info_of(unit_index, id).read_type);
+            auto instruction = emit_value_instruction(ir_opcode::binary, info_of(id).read_type);
             instruction.operator_kind = node.operator_kind;
             instruction.aggregate_type = *pointer;
-            if(pointer_value_pointee(semantics.info_of(unit_index, node.left).read_type)) {
+            if(pointer_value_pointee(info_of(node.left).read_type)) {
                 instruction.operands = { left, right };
             } else {
                 instruction.operands = { right, left };
@@ -1313,25 +1574,25 @@ struct function_lowerer
             return emit(std::move(instruction));
         }
         if(auto pointer = pointer_difference_pointee(node, id)) {
-            auto instruction = emit_value_instruction(ir_opcode::binary, semantics.info_of(unit_index, id).read_type);
+            auto instruction = emit_value_instruction(ir_opcode::binary, info_of(id).read_type);
             instruction.operator_kind = node.operator_kind;
             instruction.aggregate_type = *pointer;
             instruction.operands = { left, right };
             return emit(std::move(instruction));
         }
-        auto instruction = emit_value_instruction(ir_opcode::binary, semantics.info_of(unit_index, id).read_type);
+        auto instruction = emit_value_instruction(ir_opcode::binary, info_of(id).read_type);
         instruction.operator_kind = node.operator_kind;
         auto operand_type = binary_operand_type(node, id);
         instruction.operands = {
-            cast_to(left, semantics.info_of(unit_index, node.left).read_type, operand_type),
-            cast_to(right, semantics.info_of(unit_index, node.right).read_type, operand_type),
+            cast_to(left, info_of(node.left).read_type, operand_type),
+            cast_to(right, info_of(node.right).read_type, operand_type),
         };
         return emit(std::move(instruction));
     }
 
     auto pointer_arithmetic_pointee(binary_expr_syntax const& node, expr_id id) -> std::optional<semantic_type_id>
     {
-        auto result_type = semantics.info_of(unit_index, id).read_type;
+        auto result_type = info_of(id).read_type;
         if(not pointer_value_pointee(result_type)) {
             return std::nullopt;
         }
@@ -1343,15 +1604,15 @@ struct function_lowerer
 
     auto pointer_difference_pointee(binary_expr_syntax const& node, expr_id id) -> std::optional<semantic_type_id>
     {
-        auto result_type = semantics.info_of(unit_index, id).read_type;
+        auto result_type = info_of(id).read_type;
         if(result_type != semantic_type_ids::builtin(builtin_type_kind::isize)) {
             return std::nullopt;
         }
         if(node.operator_kind != token_kind::minus) {
             return std::nullopt;
         }
-        auto left = pointer_value_pointee(semantics.info_of(unit_index, node.left).read_type);
-        auto right = pointer_value_pointee(semantics.info_of(unit_index, node.right).read_type);
+        auto left = pointer_value_pointee(info_of(node.left).read_type);
+        auto right = pointer_value_pointee(info_of(node.right).read_type);
         if(left and right and *left == *right) {
             return *left;
         }
@@ -1360,7 +1621,7 @@ struct function_lowerer
 
     auto binary_operand_type(binary_expr_syntax const& node, expr_id id) -> semantic_type_id
     {
-        auto result_type = semantics.info_of(unit_index, id).read_type;
+        auto result_type = info_of(id).read_type;
         using enum token_kind;
         switch(node.operator_kind) {
             case equal_equal:
@@ -1370,8 +1631,8 @@ struct function_lowerer
             case greater:
             case greater_equal:
                 return common_operand_type(
-                    semantics.info_of(unit_index, node.left).read_type,
-                    semantics.info_of(unit_index, node.right).read_type
+                    info_of(node.left).read_type,
+                    info_of(node.right).read_type
                 );
             default:
                 return result_type;
@@ -1418,7 +1679,7 @@ struct function_lowerer
         if(not address.valid()) {
             return {};
         }
-        auto type = semantics.info_of(unit_index, id).read_type;
+        auto type = info_of(id).read_type;
 
         auto value = ir_value_id{};
         if(node.operator_kind == token_kind::equal) {
@@ -1426,7 +1687,7 @@ struct function_lowerer
             if(not value.valid()) {
                 return {};
             }
-            value = cast_to(value, semantics.info_of(unit_index, node.right).read_type, type);
+            value = cast_to(value, info_of(node.right).read_type, type);
         } else {
             auto current_value = emit_load(address, type);
             auto right_value = emit_expression(node.right);
@@ -1437,7 +1698,7 @@ struct function_lowerer
             instruction.operator_kind = compound_assignment_operator(node.operator_kind);
             instruction.operands = {
                 current_value,
-                cast_to(right_value, semantics.info_of(unit_index, node.right).read_type, type),
+                cast_to(right_value, info_of(node.right).read_type, type),
             };
             value = emit(std::move(instruction));
         }
@@ -1466,13 +1727,13 @@ struct function_lowerer
 
     auto emit_call_expression(call_expr_syntax const& node, expr_id id) -> ir_value_id
     {
-        auto builtin = semantics.builtin_call_of(unit_index, id);
+        auto builtin = builtin_call_of(id);
         if(builtin.type.valid()) {
             return emit_builtin_call(node, builtin);
         }
 
         auto const& callee_syntax = parsed.ast.node(node.callee);
-        auto variant_case = semantics.variant_case_of(unit_index, node.callee);
+        auto variant_case = variant_case_of(node.callee);
         if(variant_case.valid()) {
             return emit_variant_case_value(id, variant_case, node.arguments);
         }
@@ -1481,12 +1742,12 @@ struct function_lowerer
             return emit_member_call_expression(*member, node, id);
         }
 
-        auto closure = semantics.lambda_of_closure(semantics.info_of(unit_index, node.callee).read_type);
+        auto closure = semantics.lambda_of_closure(info_of(node.callee).read_type);
         if(closure.valid()) {
             return emit_closure_call_expression(node, id, closure);
         }
 
-        auto callee = semantics.resolved_name(unit_index, node.callee);
+        auto callee = resolved_name(node.callee);
         if(not callee.valid()) {
             if(node.arguments.size() != 1uz) {
                 return unsupported_expression("call callee is missing resolved symbol");
@@ -1495,7 +1756,7 @@ struct function_lowerer
             if(not value.valid()) {
                 return {};
             }
-            return emit_cast(value, semantics.info_of(unit_index, id).read_type);
+            return emit_cast(value, info_of(id).read_type);
         }
         auto arguments = std::vector<ir_value_id>{};
         auto const* function = callable_type(semantics.symbols[callee.value].type);
@@ -1515,7 +1776,7 @@ struct function_lowerer
             }
             arguments.emplace_back(value);
         }
-        auto instruction = emit_value_instruction(ir_opcode::call, semantics.info_of(unit_index, id).read_type);
+        auto instruction = emit_value_instruction(ir_opcode::call, info_of(id).read_type);
         if(semantics.symbols[callee.value].kind == symbol_kind::function) {
             instruction.symbol = callee;
         } else {
@@ -1524,7 +1785,7 @@ struct function_lowerer
                 return {};
             }
             arguments.insert(arguments.begin(), callee_value);
-            instruction.aggregate_type = read_type(semantics.info_of(unit_index, node.callee).type);
+            instruction.aggregate_type = read_type(info_of(node.callee).type);
         }
         instruction.operands = std::move(arguments);
         return emit(std::move(instruction));
@@ -1537,7 +1798,7 @@ struct function_lowerer
     ) -> ir_value_id
     {
         auto environment = ir_value_id{};
-        auto callee_info = semantics.info_of(unit_index, node.callee);
+        auto callee_info = info_of(node.callee);
         if(callee_info.is_lvalue) {
             environment = emit_address(node.callee);
         } else {
@@ -1563,7 +1824,7 @@ struct function_lowerer
             arguments.emplace_back(value);
         }
 
-        auto instruction = emit_value_instruction(ir_opcode::call, semantics.info_of(unit_index, id).read_type);
+        auto instruction = emit_value_instruction(ir_opcode::call, info_of(id).read_type);
         instruction.symbol = lambda.function_symbol;
         instruction.operands = std::move(arguments);
         return emit(std::move(instruction));
@@ -1628,7 +1889,7 @@ struct function_lowerer
     auto emit_member_call_expression(member_expr_syntax const& member, call_expr_syntax const& node, expr_id id)
         -> ir_value_id
     {
-        auto callee = semantics.resolved_name(unit_index, node.callee);
+        auto callee = resolved_name(node.callee);
         if(not callee.valid()) {
             return unsupported_expression("member call callee is missing resolved symbol");
         }
@@ -1659,7 +1920,7 @@ struct function_lowerer
             arguments.emplace_back(value);
         }
 
-        auto instruction = emit_value_instruction(ir_opcode::call, semantics.info_of(unit_index, id).read_type);
+        auto instruction = emit_value_instruction(ir_opcode::call, info_of(id).read_type);
         instruction.symbol = callee;
         instruction.operands = std::move(arguments);
         return emit(std::move(instruction));
@@ -1669,12 +1930,12 @@ struct function_lowerer
     {
         auto const& expression = parsed.ast.node(id);
         if(auto const* name = std::get_if<name_expr_syntax>(&expression)) {
-            auto capture = semantics.lambda_capture_of(unit_index, id);
+            auto capture = lambda_capture_of(id);
             if(capture.valid()) {
                 return emit_capture_address(capture);
             }
-            auto symbol = semantics.resolved_name(unit_index, id);
-            auto field = semantics.field_access_of(unit_index, id);
+            auto symbol = resolved_name(id);
+            auto field = field_access_of(id);
             if(field.valid()) {
                 auto self = self_symbol();
                 auto self_address = emit_symbol_address(self);
@@ -1696,7 +1957,7 @@ struct function_lowerer
             return emit_symbol_address(symbol);
         }
         if(auto const* member = std::get_if<member_expr_syntax>(&expression)) {
-            auto field = semantics.field_access_of(unit_index, id);
+            auto field = field_access_of(id);
             if(not field.valid()) {
                 return unsupported_expression("member expression is missing field access metadata");
             }
@@ -1704,7 +1965,7 @@ struct function_lowerer
             if(not base.valid()) {
                 return {};
             }
-            auto object_type = semantics.info_of(unit_index, member->object).read_type;
+            auto object_type = info_of(member->object).read_type;
             return emit_field_address(
                 base,
                 object_type,
@@ -1713,7 +1974,7 @@ struct function_lowerer
             );
         }
         if(auto const* index = std::get_if<index_expr_syntax>(&expression)) {
-            auto object_info = semantics.info_of(unit_index, index->object);
+            auto object_info = info_of(index->object);
             auto object_type = object_info.read_type;
             auto object_address = ir_value_id{};
             if(object_info.is_lvalue) {
@@ -1738,7 +1999,7 @@ struct function_lowerer
                 return emit_field_address(
                     object_address,
                     object_type,
-                    semantics.info_of(unit_index, id).read_type,
+                    info_of(id).read_type,
                     static_cast<std::uint64_t>(*tuple_index)
                 );
             }
@@ -1746,7 +2007,7 @@ struct function_lowerer
                 object_address,
                 index_value,
                 object_type,
-                semantics.info_of(unit_index, id).read_type
+                info_of(id).read_type
             );
         }
         if(auto const* unary = std::get_if<unary_expr_syntax>(&expression); unary and unary->operator_kind == token_kind::star) {
@@ -1757,7 +2018,7 @@ struct function_lowerer
 
     auto emit_capture_address(semantic_lambda_capture_access capture) -> ir_value_id
     {
-        auto lambda = semantics.lambda_of(unit_index, capture.function);
+        auto lambda = lambda_of(capture.function);
         if(not lambda.valid() or not lambda.env_symbol.valid()) {
             return unsupported_expression("lambda capture has no closure environment");
         }
@@ -1795,7 +2056,7 @@ struct function_lowerer
 
     auto materialize_conversion(expr_id id, ir_value_id value) -> ir_value_id
     {
-        auto target = semantics.conversion_of(unit_index, id);
+        auto target = conversion_of(id);
         if(not target.valid()) {
             return value;
         }
@@ -2158,6 +2419,8 @@ struct function_lowerer
     ir_module& module;
     std::size_t unit_index{};
     function_id function_id_value{};
+    std::size_t context_index{};
+    std::vector<std::size_t> context_stack{};
     ir_function* function{};
     ir_block_id current{};
     std::uint32_t next_value{};
@@ -2193,6 +2456,9 @@ export auto emit_ir(
             return result;
         }
         for(auto function_id : parsed.root->functions) {
+            if(semantics.generic_parameter_count_of(unit_index, function_id) != 0uz) {
+                continue;
+            }
             auto lowerer = function_lowerer{ sources, parsed, semantics, result.module, unit_index, function_id };
             if(not lowerer.lower()) {
                 result.error = std::move(lowerer.error);
@@ -2202,7 +2468,8 @@ export auto emit_ir(
         for(auto impl_id : parsed.root->impls) {
             auto const& impl = parsed.ast.node(impl_id);
             for(auto function_id : impl.functions) {
-                if(parsed.ast.node(function_id).defaulted) {
+                auto const& function = parsed.ast.node(function_id);
+                if(function.defaulted or semantics.generic_parameter_count_of(unit_index, function_id) != 0uz) {
                     continue;
                 }
                 auto lowerer = function_lowerer{ sources, parsed, semantics, result.module, unit_index, function_id };
@@ -2215,12 +2482,32 @@ export auto emit_ir(
         for(auto impl_id : parsed.root->concept_impls) {
             auto const& impl = parsed.ast.node(impl_id);
             for(auto function_id : impl.functions) {
+                if(semantics.generic_parameter_count_of(unit_index, function_id) != 0uz) {
+                    continue;
+                }
                 auto lowerer = function_lowerer{ sources, parsed, semantics, result.module, unit_index, function_id };
                 if(not lowerer.lower()) {
                     result.error = std::move(lowerer.error);
                     return result;
                 }
             }
+        }
+    }
+
+    for(auto const& instance : semantics.function_instances) {
+        auto const& parsed = units[instance.key.unit_index];
+        auto lowerer = function_lowerer{
+            sources,
+            parsed,
+            semantics,
+            result.module,
+            instance.key.unit_index,
+            function_id{ instance.key.function_id_value },
+            instance.context_index
+        };
+        if(not lowerer.lower()) {
+            result.error = std::move(lowerer.error);
+            return result;
         }
     }
 

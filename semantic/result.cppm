@@ -23,19 +23,31 @@ export struct semantic_node_key
         unit_index(unit),
         syntax_id_value(id.value) {}
 
+    template<semantic_node_key_id Id>
+    explicit constexpr semantic_node_key(std::size_t context, std::size_t unit, Id id) :
+        context_index(context),
+        unit_index(unit),
+        syntax_id_value(id.value) {}
+
     auto constexpr operator==(semantic_node_key const& other) const -> bool
     {
-        return unit_index == other.unit_index and syntax_id_value == other.syntax_id_value;
+        return context_index == other.context_index
+               and unit_index == other.unit_index
+               and syntax_id_value == other.syntax_id_value;
     }
 
     auto constexpr operator<=>(semantic_node_key const& other) const -> std::strong_ordering
     {
+        if(auto context_order = context_index <=> other.context_index; context_order != 0) {
+            return context_order;
+        }
         if(auto unit_order = unit_index <=> other.unit_index; unit_order != 0) {
             return unit_order;
         }
         return syntax_id_value <=> other.syntax_id_value;
     }
 
+    std::size_t context_index{};
     std::size_t unit_index{};
     std::uint32_t syntax_id_value{};
 };
@@ -48,19 +60,30 @@ export struct semantic_parameter_key
         unit_index(unit),
         name_start(position) {}
 
+    explicit constexpr semantic_parameter_key(std::size_t context, std::size_t unit, byte_pos position) :
+        context_index(context),
+        unit_index(unit),
+        name_start(position) {}
+
     auto constexpr operator==(semantic_parameter_key const& other) const -> bool
     {
-        return unit_index == other.unit_index and name_start == other.name_start;
+        return context_index == other.context_index
+               and unit_index == other.unit_index
+               and name_start == other.name_start;
     }
 
     auto constexpr operator<=>(semantic_parameter_key const& other) const -> std::strong_ordering
     {
+        if(auto context_order = context_index <=> other.context_index; context_order != 0) {
+            return context_order;
+        }
         if(auto unit_order = unit_index <=> other.unit_index; unit_order != 0) {
             return unit_order;
         }
         return name_start <=> other.name_start;
     }
 
+    std::size_t context_index{};
     std::size_t unit_index{};
     byte_pos name_start{};
 };
@@ -186,6 +209,31 @@ export struct semantic_lambda_capture_access
     std::uint32_t field_index{};
 };
 
+export enum class semantic_for_range_kind : std::uint8_t
+{
+    array,
+    iterator_protocol,
+};
+
+export struct semantic_for_range_info
+{
+    auto constexpr operator==(semantic_for_range_info const&) const -> bool = default;
+
+    auto constexpr valid() const -> bool
+    {
+        return element_type.valid();
+    }
+
+    semantic_for_range_kind kind{ semantic_for_range_kind::array };
+    semantic_type_id element_type{};
+    semantic_type_id iterator_type{};
+    symbol_id iter_symbol{};
+    symbol_id next_symbol{};
+    std::uint32_t optional_variant_index{ semantic_variant_case_access::invalid_index };
+    std::uint32_t some_case_index{};
+    std::uint32_t none_case_index{};
+};
+
 template<typename Map, semantic_node_key_id Id>
 auto lookup_result_entry(Map const& entries, std::size_t unit, Id id) -> Map::mapped_type
 {
@@ -195,6 +243,83 @@ auto lookup_result_entry(Map const& entries, std::size_t unit, Id id) -> Map::ma
     }
     return found->second;
 }
+
+template<typename Map, semantic_node_key_id Id>
+auto lookup_result_entry(Map const& entries, std::size_t context, std::size_t unit, Id id) -> Map::mapped_type
+{
+    auto found = entries.find(semantic_node_key{context, unit, id});
+    if(found == entries.end()) {
+        return {};
+    }
+    return found->second;
+}
+
+export struct semantic_function_instance_key
+{
+    constexpr semantic_function_instance_key() = default;
+
+    semantic_function_instance_key(
+        std::size_t source_unit,
+        function_id source_function,
+        std::vector<semantic_type_id> instance_type_arguments
+    ) :
+        unit_index(source_unit),
+        function_id_value(source_function.value),
+        type_arguments(std::move(instance_type_arguments)) {}
+
+    auto constexpr operator==(semantic_function_instance_key const&) const -> bool = default;
+    auto constexpr operator<=>(semantic_function_instance_key const&) const = default;
+
+    std::size_t unit_index{};
+    std::uint32_t function_id_value{};
+    std::vector<semantic_type_id> type_arguments{};
+};
+
+export struct semantic_function_instance
+{
+    semantic_function_instance() = default;
+
+    semantic_function_instance(
+        semantic_function_instance_key instance_key,
+        std::size_t instance_context,
+        symbol_id instance_symbol,
+        function_signature_id instance_signature,
+        std::map<std::string, semantic_type_id> instance_substitutions,
+        std::map<std::string, std::vector<semantic_type_id>> instance_pack_substitutions
+    ) :
+        key(std::move(instance_key)),
+        context_index(instance_context),
+        symbol(instance_symbol),
+        signature(instance_signature),
+        substitutions(std::move(instance_substitutions)),
+        pack_substitutions(std::move(instance_pack_substitutions)) {}
+
+    auto constexpr operator==(semantic_function_instance const&) const -> bool = default;
+
+    semantic_function_instance_key key{};
+    std::size_t context_index{};
+    symbol_id symbol{};
+    function_signature_id signature{};
+    std::map<std::string, semantic_type_id> substitutions{};
+    std::map<std::string, std::vector<semantic_type_id>> pack_substitutions{};
+};
+
+export enum class semantic_template_for_expansion_kind : std::uint8_t
+{
+    value,
+    type,
+};
+
+export struct semantic_template_for_expansion
+{
+    auto constexpr operator==(semantic_template_for_expansion const&) const -> bool = default;
+
+    semantic_template_for_expansion_kind kind{};
+    std::size_t context_index{};
+    symbol_id binding_symbol{};
+    symbol_id pack_symbol{};
+    semantic_type_id bound_type{};
+};
 
 export struct semantic_result
 {
@@ -213,6 +338,11 @@ export struct semantic_result
         return lookup_result_entry(expression_types, unit, id);
     }
 
+    auto type_of(std::size_t context, std::size_t unit, expr_id id) const -> semantic_type_id
+    {
+        return lookup_result_entry(expression_types, context, unit, id);
+    }
+
     auto resolved_name(expr_id id) const -> symbol_id
     {
         return resolved_name(0uz, id);
@@ -221,6 +351,11 @@ export struct semantic_result
     auto resolved_name(std::size_t unit, expr_id id) const -> symbol_id
     {
         return lookup_result_entry(expression_symbols, unit, id);
+    }
+
+    auto resolved_name(std::size_t context, std::size_t unit, expr_id id) const -> symbol_id
+    {
+        return lookup_result_entry(expression_symbols, context, unit, id);
     }
 
     auto signature_of(function_id id) const -> function_signature_id
@@ -233,6 +368,11 @@ export struct semantic_result
         return lookup_result_entry(function_signatures, unit, id);
     }
 
+    auto signature_of(std::size_t context, std::size_t unit, function_id id) const -> function_signature_id
+    {
+        return lookup_result_entry(function_signatures, context, unit, id);
+    }
+
     auto binding_of(stmt_id id) const -> symbol_id
     {
         return binding_of(0uz, id);
@@ -243,9 +383,23 @@ export struct semantic_result
         return lookup_result_entry(statement_bindings, unit, id);
     }
 
+    auto binding_of(std::size_t context, std::size_t unit, stmt_id id) const -> symbol_id
+    {
+        return lookup_result_entry(statement_bindings, context, unit, id);
+    }
+
     auto local_binding_of(std::size_t unit, source_span name) const -> symbol_id
     {
         auto found = local_bindings.find(semantic_parameter_key{unit, name.start});
+        if(found == local_bindings.end()) {
+            return {};
+        }
+        return found->second;
+    }
+
+    auto local_binding_of(std::size_t context, std::size_t unit, source_span name) const -> symbol_id
+    {
+        auto found = local_bindings.find(semantic_parameter_key{context, unit, name.start});
         if(found == local_bindings.end()) {
             return {};
         }
@@ -262,10 +416,34 @@ export struct semantic_result
         return lookup_result_entry(function_symbols, unit, id);
     }
 
+    auto function_symbol_of(std::size_t context, std::size_t unit, function_id id) const -> symbol_id
+    {
+        return lookup_result_entry(function_symbols, context, unit, id);
+    }
+
     auto parameter_binding_of(std::size_t unit, source_span name) const -> symbol_id
     {
         auto found = parameter_bindings.find(semantic_parameter_key{unit, name.start});
         if(found == parameter_bindings.end()) {
+            return {};
+        }
+        return found->second;
+    }
+
+    auto parameter_binding_of(std::size_t context, std::size_t unit, source_span name) const -> symbol_id
+    {
+        auto found = parameter_bindings.find(semantic_parameter_key{context, unit, name.start});
+        if(found == parameter_bindings.end()) {
+            return {};
+        }
+        return found->second;
+    }
+
+    auto parameter_pack_bindings_of(std::size_t context, std::size_t unit, source_span name) const
+        -> std::vector<symbol_id>
+    {
+        auto found = parameter_pack_bindings.find(semantic_parameter_key{context, unit, name.start});
+        if(found == parameter_pack_bindings.end()) {
             return {};
         }
         return found->second;
@@ -281,6 +459,11 @@ export struct semantic_result
         return lookup_result_entry(expression_infos, unit, id);
     }
 
+    auto info_of(std::size_t context, std::size_t unit, expr_id id) const -> semantic_expression_info
+    {
+        return lookup_result_entry(expression_infos, context, unit, id);
+    }
+
     auto conversion_of(expr_id id) const -> semantic_type_id
     {
         return conversion_of(0uz, id);
@@ -289,6 +472,11 @@ export struct semantic_result
     auto conversion_of(std::size_t unit, expr_id id) const -> semantic_type_id
     {
         return lookup_result_entry(expression_conversions, unit, id);
+    }
+
+    auto conversion_of(std::size_t context, std::size_t unit, expr_id id) const -> semantic_type_id
+    {
+        return lookup_result_entry(expression_conversions, context, unit, id);
     }
 
     auto literal_of(expr_id id) const -> semantic_literal_value
@@ -301,9 +489,19 @@ export struct semantic_result
         return lookup_result_entry(literal_values, unit, id);
     }
 
+    auto literal_of(std::size_t context, std::size_t unit, expr_id id) const -> semantic_literal_value
+    {
+        return lookup_result_entry(literal_values, context, unit, id);
+    }
+
     auto builtin_call_of(std::size_t unit, expr_id id) const -> semantic_builtin_call
     {
         return lookup_result_entry(builtin_calls, unit, id);
+    }
+
+    auto builtin_call_of(std::size_t context, std::size_t unit, expr_id id) const -> semantic_builtin_call
+    {
+        return lookup_result_entry(builtin_calls, context, unit, id);
     }
 
     auto field_access_of(std::size_t unit, expr_id id) const -> semantic_field_access
@@ -311,9 +509,19 @@ export struct semantic_result
         return lookup_result_entry(expression_fields, unit, id);
     }
 
+    auto field_access_of(std::size_t context, std::size_t unit, expr_id id) const -> semantic_field_access
+    {
+        return lookup_result_entry(expression_fields, context, unit, id);
+    }
+
     auto variant_case_of(std::size_t unit, expr_id id) const -> semantic_variant_case_access
     {
         return lookup_result_entry(expression_variant_cases, unit, id);
+    }
+
+    auto variant_case_of(std::size_t context, std::size_t unit, expr_id id) const -> semantic_variant_case_access
+    {
+        return lookup_result_entry(expression_variant_cases, context, unit, id);
     }
 
     auto lambda_of(std::size_t unit, function_id id) const -> semantic_lambda_info
@@ -321,9 +529,19 @@ export struct semantic_result
         return lookup_result_entry(lambda_infos, unit, id);
     }
 
+    auto lambda_of(std::size_t context, std::size_t unit, function_id id) const -> semantic_lambda_info
+    {
+        return lookup_result_entry(lambda_infos, context, unit, id);
+    }
+
     auto lambda_capture_of(std::size_t unit, expr_id id) const -> semantic_lambda_capture_access
     {
         return lookup_result_entry(lambda_capture_accesses, unit, id);
+    }
+
+    auto lambda_capture_of(std::size_t context, std::size_t unit, expr_id id) const -> semantic_lambda_capture_access
+    {
+        return lookup_result_entry(lambda_capture_accesses, context, unit, id);
     }
 
     auto lambda_of_closure(semantic_type_id type) const -> semantic_lambda_info
@@ -355,14 +573,61 @@ export struct semantic_result
         return found->second;
     }
 
+    auto pattern_binding_of(std::size_t context, std::size_t unit, source_span name) const -> symbol_id
+    {
+        auto found = pattern_bindings.find(semantic_parameter_key{context, unit, name.start});
+        if(found == pattern_bindings.end()) {
+            return {};
+        }
+        return found->second;
+    }
+
+    auto function_instance_of(symbol_id symbol) const -> semantic_function_instance const*
+    {
+        auto found = function_instance_by_symbol.find(symbol);
+        if(found == function_instance_by_symbol.end()) {
+            return nullptr;
+        }
+        return &function_instances[found->second];
+    }
+
+    auto for_range_of(std::size_t unit, stmt_id id) const -> semantic_for_range_info
+    {
+        return lookup_result_entry(for_ranges, unit, id);
+    }
+
+    auto for_range_of(std::size_t context, std::size_t unit, stmt_id id) const -> semantic_for_range_info
+    {
+        return lookup_result_entry(for_ranges, context, unit, id);
+    }
+
+    auto template_for_expansions_of(std::size_t context, std::size_t unit, stmt_id id) const
+        -> std::vector<semantic_template_for_expansion>
+    {
+        return lookup_result_entry(template_for_expansions, context, unit, id);
+    }
+
+    auto generic_parameter_count_of(std::size_t unit, function_id id) const -> std::size_t
+    {
+        auto found = function_generic_parameter_counts.find(semantic_node_key{unit, id});
+        if(found == function_generic_parameter_counts.end()) {
+            return 0uz;
+        }
+        return found->second;
+    }
+
     type_arena types{};
     std::vector<semantic_symbol> symbols{};
     std::vector<semantic_struct> structs{};
     std::vector<semantic_variant> variants{};
     std::vector<semantic_concept> concepts{};
     std::vector<semantic_concept_impl> concept_impls{};
+    std::vector<semantic_function_instance> function_instances{};
     std::vector<function_signature> signatures{};
     std::vector<diagnostic> diagnostics{};
+    std::map<semantic_function_instance_key, std::size_t> function_instance_indices{};
+    std::map<symbol_id, std::size_t> function_instance_by_symbol{};
+    std::map<semantic_node_key, std::size_t> function_generic_parameter_counts{};
     std::map<semantic_node_key, semantic_type_id> expression_types{};
     std::map<semantic_node_key, symbol_id> expression_symbols{};
     std::map<semantic_node_key, function_signature_id> function_signatures{};
@@ -370,6 +635,7 @@ export struct semantic_result
     std::map<semantic_parameter_key, symbol_id> local_bindings{};
     std::map<semantic_node_key, symbol_id> function_symbols{};
     std::map<semantic_parameter_key, symbol_id> parameter_bindings{};
+    std::map<semantic_parameter_key, std::vector<symbol_id>> parameter_pack_bindings{};
     std::map<semantic_node_key, semantic_expression_info> expression_infos{};
     std::map<semantic_node_key, semantic_type_id> expression_conversions{};
     std::map<semantic_node_key, semantic_literal_value> literal_values{};
@@ -380,4 +646,6 @@ export struct semantic_result
     std::map<std::uint32_t, semantic_node_key> closure_lambda_infos{};
     std::map<semantic_node_key, semantic_lambda_capture_access> lambda_capture_accesses{};
     std::map<semantic_parameter_key, symbol_id> pattern_bindings{};
+    std::map<semantic_node_key, semantic_for_range_info> for_ranges{};
+    std::map<semantic_node_key, std::vector<semantic_template_for_expansion>> template_for_expansions{};
 };

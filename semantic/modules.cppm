@@ -429,7 +429,9 @@ auto semantic_analyzer::collect_struct_fields(
     auto& item = result.structs[struct_index];
     auto names = std::set<std::string>{};
     auto old_parameters = std::move(active_generic_parameters);
+    auto old_packs = std::move(active_generic_parameter_packs);
     active_generic_parameters.clear();
+    active_generic_parameter_packs.clear();
     for(auto index = 0uz; index < syntax.generic_parameters.size(); ++index) {
         active_generic_parameters.emplace(
             std::string{ ast_source.identifier(syntax.generic_parameters[index].name) },
@@ -450,6 +452,7 @@ auto semantic_analyzer::collect_struct_fields(
         item.fields.emplace_back(std::move(field_name), field.name, lower_type(ast, field.type));
     }
     active_generic_parameters = std::move(old_parameters);
+    active_generic_parameter_packs = std::move(old_packs);
 }
 
 auto semantic_analyzer::collect_function_declaration(
@@ -481,6 +484,11 @@ auto semantic_analyzer::collect_function_declaration(
         return;
     }
 
+    validate_function_pack_shape(unit_index, id);
+    auto old_parameters = std::move(active_generic_parameters);
+    auto old_packs = std::move(active_generic_parameter_packs);
+    bind_active_function_generic_parameters(unit_index, id);
+
     auto parameter_types = (
         function.parameters
         | std::views::transform([&](parameter_syntax const& parameter) {
@@ -494,6 +502,8 @@ auto semantic_analyzer::collect_function_declaration(
     if(function.return_type) {
         return_type = lower_type(ast, *function.return_type);
     }
+    active_generic_parameters = std::move(old_parameters);
+    active_generic_parameter_packs = std::move(old_packs);
 
     auto signature_id = (
         add_signature (function_signature {
@@ -503,6 +513,9 @@ auto semantic_analyzer::collect_function_declaration(
         })
     );
     result.function_signatures.emplace(semantic_node_key{unit_index, id}, signature_id);
+    if(not function.generic_parameters.empty()) {
+        result.function_generic_parameter_counts.emplace(semantic_node_key{unit_index, id}, function.generic_parameters.size());
+    }
 
     auto function_type_id = (
         intern_type (function_type {
@@ -548,17 +561,48 @@ auto semantic_analyzer::collect_impl_declarations(
 {
     active_unit_index = unit_index;
     auto const& impl = ast.node(id);
+    auto impl_generic_parameters = collect_type_pattern_parameters(ast, impl.type);
+    auto old_parameters = std::move(active_generic_parameters);
+    auto old_packs = std::move(active_generic_parameter_packs);
+    bind_active_generic_parameters(impl_generic_parameters);
     auto type = lower_type(ast, impl.type);
-    if(not struct_index_of(type)) {
+    active_generic_parameters = std::move(old_parameters);
+    active_generic_parameter_packs = std::move(old_packs);
+    if(not struct_index_of(type) and not variant_index_of(type)) {
         report(
             diagnostic_kind::unknown_type,
             ast.span(impl.type),
-            "impl target must be a struct type"
+            "impl target must be a struct or variant type"
         );
         return;
     }
+
+    auto& aliases = associated_types[type];
+    for(auto const& alias : impl.type_aliases) {
+        auto name = std::string{ ast_source.identifier(alias.name) };
+        if(aliases.contains(name)) {
+            report(
+                diagnostic_kind::duplicate_symbol,
+                alias.name,
+                std::format("duplicate associated type '{}'", name)
+            );
+            continue;
+        }
+        if(not alias.value) {
+            report(diagnostic_kind::expected_type, alias.full_span, "impl type alias requires a value");
+            continue;
+        }
+        auto old_parameters_for_alias = std::move(active_generic_parameters);
+        auto old_packs_for_alias = std::move(active_generic_parameter_packs);
+        bind_active_generic_parameters(impl_generic_parameters);
+        auto alias_type = lower_type(ast, *alias.value);
+        active_generic_parameters = std::move(old_parameters_for_alias);
+        active_generic_parameter_packs = std::move(old_packs_for_alias);
+        aliases.emplace(std::move(name), alias_type);
+    }
+
     for(auto function_id : impl.functions) {
-        collect_impl_function(unit_index, ast, impl, function_id);
+        collect_impl_function(unit_index, ast, impl, type, impl_generic_parameters, function_id);
     }
 }
 
@@ -566,20 +610,42 @@ auto semantic_analyzer::collect_impl_function(
     std::size_t unit_index,
     ast_arena const& ast,
     impl_syntax const& impl,
+    semantic_type_id impl_type,
+    std::vector<std::string> const& impl_generic_parameters,
     function_id id
 ) -> void
 {
     active_unit_index = unit_index;
     auto const& function = ast.node(id);
-    auto impl_type = lower_type(ast, impl.type);
     auto struct_index = struct_index_of(impl_type);
-    if(not struct_index) {
+    auto variant_index = variant_index_of(impl_type);
+    if(not struct_index and not variant_index) {
         return;
     }
-    auto& item = result.structs[*struct_index];
+    auto item_name = struct_index
+        ? result.structs[*struct_index].name
+        : result.variants[*variant_index].name;
+    auto item_type = struct_index
+        ? result.structs[*struct_index].type
+        : result.variants[*variant_index].type;
     auto name = std::string{ ast_source.identifier(function.name) };
-    auto is_constructor = function.defaulted or name == item.name;
+    auto is_constructor = struct_index and (function.defaulted or name == item_name);
     auto is_destructor = function.kind == function_syntax_kind::destructor;
+    if(variant_index and (function.defaulted or is_destructor or name == item_name)) {
+        report(diagnostic_kind::invalid_constructor, function.full_span, "variant impl cannot declare constructors or destructors");
+        return;
+    }
+
+    auto all_generic_parameters = impl_generic_parameters;
+    for(auto const& parameter : function.generic_parameters) {
+        all_generic_parameters.emplace_back(ast_source.identifier(parameter.name));
+    }
+    implicit_function_generic_parameters[function_key(unit_index, id)] = impl_generic_parameters;
+    function_impl_target_patterns[function_key(unit_index, id)] = impl_type;
+    if(impl.requires_clause) {
+        function_impl_requires[function_key(unit_index, id)] = *impl.requires_clause;
+    }
+    validate_function_pack_shape(unit_index, id);
 
     if(function.defaulted) {
         if(not function.default_marker or ast_source.slice(*function.default_marker) != "default") {
@@ -595,7 +661,7 @@ auto semantic_analyzer::collect_impl_function(
     auto inferred_return = false;
     if(is_destructor) {
         function_kind = semantic_function_kind::destructor;
-        if(name != item.name) {
+        if(name != item_name) {
             report(diagnostic_kind::invalid_destructor, function.name, "destructor name must match impl type");
         }
         if(not function.parameters.empty()) {
@@ -604,16 +670,19 @@ auto semantic_analyzer::collect_impl_function(
         if(function.return_type) {
             report(diagnostic_kind::invalid_destructor, function.full_span, "destructor cannot declare a return type");
         }
-        if(item.destructor.valid()) {
+        if(result.structs[*struct_index].destructor.valid()) {
             report(diagnostic_kind::duplicate_symbol, function.name, "struct already has a destructor");
         }
     } else if(is_constructor) {
         function_kind = semantic_function_kind::constructor;
-        return_type = item.type;
+        return_type = impl_type;
         if(function.return_type) {
             report(diagnostic_kind::invalid_constructor, function.full_span, "constructor cannot declare a return type");
         }
     } else {
+        auto old_parameters = std::move(active_generic_parameters);
+        auto old_packs = std::move(active_generic_parameter_packs);
+        bind_active_function_generic_parameters(unit_index, id);
         if(function.return_type) {
             return_type = lower_type(ast, *function.return_type);
         } else {
@@ -625,21 +694,36 @@ auto semantic_analyzer::collect_impl_function(
             auto self_type = function.parameters.front().type;
             auto lowered_self = self_type ? lower_type(ast, *self_type) : semantic_type_ids::error;
             auto target = read_type(lowered_self);
-            if(target != item.type) {
+            if(target != impl_type) {
                 report(
                     diagnostic_kind::invalid_self_parameter,
                     function.parameters.front().full_span,
                     "self parameter must be the current struct type or reference"
                 );
             }
-            if(item.methods.contains(name)) {
+            auto duplicate = struct_index
+                ? result.structs[*struct_index].methods.contains(name)
+                : result.variants[*variant_index].methods.contains(name);
+            duplicate = duplicate or associated_types[impl_type].contains(name);
+            if(duplicate) {
                 report(diagnostic_kind::duplicate_symbol, function.name, std::format("duplicate member '{}'", name));
             }
-        } else if(item.associated_functions.contains(name)) {
-            report(diagnostic_kind::duplicate_symbol, function.name, std::format("duplicate associated function '{}'", name));
+        } else {
+            auto duplicate = struct_index
+                ? result.structs[*struct_index].associated_functions.contains(name)
+                : result.variants[*variant_index].associated_functions.contains(name);
+            duplicate = duplicate or associated_types[impl_type].contains(name);
+            if(duplicate) {
+                report(diagnostic_kind::duplicate_symbol, function.name, std::format("duplicate associated function '{}'", name));
+            }
         }
+        active_generic_parameters = std::move(old_parameters);
+        active_generic_parameter_packs = std::move(old_packs);
     }
 
+    auto old_parameters = std::move(active_generic_parameters);
+    auto old_packs = std::move(active_generic_parameter_packs);
+    bind_active_function_generic_parameters(unit_index, id);
     auto parameter_types = (
         function.parameters
         | std::views::transform([&](parameter_syntax const& parameter) {
@@ -648,8 +732,10 @@ auto semantic_analyzer::collect_impl_function(
                 : semantic_type_ids::inferred;
         }) | std::ranges::to<std::vector<semantic_type_id>>()
     );
+    active_generic_parameters = std::move(old_parameters);
+    active_generic_parameter_packs = std::move(old_packs);
     if(is_destructor) {
-        parameter_types.emplace_back(result.types.intern(reference_type{ item.type }));
+        parameter_types.emplace_back(result.types.intern(reference_type{ item_type }));
     }
 
     auto signature_id = add_signature(function_signature {
@@ -658,6 +744,9 @@ auto semantic_analyzer::collect_impl_function(
         .inferred_return = inferred_return,
     });
     result.function_signatures.emplace(semantic_node_key{unit_index, id}, signature_id);
+    if(not all_generic_parameters.empty()) {
+        result.function_generic_parameter_counts.emplace(semantic_node_key{unit_index, id}, all_generic_parameters.size());
+    }
 
     auto function_type_id = intern_type(function_type {
         .parameters = parameter_types,
@@ -670,19 +759,28 @@ auto semantic_analyzer::collect_impl_function(
         .type = function_type_id,
         .unit_index = unit_index,
         .function = id,
-        .struct_index = *struct_index,
+        .struct_index = struct_index.value_or(std::numeric_limits<std::uint32_t>::max()),
+        .variant_index = variant_index.value_or(std::numeric_limits<std::uint32_t>::max()),
         .function_kind = function_kind,
     });
     result.function_symbols.emplace(semantic_node_key{unit_index, id}, symbol);
 
     if(function_kind == semantic_function_kind::constructor) {
-        item.constructors.emplace_back(symbol);
+        result.structs[*struct_index].constructors.emplace_back(symbol);
     } else if(function_kind == semantic_function_kind::destructor) {
-        item.destructor = symbol;
+        result.structs[*struct_index].destructor = symbol;
     } else if(function_kind == semantic_function_kind::member_function) {
-        item.methods.emplace(name, symbol);
+        if(struct_index) {
+            result.structs[*struct_index].methods.emplace(name, symbol);
+        } else {
+            result.variants[*variant_index].methods.emplace(name, symbol);
+        }
     } else {
-        item.associated_functions.emplace(name, symbol);
+        if(struct_index) {
+            result.structs[*struct_index].associated_functions.emplace(name, symbol);
+        } else {
+            result.variants[*variant_index].associated_functions.emplace(name, symbol);
+        }
     }
 }
 
@@ -705,9 +803,15 @@ auto semantic_analyzer::collect_concept_impl_declarations(
         return;
     }
 
+    auto impl_generic_parameters = collect_type_pattern_parameters(ast, impl.target_type);
+    auto old_parameters = std::move(active_generic_parameters);
+    auto old_packs = std::move(active_generic_parameter_packs);
+    bind_active_generic_parameters(impl_generic_parameters);
     auto target_type = lower_type(ast, impl.target_type);
-    if(not struct_index_of(target_type)) {
-        report(diagnostic_kind::unknown_type, ast.span(impl.target_type), "concept impl target must be a struct type");
+    active_generic_parameters = std::move(old_parameters);
+    active_generic_parameter_packs = std::move(old_packs);
+    if(not struct_index_of(target_type) and not variant_index_of(target_type)) {
+        report(diagnostic_kind::unknown_type, ast.span(impl.target_type), "concept impl target must be a struct or variant type");
         return;
     }
     auto key = std::pair{ *concept_symbol, target_type };
@@ -742,12 +846,22 @@ auto semantic_analyzer::collect_concept_impl_declarations(
             report(diagnostic_kind::expected_type, alias.full_span, "concept impl associated type requires a value");
             continue;
         }
+        auto old_parameters_for_alias = std::move(active_generic_parameters);
+        auto old_packs_for_alias = std::move(active_generic_parameter_packs);
+        bind_active_generic_parameters(impl_generic_parameters);
         auto type = lower_type(ast, *alias.value);
+        active_generic_parameters = std::move(old_parameters_for_alias);
+        active_generic_parameter_packs = std::move(old_packs_for_alias);
         aliases.emplace(name, type);
         concept_impl.associated_types.emplace(std::move(name), type);
     }
 
     for(auto function_id : impl.functions) {
+        implicit_function_generic_parameters[function_key(unit_index, function_id)] = impl_generic_parameters;
+        function_impl_target_patterns[function_key(unit_index, function_id)] = target_type;
+        if(impl.requires_clause) {
+            function_impl_requires[function_key(unit_index, function_id)] = *impl.requires_clause;
+        }
         auto symbol = collect_concept_impl_function(unit_index, ast, impl, target_type, function_id);
         if(not symbol) {
             continue;
@@ -759,6 +873,13 @@ auto semantic_analyzer::collect_concept_impl_declarations(
     auto index = result.concept_impls.size();
     result.concept_impls.emplace_back(std::move(concept_impl));
     concept_impl_index.emplace(key, index);
+    if(not impl_generic_parameters.empty()) {
+        generic_concept_impl_indices.emplace_back(index);
+        concept_impl_generic_parameters.emplace(index, std::move(impl_generic_parameters));
+    }
+    if(impl.requires_clause) {
+        concept_impl_requires.emplace(index, *impl.requires_clause);
+    }
     validate_concept_impl(result.concept_impls.back(), impl.full_span);
 }
 
@@ -773,20 +894,26 @@ auto semantic_analyzer::collect_concept_impl_function(
     active_unit_index = unit_index;
     auto const& function = ast.node(id);
     auto struct_index = struct_index_of(target_type);
-    if(not struct_index) {
+    auto variant_index = variant_index_of(target_type);
+    if(not struct_index and not variant_index) {
         return std::nullopt;
     }
 
-    auto& item = result.structs[*struct_index];
     auto name = std::string{ ast_source.identifier(function.name) };
+    validate_function_pack_shape(unit_index, id);
     auto function_kind = semantic_function_kind::associated_function;
     if(not function.parameters.empty() and ast_source.slice(function.parameters.front().name) == "self") {
         function_kind = semantic_function_kind::member_function;
         auto old_self = active_self_type;
+        auto old_parameters = std::move(active_generic_parameters);
+        auto old_packs = std::move(active_generic_parameter_packs);
         active_self_type = target_type;
+        bind_active_function_generic_parameters(unit_index, id);
         auto self_type = function.parameters.front().type;
         auto lowered_self = self_type ? lower_type(ast, *self_type) : semantic_type_ids::error;
         active_self_type = old_self;
+        active_generic_parameters = std::move(old_parameters);
+        active_generic_parameter_packs = std::move(old_packs);
         if(read_type(lowered_self) != target_type) {
             report(
                 diagnostic_kind::invalid_self_parameter,
@@ -794,19 +921,36 @@ auto semantic_analyzer::collect_concept_impl_function(
                 "self parameter must be the concept impl target type or reference"
             );
         }
-        if(item.methods.contains(name)) {
+        auto duplicate = struct_index
+            ? result.structs[*struct_index].methods.contains(name)
+            : result.variants[*variant_index].methods.contains(name);
+        duplicate = duplicate or associated_types[target_type].contains(name);
+        if(duplicate) {
             report(diagnostic_kind::duplicate_symbol, function.name, std::format("duplicate member '{}'", name));
             return std::nullopt;
         }
-    } else if(item.associated_functions.contains(name)) {
-        report(diagnostic_kind::duplicate_symbol, function.name, std::format("duplicate associated function '{}'", name));
-        return std::nullopt;
+    } else {
+        auto duplicate = struct_index
+            ? result.structs[*struct_index].associated_functions.contains(name)
+            : result.variants[*variant_index].associated_functions.contains(name);
+        duplicate = duplicate or associated_types[target_type].contains(name);
+        if(duplicate) {
+            report(diagnostic_kind::duplicate_symbol, function.name, std::format("duplicate associated function '{}'", name));
+            return std::nullopt;
+        }
     }
 
     auto old_aliases = active_type_aliases;
     auto old_self = active_self_type;
+    auto old_parameters = std::move(active_generic_parameters);
+    auto old_packs = std::move(active_generic_parameter_packs);
     active_type_aliases = &associated_types[target_type];
     active_self_type = target_type;
+    auto all_generic_parameters = implicit_function_generic_parameters[function_key(unit_index, id)];
+    for(auto const& parameter : function.generic_parameters) {
+        all_generic_parameters.emplace_back(ast_source.identifier(parameter.name));
+    }
+    bind_active_function_generic_parameters(unit_index, id);
     auto parameter_types = (
         function.parameters
         | std::views::transform([&](parameter_syntax const& parameter) {
@@ -816,6 +960,8 @@ auto semantic_analyzer::collect_concept_impl_function(
         }) | std::ranges::to<std::vector<semantic_type_id>>()
     );
     auto return_type = function.return_type ? lower_type(ast, *function.return_type) : semantic_type_ids::unit;
+    active_generic_parameters = std::move(old_parameters);
+    active_generic_parameter_packs = std::move(old_packs);
     active_self_type = old_self;
     active_type_aliases = old_aliases;
 
@@ -824,6 +970,9 @@ auto semantic_analyzer::collect_concept_impl_function(
         .returns = return_type,
     });
     result.function_signatures.emplace(semantic_node_key{unit_index, id}, signature_id);
+    if(not all_generic_parameters.empty()) {
+        result.function_generic_parameter_counts.emplace(semantic_node_key{unit_index, id}, all_generic_parameters.size());
+    }
 
     auto function_type_id = intern_type(function_type {
         .parameters = parameter_types,
@@ -836,15 +985,24 @@ auto semantic_analyzer::collect_concept_impl_function(
         .type = function_type_id,
         .unit_index = unit_index,
         .function = id,
-        .struct_index = *struct_index,
+        .struct_index = struct_index.value_or(std::numeric_limits<std::uint32_t>::max()),
+        .variant_index = variant_index.value_or(std::numeric_limits<std::uint32_t>::max()),
         .function_kind = function_kind,
     });
     result.function_symbols.emplace(semantic_node_key{unit_index, id}, symbol);
 
     if(function_kind == semantic_function_kind::member_function) {
-        item.methods.emplace(name, symbol);
+        if(struct_index) {
+            result.structs[*struct_index].methods.emplace(name, symbol);
+        } else {
+            result.variants[*variant_index].methods.emplace(name, symbol);
+        }
     } else {
-        item.associated_functions.emplace(name, symbol);
+        if(struct_index) {
+            result.structs[*struct_index].associated_functions.emplace(name, symbol);
+        } else {
+            result.variants[*variant_index].associated_functions.emplace(name, symbol);
+        }
     }
     static_cast<void>(impl);
     return symbol;
@@ -956,9 +1114,135 @@ auto semantic_analyzer::validate_parent_concepts(
     }
 }
 
-auto semantic_analyzer::target_implements(symbol_id concept_symbol, semantic_type_id target_type) const -> bool
+auto semantic_analyzer::concept_impl_applies(semantic_concept_impl const& impl, semantic_type_id target_type)
+    -> std::optional<std::vector<semantic_type_id>>
 {
-    return concept_impl_index.contains(std::pair{ concept_symbol, target_type });
+    auto inferred = std::map<std::uint32_t, semantic_type_id>{};
+    if(not infer_type_argument(impl.target_type, target_type, inferred)) {
+        return std::nullopt;
+    }
+
+    auto type_arguments = std::vector<semantic_type_id>{};
+    for(auto const& [index, value] : inferred) {
+        if(index >= type_arguments.size()) {
+            type_arguments.resize(index + 1uz, semantic_type_ids::error);
+        }
+        type_arguments[index] = value;
+    }
+
+    auto impl_index = static_cast<std::size_t>(&impl - result.concept_impls.data());
+    if(auto requirement_clause = concept_impl_requires.find(impl_index); requirement_clause != concept_impl_requires.end()) {
+        auto substitutions = std::map<std::string, semantic_type_id>{};
+        if(auto names = concept_impl_generic_parameters.find(impl_index); names != concept_impl_generic_parameters.end()) {
+            auto count = std::min(names->second.size(), type_arguments.size());
+            for(auto index = 0uz; index < count; ++index) {
+                substitutions.emplace(names->second[index], type_arguments[index]);
+            }
+        }
+        auto const& ast = units[impl.unit_index].ast;
+        if(not requires_clause_satisfied(impl.unit_index, ast, requirement_clause->second, substitutions, target_type)) {
+            return std::nullopt;
+        }
+    }
+    return type_arguments;
+}
+
+auto semantic_analyzer::target_implements(symbol_id concept_symbol, semantic_type_id target_type) -> bool
+{
+    if(concept_impl_index.contains(std::pair{ concept_symbol, target_type })) {
+        return true;
+    }
+
+    for(auto index : generic_concept_impl_indices) {
+        auto const& impl = result.concept_impls[index];
+        if(impl.concept_symbol != concept_symbol) {
+            continue;
+        }
+        if(concept_impl_applies(impl, target_type)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+auto semantic_analyzer::requires_clause_satisfied(
+    std::size_t unit_index,
+    ast_arena const& ast,
+    concept_requires_syntax const& clause,
+    std::map<std::string, semantic_type_id> const& substitutions,
+    std::optional<semantic_type_id> self_type
+) -> bool
+{
+    auto old_unit_index = active_unit_index;
+    auto old_substitutions = active_type_substitutions;
+    auto old_pack_substitutions = active_type_pack_substitutions;
+    auto old_self = active_self_type;
+    active_unit_index = unit_index;
+    active_type_substitutions = &substitutions;
+    if(self_type) {
+        active_self_type = *self_type;
+    }
+
+    auto satisfied = true;
+    for(auto const& constraint : clause.constraints) {
+        std::visit (
+            overloaded {
+                [&](concept_parent_constraint_syntax const& value) {
+                    auto concept_name = ast_source.identifier(value.name);
+                    auto concept_symbol = resolve_concept_symbol(unit_index, concept_name);
+                    if(not concept_symbol or not self_type or not target_implements(*concept_symbol, *self_type)) {
+                        satisfied = false;
+                    }
+                },
+                [&](concept_type_bound_constraint_syntax const& value) {
+                    if(value.is_pack) {
+                        auto name = std::string{ ast_source.identifier(ast.node(value.type).name) };
+                        if(active_type_pack_substitutions == nullptr) {
+                            satisfied = false;
+                            return;
+                        }
+                        auto pack = active_type_pack_substitutions->find(name);
+                        if(pack == active_type_pack_substitutions->end()) {
+                            satisfied = false;
+                            return;
+                        }
+                        for(auto target : pack->second) {
+                            for(auto bound : value.concept_bounds) {
+                                auto concept_name = ast_source.identifier(bound);
+                                auto concept_symbol = resolve_concept_symbol(unit_index, concept_name);
+                                if(not concept_symbol or not target_implements(*concept_symbol, target)) {
+                                    satisfied = false;
+                                }
+                            }
+                        }
+                        return;
+                    }
+                    auto target = lower_type(ast, value.type);
+                    for(auto bound : value.concept_bounds) {
+                        auto concept_name = ast_source.identifier(bound);
+                        auto concept_symbol = resolve_concept_symbol(unit_index, concept_name);
+                        if(not concept_symbol or not target_implements(*concept_symbol, target)) {
+                            satisfied = false;
+                        }
+                    }
+                },
+                [&](concept_type_equality_constraint_syntax const& value) {
+                    auto left = lower_type(ast, value.left);
+                    auto right = lower_type(ast, value.right);
+                    if(read_type(left) != read_type(right)) {
+                        satisfied = false;
+                    }
+                },
+            },
+            constraint
+        );
+    }
+
+    active_self_type = old_self;
+    active_type_pack_substitutions = old_pack_substitutions;
+    active_type_substitutions = old_substitutions;
+    active_unit_index = old_unit_index;
+    return satisfied;
 }
 
 auto semantic_analyzer::validate_requires_clauses() -> void
@@ -970,7 +1254,12 @@ auto semantic_analyzer::validate_requires_clauses() -> void
         for(auto function_id : syntax.functions) {
             auto const& function = ast.node(function_id);
             if(function.requires_clause) {
+                auto old_parameters = std::move(active_generic_parameters);
+                auto old_packs = std::move(active_generic_parameter_packs);
+                bind_active_function_generic_parameters(unit_index, function_id);
                 validate_requires_clause(unit_index, ast, *function.requires_clause);
+                active_generic_parameters = std::move(old_parameters);
+                active_generic_parameter_packs = std::move(old_packs);
             }
         }
         for(auto impl_id : syntax.impls) {
@@ -978,16 +1267,28 @@ auto semantic_analyzer::validate_requires_clauses() -> void
             if(not impl.requires_clause) {
                 continue;
             }
+            auto impl_generic_parameters = collect_type_pattern_parameters(ast, impl.type);
+            auto old_parameters = std::move(active_generic_parameters);
+            auto old_packs = std::move(active_generic_parameter_packs);
+            bind_active_generic_parameters(impl_generic_parameters);
             auto target = lower_type(ast, impl.type);
             validate_requires_clause(unit_index, ast, *impl.requires_clause, target);
+            active_generic_parameters = std::move(old_parameters);
+            active_generic_parameter_packs = std::move(old_packs);
         }
         for(auto impl_id : syntax.concept_impls) {
             auto const& impl = ast.node(impl_id);
             if(not impl.requires_clause) {
                 continue;
             }
+            auto impl_generic_parameters = collect_type_pattern_parameters(ast, impl.target_type);
+            auto old_parameters = std::move(active_generic_parameters);
+            auto old_packs = std::move(active_generic_parameter_packs);
+            bind_active_generic_parameters(impl_generic_parameters);
             auto target = lower_type(ast, impl.target_type);
             validate_requires_clause(unit_index, ast, *impl.requires_clause, target);
+            active_generic_parameters = std::move(old_parameters);
+            active_generic_parameter_packs = std::move(old_packs);
         }
     }
 }
@@ -1024,6 +1325,44 @@ auto semantic_analyzer::validate_requires_clause(
                     );
                 },
                 [&](concept_type_bound_constraint_syntax const& value) {
+                    if(value.is_pack) {
+                        auto name = std::string{ ast_source.identifier(ast.node(value.type).name) };
+                        if(active_type_pack_substitutions == nullptr) {
+                            return;
+                        }
+                        auto pack = active_type_pack_substitutions->find(name);
+                        if(pack == active_type_pack_substitutions->end()) {
+                            report(
+                                diagnostic_kind::invalid_type_argument,
+                                value.full_span,
+                                "requires clause references an unknown type parameter pack"
+                            );
+                            return;
+                        }
+                        for(auto target : pack->second) {
+                            for(auto bound : value.concept_bounds) {
+                                auto concept_name = ast_source.identifier(bound);
+                                auto concept_symbol = resolve_concept_symbol(unit_index, concept_name);
+                                if(not concept_symbol) {
+                                    report(
+                                        diagnostic_kind::unknown_concept,
+                                        bound,
+                                        std::format("unknown concept '{}'", concept_name)
+                                    );
+                                    continue;
+                                }
+                                if(target_implements(*concept_symbol, target)) {
+                                    continue;
+                                }
+                                report(
+                                    diagnostic_kind::missing_concept_item,
+                                    value.full_span,
+                                    std::format("required type does not implement concept '{}'", concept_name)
+                                );
+                            }
+                        }
+                        return;
+                    }
                     auto target = lower_type(ast, value.type);
                     for(auto bound : value.concept_bounds) {
                         auto concept_name = ast_source.identifier(bound);

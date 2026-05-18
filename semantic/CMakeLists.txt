@@ -14,6 +14,7 @@ target_sources(semantic
             variants.cppm
             modules.cppm
             types.cppm
+            generics.cppm
             lambda.cppm
             expressions.cppm
             statements.cppm

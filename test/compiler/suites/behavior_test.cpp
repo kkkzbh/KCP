@@ -783,6 +783,171 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "generic struct binary should return 42");
 }
 
+auto check_generic_function_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("generic-function");
+    auto source = dir / "generic_function.cp";
+    auto app = dir / "generic_function";
+    write_source(
+        source,
+        R"(id<T>(input: T) -> T
+{
+    return input;
+}
+
+choose<T>(left: T, right: T, flag: bool) -> T
+{
+    if(flag) {
+        return left;
+    }
+    return right;
+}
+
+main() -> i32
+{
+    let first = id<i32>(20);
+    let second = id(22);
+    let ok = id<bool>(true);
+    if(ok) {
+        return choose(first, second, false);
+    }
+    return 1;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile generic function binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 22, "generic function binary should return monomorphized value");
+}
+
+auto check_imported_generic_function_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("imported-generic-function");
+    auto math = dir / "math.cp";
+    auto main = dir / "main.cp";
+    auto app = dir / "imported_generic_function";
+    write_source(
+        math,
+        R"(export module math;
+
+export id<T>(input: T) -> T
+{
+    return input;
+})"
+    );
+    write_source(
+        main,
+        R"(import math;
+
+main() -> i32
+{
+    return id<i32>(40) + id(2);
+})"
+    );
+
+    auto status = compile(tools, { math.string(), main.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile imported generic function binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "imported generic function binary should return 42");
+}
+
+auto check_parameter_pack_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("parameter-pack");
+    auto source = dir / "pack.cp";
+    auto app = dir / "pack";
+    write_source(
+        source,
+        R"(sum<T...>(values: T...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + value;
+    }
+    return total;
+}
+
+type_count<T...>() -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (type U : T...) {
+        type current = U;
+        total = total + 1;
+    }
+    return total;
+}
+
+empty<T...>(values: T...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + value;
+    }
+    return total;
+}
+
+main() -> i32
+{
+    return sum(10, 20, 9) + type_count<i32, bool, i32>() + empty();
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile parameter pack binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "parameter pack binary should return 42");
+}
+
+auto check_direct_iterator_consumes_original_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("direct-iterator");
+    auto source = dir / "direct_iterator.cp";
+    auto app = dir / "direct_iterator";
+    write_source(
+        source,
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+concept iterator {
+    type iter_item;
+    next(self: Self&) -> optional<iter_item>;
+}
+
+struct count_iter {
+    current: i32;
+    end: i32;
+}
+
+impl iterator for count_iter {
+    type iter_item = i32;
+
+    next(self: count_iter&) -> optional<i32>
+    {
+        if(current < end) {
+            let value = current;
+            current = current + 1;
+            return optional<i32>::some(value);
+        }
+        return optional<i32>::none;
+    }
+}
+
+main() -> i32
+{
+    let iter = count_iter{ .current = 1, .end = 4 };
+    let total = 0;
+    for(let value : iter) {
+        total = total + value;
+    }
+    return total + iter.current * 9;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile direct iterator range-for binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "direct iterator range-for should consume original cursor");
+}
+
 auto check_string_index_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("string-index");
@@ -842,6 +1007,10 @@ auto main(int argc, char** argv) -> int
     check_decltype_ref_destructure_binary(tools);
     check_lambda_binary(tools);
     check_generic_struct_binary(tools);
+    check_generic_function_binary(tools);
+    check_imported_generic_function_binary(tools);
+    check_parameter_pack_binary(tools);
+    check_direct_iterator_consumes_original_binary(tools);
     check_string_index_binary(tools);
     return 0;
 }

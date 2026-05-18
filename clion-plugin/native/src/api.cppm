@@ -539,6 +539,16 @@ auto collect_statement_highlights(
             collect_expression_highlights(collector, ast, checked, unit_index, node.range);
             collect_statement_highlights(collector, ast, checked, unit_index, node.body);
         },
+        [&](template_for_statement_syntax const& node) {
+            collector.add(
+                node.binding_kind == template_for_binding_kind::type_binding
+                    ? "type.declaration"
+                    : "local.declaration",
+                node.name
+            );
+            collector.add("local.reference", node.pack_name);
+            collect_statement_highlights(collector, ast, checked, unit_index, node.body);
+        },
         [&](break_statement_syntax const& node) {
             if(node.label) {
                 collector.add("loop.label.reference", *node.label);
