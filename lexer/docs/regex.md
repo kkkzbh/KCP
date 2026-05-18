@@ -71,7 +71,7 @@
 - `module`
 - `struct`
 - `impl`
-- `trait`
+- `concept`
 - `as`
 - `true`
 - `false`

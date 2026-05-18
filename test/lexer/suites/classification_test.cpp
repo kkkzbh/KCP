@@ -41,7 +41,7 @@ auto main() -> int
             {"break", token_kind::kw_break},
             {"const", token_kind::kw_const},
             {"false", token_kind::kw_false},
-            {"trait", token_kind::kw_trait},
+            {"concept", token_kind::kw_concept},
             {"while", token_kind::kw_while},
             {"export", token_kind::kw_export},
             {"import", token_kind::kw_import},

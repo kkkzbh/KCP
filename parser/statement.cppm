@@ -9,6 +9,14 @@ import parser;
 
 auto parser::parse_statement() -> std::optional<stmt_id>
 {
+    if (
+        check_contextual("type")
+        and peek(1uz).kind == token_kind::identifier
+        and peek(2uz).kind == token_kind::equal
+    ) {
+        return parse_type_alias_statement();
+    }
+
     switch(peek().kind) {
         case token_kind::l_brace:
             return parse_block_statement();
@@ -90,7 +98,38 @@ auto parser::parse_block_statement() -> std::optional<stmt_id>
 auto parser::parse_declaration_statement() -> std::optional<stmt_id>
 {
     auto start = consume();
-    auto name = expect_identifier("declaration name");
+    auto is_ref = false;
+    if(check_contextual("ref")) {
+        consume();
+        is_ref = true;
+    }
+
+    auto binding_names = std::vector<source_span>{};
+    auto name = std::optional<token>{};
+    if(check(token_kind::l_paren)) {
+        consume();
+        auto first = expect_identifier("declaration binding name");
+        if(not first) {
+            return std::nullopt;
+        }
+        name = *first;
+        binding_names.emplace_back(first->span);
+        while(check(token_kind::comma)) {
+            consume();
+            auto next = expect_identifier("declaration binding name");
+            if(not next) {
+                return std::nullopt;
+            }
+            binding_names.emplace_back(next->span);
+        }
+        auto close = expect(token_kind::r_paren);
+        if(not close) {
+            return std::nullopt;
+        }
+    } else {
+        name = expect_identifier("declaration name");
+    }
+
     std::optional<type_id> type{};
     if(check(token_kind::colon)) {
         consume();
@@ -116,9 +155,38 @@ auto parser::parse_declaration_statement() -> std::optional<stmt_id>
     auto statement = declaration_statement_syntax {
         .full_span = combine_spans(start.span, semicolon->span),
         .is_const = start.kind == token_kind::kw_const,
+        .is_ref = is_ref,
         .name = name->span,
+        .binding_names = std::move(binding_names),
         .declared_type = type,
         .initializer = *initializer,
+    };
+    return arena.add(statement_syntax{ std::move(statement) });
+}
+
+auto parser::parse_type_alias_statement() -> std::optional<stmt_id>
+{
+    auto start = consume();
+    auto name = expect_identifier("type alias name");
+    auto equal = expect(token_kind::equal);
+    if(not name or not equal) {
+        return std::nullopt;
+    }
+
+    auto type = parse_expected_type();
+    if(not type) {
+        return std::nullopt;
+    }
+
+    auto semicolon = expect(token_kind::semicolon);
+    if(not semicolon) {
+        return std::nullopt;
+    }
+
+    auto statement = type_alias_statement_syntax {
+        .full_span = combine_spans(start.span, semicolon->span),
+        .name = name->span,
+        .type = *type,
     };
     return arena.add(statement_syntax{ std::move(statement) });
 }

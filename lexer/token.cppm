@@ -31,7 +31,7 @@ export enum class token_kind
     kw_module,   ///< `module` 关键字。
     kw_struct,   ///< `struct` 关键字。
     kw_impl,     ///< `impl` 关键字。
-    kw_trait,    ///< `trait` 关键字。
+    kw_concept,  ///< `concept` 关键字。
     kw_as,       ///< `as` 关键字。
     kw_true,     ///< `true` 关键字。
     kw_false,    ///< `false` 关键字。
@@ -109,7 +109,7 @@ export auto constexpr token_name_table = std::to_array<std::pair<token_kind, std
     { token_kind::kw_module, "kw_module" },
     { token_kind::kw_struct, "kw_struct" },
     { token_kind::kw_impl, "kw_impl" },
-    { token_kind::kw_trait, "kw_trait" },
+    { token_kind::kw_concept, "kw_concept" },
     { token_kind::kw_as, "kw_as" },
     { token_kind::kw_true, "kw_true" },
     { token_kind::kw_false, "kw_false" },
@@ -220,5 +220,6 @@ export struct token
 
     token_kind kind{};                        ///< token 的种类。
     source_span span{};                       ///< token 在原始源码中的区间。
+    std::string text{};                       ///< 标识符等上下文敏感 token 的源码文本。
     token_flags flags{ token_flags::none };     ///< token 的附加标记。
 };

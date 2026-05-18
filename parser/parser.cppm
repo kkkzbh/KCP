@@ -13,18 +13,49 @@ struct parser
 
     auto parse_translation_unit_node() -> std::optional<translation_unit_syntax>;
     auto parse_module_header() -> std::optional<module_header_syntax>;
-    auto parse_import_declaration() -> std::optional<import_syntax>;
+    auto parse_import_declaration(bool exported = false, std::optional<source_span> export_span = std::nullopt)
+        -> std::optional<import_syntax>;
     auto parse_module_name() -> std::optional<module_name_syntax>;
     auto starts_function_definition() const -> bool;
+    auto starts_top_level_item() const -> bool;
+    auto check_contextual(std::string_view text, std::size_t lookahead = 0uz) const -> bool;
     auto starts_parameter() const -> bool;
     auto expect_parameter_start() -> bool;
-    auto parse_function() -> std::optional<function_id>;
+    auto parse_function(function_syntax_kind kind = function_syntax_kind::free_function) -> std::optional<function_id>;
+    auto parse_struct_declaration(bool exported, std::optional<source_span> export_span) -> std::optional<struct_id>;
+    auto parse_struct_field() -> std::optional<struct_field_syntax>;
+    auto parse_variant_declaration(bool exported, std::optional<source_span> export_span) -> std::optional<variant_id>;
+    auto parse_variant_case() -> std::optional<variant_case_syntax>;
+    auto parse_impl_block() -> std::optional<impl_id>;
+    auto parse_concept_declaration(bool exported, std::optional<source_span> export_span) -> std::optional<concept_id>;
+    auto parse_concept_item() -> std::optional<concept_item_syntax>;
+    auto parse_concept_requires() -> std::optional<concept_requires_syntax>;
+    auto parse_requires_clause_until(token_kind end) -> std::optional<concept_requires_syntax>;
+    auto parse_concept_requires_constraints_until(token_kind end) -> std::optional<std::vector<concept_requires_constraint_syntax>>;
+    auto parse_concept_requires_primary() -> std::optional<concept_requires_constraint_syntax>;
+    auto parse_type_alias() -> std::optional<type_alias_syntax>;
+    auto parse_concept_function_requirement() -> std::optional<concept_function_requirement_syntax>;
+    auto parse_concept_impl_block() -> std::optional<concept_impl_id>;
+    auto parse_impl_item(type_syntax const& impl_type) -> std::optional<function_id>;
+    auto parse_default_constructor(source_span start, source_span name, std::vector<parameter_syntax> parameters)
+        -> std::optional<function_id>;
     auto parse_parameter_list() -> std::optional<std::vector<parameter_syntax>>;
     auto parse_parameter() -> std::optional<parameter_syntax>;
+    auto parse_lambda_parameter_list() -> std::optional<std::vector<parameter_syntax>>;
+    auto parse_lambda_parameter() -> std::optional<parameter_syntax>;
+    auto parse_generic_parameter_list() -> std::optional<std::vector<generic_parameter_syntax>>;
+    auto parse_generic_parameter() -> std::optional<generic_parameter_syntax>;
+    auto consume_ellipsis() -> std::optional<source_span>;
 
     auto starts_type(token_kind kind) const -> bool;
     auto expect_type_start() -> bool;
-    auto parse_type() -> std::optional<type_id>;
+    auto parse_type(bool allow_associated_names = true) -> std::optional<type_id>;
+    auto looks_like_function_type() const -> bool;
+    auto parse_function_type() -> std::optional<type_id>;
+    auto parse_function_type_parameter() -> std::optional<function_type_parameter_syntax>;
+    auto looks_like_decltype() const -> bool;
+    auto parse_decltype() -> std::optional<type_id>;
+    auto parse_type_argument_list() -> std::optional<std::vector<type_argument_syntax>>;
     auto starts_type_argument(token_kind kind) const -> bool;
     auto expect_type_argument_start() -> bool;
     auto parse_type_argument() -> std::optional<type_argument_syntax>;
@@ -38,6 +69,19 @@ struct parser
     auto parse_unary() -> std::optional<expr_id>;
     auto parse_postfix() -> std::optional<expr_id>;
     auto parse_primary() -> std::optional<expr_id>;
+    auto looks_like_generic_call_suffix() const -> bool;
+    auto looks_like_associated_name_expression() const -> bool;
+    auto parse_associated_name_expression() -> std::optional<expr_id>;
+    auto parse_match_expression() -> std::optional<expr_id>;
+    auto parse_match_arm() -> std::optional<match_arm_syntax>;
+    auto parse_match_pattern() -> std::optional<match_pattern_syntax>;
+    auto parse_lambda_expression() -> std::optional<expr_id>;
+    auto parse_lambda_body(source_span start) -> std::optional<stmt_id>;
+    auto looks_like_type_initializer() const -> bool;
+    auto parse_type_initializer() -> std::optional<expr_id>;
+    auto parse_struct_initializer_list(type_id type, source_span start) -> std::optional<expr_id>;
+    auto parse_block_expression() -> std::optional<expr_id>;
+    auto type_from_name(source_span name) -> type_id;
     auto parse_array_literal() -> std::optional<expr_id>;
     auto parse_paren_expression() -> std::optional<expr_id>;
 
@@ -46,6 +90,7 @@ struct parser
     auto parse_expected_type() -> std::optional<type_id>;
     auto parse_block_statement() -> std::optional<stmt_id>;
     auto parse_declaration_statement() -> std::optional<stmt_id>;
+    auto parse_type_alias_statement() -> std::optional<stmt_id>;
     auto parse_if_statement() -> std::optional<stmt_id>;
     auto parse_while_statement() -> std::optional<stmt_id>;
     auto parse_do_while_statement() -> std::optional<stmt_id>;
@@ -143,8 +188,8 @@ struct parser
                 return "'struct'";
             case kw_impl:
                 return "'impl'";
-            case kw_trait:
-                return "'trait'";
+            case kw_concept:
+                return "'concept'";
             case kw_as:
                 return "'as'";
             case kw_true:
@@ -376,6 +421,9 @@ struct parser
             token_kind::semicolon,
             token_kind::kw_import,
             token_kind::kw_export,
+            token_kind::kw_struct,
+            token_kind::kw_impl,
+            token_kind::kw_concept,
             token_kind::identifier,
             token_kind::eof,
         })) {
@@ -392,6 +440,9 @@ struct parser
         while(not check_any({
             token_kind::semicolon,
             token_kind::kw_export,
+            token_kind::kw_struct,
+            token_kind::kw_impl,
+            token_kind::kw_concept,
             token_kind::identifier,
             token_kind::eof,
         })) {
@@ -408,6 +459,7 @@ struct parser
     std::deque<token> injected{};
     ast_arena arena{};
     diagnostic_collector diagnostics{};
+    std::vector<function_id> synthetic_functions{};
 };
 
 export struct [[nodiscard]] parse_result

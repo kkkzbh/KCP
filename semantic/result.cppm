@@ -75,11 +75,115 @@ export struct semantic_expression_info
     bool is_const{};
 };
 
+export struct semantic_field_access
+{
+    auto constexpr operator==(semantic_field_access const&) const -> bool = default;
+
+    auto constexpr valid() const -> bool
+    {
+        return struct_index != invalid_index;
+    }
+
+    auto constexpr static invalid_index = std::numeric_limits<std::uint32_t>::max();
+
+    std::uint32_t struct_index{ invalid_index };
+    std::uint32_t field_index{};
+    bool implicit_self{};
+};
+
+export struct semantic_variant_case_access
+{
+    auto constexpr operator==(semantic_variant_case_access const&) const -> bool = default;
+
+    auto constexpr valid() const -> bool
+    {
+        return variant_index != invalid_index;
+    }
+
+    auto constexpr static invalid_index = std::numeric_limits<std::uint32_t>::max();
+
+    std::uint32_t variant_index{ invalid_index };
+    std::uint32_t case_index{};
+};
+
 export struct semantic_literal_value
 {
     auto constexpr operator==(semantic_literal_value const&) const -> bool = default;
 
     std::variant<std::monostate, bool, std::int64_t, double, char, std::string> value{};
+};
+
+export enum class semantic_builtin_call_kind : std::uint8_t
+{
+    alloc,
+    free,
+    construct_at,
+    destroy_at,
+};
+
+export struct semantic_builtin_call
+{
+    auto constexpr operator==(semantic_builtin_call const&) const -> bool = default;
+
+    semantic_builtin_call_kind kind{};
+    semantic_type_id type{};
+};
+
+export struct semantic_lambda_capture
+{
+    semantic_lambda_capture() = default;
+
+    semantic_lambda_capture(
+        symbol_id captured_symbol,
+        std::string captured_name,
+        source_span captured_span,
+        semantic_type_id captured_type,
+        bool captured_const
+    ) :
+        symbol(captured_symbol),
+        name(std::move(captured_name)),
+        span(captured_span),
+        type(captured_type),
+        is_const(captured_const) {}
+
+    auto constexpr operator==(semantic_lambda_capture const&) const -> bool = default;
+
+    symbol_id symbol{};
+    std::string name{};
+    source_span span{};
+    semantic_type_id type{};
+    bool is_const{};
+};
+
+export struct semantic_lambda_info
+{
+    auto constexpr operator==(semantic_lambda_info const&) const -> bool = default;
+
+    auto constexpr valid() const -> bool
+    {
+        return function_symbol.valid();
+    }
+
+    function_id function{};
+    symbol_id function_symbol{};
+    semantic_type_id closure_type{};
+    std::uint32_t closure_struct_index{ std::numeric_limits<std::uint32_t>::max() };
+    symbol_id env_symbol{};
+    std::vector<semantic_lambda_capture> captures{};
+    function_type callable{};
+};
+
+export struct semantic_lambda_capture_access
+{
+    auto constexpr operator==(semantic_lambda_capture_access const&) const -> bool = default;
+
+    auto constexpr valid() const -> bool
+    {
+        return function.valid();
+    }
+
+    function_id function{};
+    std::uint32_t field_index{};
 };
 
 template<typename Map, semantic_node_key_id Id>
@@ -139,6 +243,15 @@ export struct semantic_result
         return lookup_result_entry(statement_bindings, unit, id);
     }
 
+    auto local_binding_of(std::size_t unit, source_span name) const -> symbol_id
+    {
+        auto found = local_bindings.find(semantic_parameter_key{unit, name.start});
+        if(found == local_bindings.end()) {
+            return {};
+        }
+        return found->second;
+    }
+
     auto function_symbol_of(function_id id) const -> symbol_id
     {
         return function_symbol_of(0uz, id);
@@ -188,17 +301,83 @@ export struct semantic_result
         return lookup_result_entry(literal_values, unit, id);
     }
 
+    auto builtin_call_of(std::size_t unit, expr_id id) const -> semantic_builtin_call
+    {
+        return lookup_result_entry(builtin_calls, unit, id);
+    }
+
+    auto field_access_of(std::size_t unit, expr_id id) const -> semantic_field_access
+    {
+        return lookup_result_entry(expression_fields, unit, id);
+    }
+
+    auto variant_case_of(std::size_t unit, expr_id id) const -> semantic_variant_case_access
+    {
+        return lookup_result_entry(expression_variant_cases, unit, id);
+    }
+
+    auto lambda_of(std::size_t unit, function_id id) const -> semantic_lambda_info
+    {
+        return lookup_result_entry(lambda_infos, unit, id);
+    }
+
+    auto lambda_capture_of(std::size_t unit, expr_id id) const -> semantic_lambda_capture_access
+    {
+        return lookup_result_entry(lambda_capture_accesses, unit, id);
+    }
+
+    auto lambda_of_closure(semantic_type_id type) const -> semantic_lambda_info
+    {
+        if(not type.valid()) {
+            return {};
+        }
+        auto const* closure = std::get_if<struct_type>(&types.get(type));
+        if(closure == nullptr) {
+            return {};
+        }
+        auto found = closure_lambda_infos.find(closure->index);
+        if(found == closure_lambda_infos.end()) {
+            return {};
+        }
+        auto lambda = lambda_infos.find(found->second);
+        if(lambda == lambda_infos.end()) {
+            return {};
+        }
+        return lambda->second;
+    }
+
+    auto pattern_binding_of(std::size_t unit, source_span name) const -> symbol_id
+    {
+        auto found = pattern_bindings.find(semantic_parameter_key{unit, name.start});
+        if(found == pattern_bindings.end()) {
+            return {};
+        }
+        return found->second;
+    }
+
     type_arena types{};
     std::vector<semantic_symbol> symbols{};
+    std::vector<semantic_struct> structs{};
+    std::vector<semantic_variant> variants{};
+    std::vector<semantic_concept> concepts{};
+    std::vector<semantic_concept_impl> concept_impls{};
     std::vector<function_signature> signatures{};
     std::vector<diagnostic> diagnostics{};
     std::map<semantic_node_key, semantic_type_id> expression_types{};
     std::map<semantic_node_key, symbol_id> expression_symbols{};
     std::map<semantic_node_key, function_signature_id> function_signatures{};
     std::map<semantic_node_key, symbol_id> statement_bindings{};
+    std::map<semantic_parameter_key, symbol_id> local_bindings{};
     std::map<semantic_node_key, symbol_id> function_symbols{};
     std::map<semantic_parameter_key, symbol_id> parameter_bindings{};
     std::map<semantic_node_key, semantic_expression_info> expression_infos{};
     std::map<semantic_node_key, semantic_type_id> expression_conversions{};
     std::map<semantic_node_key, semantic_literal_value> literal_values{};
+    std::map<semantic_node_key, semantic_builtin_call> builtin_calls{};
+    std::map<semantic_node_key, semantic_field_access> expression_fields{};
+    std::map<semantic_node_key, semantic_variant_case_access> expression_variant_cases{};
+    std::map<semantic_node_key, semantic_lambda_info> lambda_infos{};
+    std::map<std::uint32_t, semantic_node_key> closure_lambda_infos{};
+    std::map<semantic_node_key, semantic_lambda_capture_access> lambda_capture_accesses{};
+    std::map<semantic_parameter_key, symbol_id> pattern_bindings{};
 };

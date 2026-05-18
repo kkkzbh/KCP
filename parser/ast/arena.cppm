@@ -14,6 +14,11 @@ concept ast_arena_syntax_node = (
     or std::same_as<std::remove_cvref_t<Node>, statement_syntax>
     or std::same_as<std::remove_cvref_t<Node>, type_syntax>
     or std::same_as<std::remove_cvref_t<Node>, function_syntax>
+    or std::same_as<std::remove_cvref_t<Node>, struct_syntax>
+    or std::same_as<std::remove_cvref_t<Node>, variant_syntax>
+    or std::same_as<std::remove_cvref_t<Node>, impl_syntax>
+    or std::same_as<std::remove_cvref_t<Node>, concept_syntax>
+    or std::same_as<std::remove_cvref_t<Node>, concept_impl_syntax>
 );
 
 export template<typename Id>
@@ -22,6 +27,11 @@ concept ast_arena_id = (
     or std::same_as<std::remove_cvref_t<Id>, stmt_id>
     or std::same_as<std::remove_cvref_t<Id>, type_id>
     or std::same_as<std::remove_cvref_t<Id>, function_id>
+    or std::same_as<std::remove_cvref_t<Id>, struct_id>
+    or std::same_as<std::remove_cvref_t<Id>, variant_id>
+    or std::same_as<std::remove_cvref_t<Id>, impl_id>
+    or std::same_as<std::remove_cvref_t<Id>, concept_id>
+    or std::same_as<std::remove_cvref_t<Id>, concept_impl_id>
 );
 
 export struct ast_arena
@@ -43,9 +53,29 @@ export struct ast_arena
             auto id = type_id{static_cast<std::uint32_t>(types.size())};
             types.emplace_back(std::move(node));
             return id;
-        } else {
+        } else if constexpr(std::same_as<syntax_node, function_syntax>) {
             auto id = function_id{static_cast<std::uint32_t>(functions.size())};
             functions.emplace_back(std::move(node));
+            return id;
+        } else if constexpr(std::same_as<syntax_node, struct_syntax>) {
+            auto id = struct_id{static_cast<std::uint32_t>(structs.size())};
+            structs.emplace_back(std::move(node));
+            return id;
+        } else if constexpr(std::same_as<syntax_node, variant_syntax>) {
+            auto id = variant_id{static_cast<std::uint32_t>(variants.size())};
+            variants.emplace_back(std::move(node));
+            return id;
+        } else if constexpr(std::same_as<syntax_node, impl_syntax>) {
+            auto id = impl_id{static_cast<std::uint32_t>(impls.size())};
+            impls.emplace_back(std::move(node));
+            return id;
+        } else if constexpr(std::same_as<syntax_node, concept_syntax>) {
+            auto id = concept_id{static_cast<std::uint32_t>(concepts.size())};
+            concepts.emplace_back(std::move(node));
+            return id;
+        } else {
+            auto id = concept_impl_id{static_cast<std::uint32_t>(concept_impls.size())};
+            concept_impls.emplace_back(std::move(node));
             return id;
         }
     }
@@ -61,8 +91,18 @@ export struct ast_arena
             return (self.statements[id.value]);
         } else if constexpr(std::same_as<id_type, type_id>) {
             return (self.types[id.value]);
-        } else {
+        } else if constexpr(std::same_as<id_type, function_id>) {
             return (self.functions[id.value]);
+        } else if constexpr(std::same_as<id_type, struct_id>) {
+            return (self.structs[id.value]);
+        } else if constexpr(std::same_as<id_type, variant_id>) {
+            return (self.variants[id.value]);
+        } else if constexpr(std::same_as<id_type, impl_id>) {
+            return (self.impls[id.value]);
+        } else if constexpr(std::same_as<id_type, concept_id>) {
+            return (self.concepts[id.value]);
+        } else {
+            return (self.concept_impls[id.value]);
         }
     }
 
@@ -84,4 +124,9 @@ export struct ast_arena
     std::vector<statement_syntax> statements{};
     std::vector<type_syntax> types{};
     std::vector<function_syntax> functions{};
+    std::vector<struct_syntax> structs{};
+    std::vector<variant_syntax> variants{};
+    std::vector<impl_syntax> impls{};
+    std::vector<concept_syntax> concepts{};
+    std::vector<concept_impl_syntax> concept_impls{};
 };

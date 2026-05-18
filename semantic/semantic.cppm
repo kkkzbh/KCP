@@ -29,10 +29,34 @@ struct expression_info
     bool is_const{};
 };
 
+struct constructor_match
+{
+    constructor_match() = default;
+
+    constructor_match(symbol_id matched_symbol, int match_score) :
+        symbol(matched_symbol),
+        score(match_score) {}
+
+    symbol_id symbol{};
+    int score{};
+};
+
 struct aggregate_context
 {
     semantic_type_id element{};
     std::size_t length{};
+};
+
+struct lambda_capture_context
+{
+    lambda_capture_context() = default;
+
+    explicit lambda_capture_context(function_id lambda_function) :
+        function(lambda_function) {}
+
+    function_id function{};
+    std::vector<semantic_lambda_capture> captures{};
+    std::map<symbol_id, std::uint32_t> capture_indices{};
 };
 
 struct semantic_unit_state
@@ -47,6 +71,8 @@ struct semantic_unit_state
     std::string module_key{};
     bool named_module{};
     std::map<std::string, symbol_id> visible_functions{};
+    std::map<std::string, symbol_id> visible_types{};
+    std::map<std::string, symbol_id> visible_concepts{};
 };
 
 struct return_inference_key
@@ -138,14 +164,80 @@ private:
     auto build_module_index() -> void;
     auto collect_modules() -> void;
     auto collect_declarations() -> void;
+    auto validate_requires_clauses() -> void;
+    auto collect_concept_declaration(std::size_t unit_index, ast_arena const& ast, concept_id id) -> void;
+    auto collect_concept_items(std::size_t unit_index, ast_arena const& ast, concept_id id) -> void;
+    auto collect_struct_declaration(std::size_t unit_index, ast_arena const& ast, struct_id id) -> void;
+    auto collect_struct_fields(std::size_t unit_index, ast_arena const& ast, struct_id id) -> void;
+    auto collect_variant_declaration(std::size_t unit_index, ast_arena const& ast, variant_id id) -> void;
+    auto collect_variant_cases(std::size_t unit_index, ast_arena const& ast, variant_id id) -> void;
     auto resolve_imports() -> void;
     auto collect_function_declaration(std::size_t unit_index, ast_arena const& ast, function_id id) -> void;
+    auto collect_impl_declarations(std::size_t unit_index, ast_arena const& ast, impl_id id) -> void;
+    auto collect_impl_function(
+        std::size_t unit_index,
+        ast_arena const& ast,
+        impl_syntax const& impl,
+        function_id id
+    ) -> void;
+    auto collect_concept_impl_declarations(std::size_t unit_index, ast_arena const& ast, concept_impl_id id) -> void;
+    auto collect_concept_impl_function(
+        std::size_t unit_index,
+        ast_arena const& ast,
+        concept_impl_syntax const& impl,
+        semantic_type_id target_type,
+        function_id id
+    ) -> std::optional<symbol_id>;
+    auto validate_concept_impl(semantic_concept_impl const& impl, source_span span) -> void;
+    auto validate_parent_concepts(semantic_concept_impl const& impl, semantic_concept const& concept_value, source_span span)
+        -> void;
+    auto validate_requires_clause(
+        std::size_t unit_index,
+        ast_arena const& ast,
+        concept_requires_syntax const& clause,
+        std::optional<semantic_type_id> self_type = std::nullopt
+    ) -> void;
+    auto target_implements(symbol_id concept_symbol, semantic_type_id target_type) const -> bool;
+    auto requirement_type(
+        std::size_t unit_index,
+        ast_arena const& ast,
+        type_id id,
+        semantic_type_id self_type
+    ) -> semantic_type_id;
+    auto signatures_match(function_signature const& actual, semantic_concept_function_requirement const& expected, semantic_type_id self_type)
+        -> bool;
 
     auto lower_type(ast_arena const& ast, type_id id) -> semantic_type_id;
+    auto lower_type_with_substitutions(
+        ast_arena const& ast,
+        type_id id,
+        std::map<std::string, semantic_type_id> const& substitutions
+    ) -> semantic_type_id;
+    auto substitute_type(semantic_type_id type, std::vector<semantic_type_id> const& arguments) -> semantic_type_id;
+    auto resolve_type_symbol(std::size_t unit_index, std::string_view name) const -> std::optional<symbol_id>;
+    auto resolve_concept_symbol(std::size_t unit_index, std::string_view name) const -> std::optional<symbol_id>;
+    auto resolve_exported_type_symbol(
+        std::string_view module_name,
+        std::string_view name,
+        std::set<std::string>& visiting
+    ) const -> std::optional<symbol_id>;
+    auto resolve_exported_concept_symbol(
+        std::string_view module_name,
+        std::string_view name,
+        std::set<std::string>& visiting
+    ) const -> std::optional<symbol_id>;
+    auto struct_index_of(semantic_type_id type) const -> std::optional<std::uint32_t>;
+    auto variant_index_of(semantic_type_id type) const -> std::optional<std::uint32_t>;
+    auto struct_named(std::size_t unit_index, std::string_view name) const -> std::optional<std::uint32_t>;
+    auto field_index(std::uint32_t struct_index, std::string_view name) const -> std::optional<std::uint32_t>;
+    auto variant_case_payload_types(semantic_type_id type, semantic_variant_case const& variant_case)
+        -> std::vector<semantic_type_id>;
+    auto is_default_initializable(semantic_type_id type) -> bool;
+    auto is_dependent_type(semantic_type_id type) const -> bool;
     auto range_element_type(semantic_type_id type) -> semantic_type_id;
     auto pointer_pointee(semantic_type_id type) -> std::optional<expression_info>;
     auto target_const(semantic_type_id type, bool lvalue_const) -> bool;
-    auto read_type(semantic_type_id type) -> semantic_type_id;
+    auto read_type(semantic_type_id type) const -> semantic_type_id;
     auto can_implicitly_convert(expression_info const& from, semantic_type_id to) -> bool;
     auto can_implicitly_convert(semantic_type_id from, semantic_type_id to) -> bool;
     auto can_explicitly_convert(semantic_type_id from, semantic_type_id to) -> bool;
@@ -164,7 +256,19 @@ private:
     auto binary_type(token_kind operator_kind, semantic_type_id left, semantic_type_id right) -> expression_info;
     auto function_style_cast_type(ast_arena const& ast, call_expr_syntax const& node)
         -> std::optional<semantic_type_id>;
+    auto check_builtin_call(ast_arena const& ast, call_expr_syntax const& node, name_expr_syntax const& callee, expr_id id)
+        -> std::optional<expression_info>;
+    auto callable_type(semantic_type_id type) const -> function_type const*;
+    auto pointer_value_pointee(semantic_type_id type) const -> std::optional<semantic_type_id>;
     auto aggregate_context_for(std::optional<semantic_type_id> expected) -> std::optional<aggregate_context>;
+    auto struct_context_for(std::optional<semantic_type_id> expected) -> std::optional<std::uint32_t>;
+    auto choose_constructor(
+        std::uint32_t struct_index,
+        std::vector<expression_info> const& arguments,
+        source_span span
+    ) -> std::optional<symbol_id>;
+    auto constructor_score(function_signature const& signature, std::vector<expression_info> const& arguments)
+        -> std::optional<int>;
     auto join_return_types(std::vector<semantic_type_id> const& values) -> semantic_type_id;
 
     auto infer_return_types() -> void;
@@ -174,8 +278,17 @@ private:
     auto infer_statement_returns(ast_arena const& ast, stmt_id id, std::vector<semantic_type_id>& observed) -> void;
     auto infer_expression_type(ast_arena const& ast, expr_id id, std::optional<semantic_type_id> expected)
         -> expression_info;
+    auto infer_lambda_return_from_current_return_scope(std::size_t unit_index, function_id id) -> void;
+    auto infer_lambda_return_from_current_value_scope(std::size_t unit_index, function_id id) -> void;
+    auto infer_lambda_return_with_base_scopes(
+        std::size_t unit_index,
+        function_id id,
+        std::vector<std::map<std::string, return_inference_binding>> base_scopes,
+        std::vector<std::map<std::string, semantic_type_id>> base_type_scopes
+    ) -> void;
     auto infer_name_expression(name_expr_syntax const& node) -> expression_info;
     auto infer_call_expression(ast_arena const& ast, call_expr_syntax const& node) -> expression_info;
+    auto infer_index_expression(ast_arena const& ast, index_expr_syntax const& node) -> expression_info;
     auto infer_array_literal(
         ast_arena const& ast,
         std::vector<expr_id> const& elements,
@@ -186,6 +299,8 @@ private:
         std::vector<expr_id> const& elements,
         std::optional<semantic_type_id> expected
     ) -> expression_info;
+    auto infer_lambda_expression(lambda_expr_syntax const& node, std::optional<semantic_type_id> expected)
+        -> expression_info;
     auto infer_callable_return(symbol_id symbol) -> semantic_type_id;
     auto callee_function_symbol(ast_arena const& ast, expr_id id) -> std::optional<symbol_id>;
     auto resolve_binding(std::string_view name) const -> std::optional<return_inference_binding>;
@@ -197,7 +312,9 @@ private:
     auto check_function(std::size_t unit_index, function_id id) -> void;
     auto enter_function_scope() -> void;
     auto bind_symbol(semantic_symbol symbol) -> symbol_id;
+    auto bind_type_alias(source_span name, semantic_type_id type) -> void;
     auto resolve(std::string_view name) const -> symbol_id;
+    auto resolve_type_alias(std::string_view name) const -> std::optional<semantic_type_id>;
     auto push_scope() -> void;
     auto pop_scope() -> void;
     auto push_loop(loop_label label = {}) -> void;
@@ -205,6 +322,9 @@ private:
     auto check_statement(stmt_id id, return_state& returns) -> void;
     auto check_condition(expr_id condition) -> void;
     auto check_loop_jump(source_span span, std::optional<source_span> label, bool is_break) -> void;
+    auto self_symbol() const -> symbol_id;
+    auto self_struct_index() const -> std::optional<std::uint32_t>;
+    auto self_field(std::string_view name) const -> std::optional<semantic_field_access>;
 
     auto check_expression(ast_arena const& ast, expr_id id, std::optional<semantic_type_id> expected) -> expression_info;
     auto check_name_expression(name_expr_syntax const& node, expr_id id) -> expression_info;
@@ -219,7 +339,14 @@ private:
     ) -> expression_info;
     auto check_assignment_expression(ast_arena const& ast, assignment_expr_syntax const& node) -> expression_info;
     auto compound_assignment_operator(token_kind operator_kind) -> std::optional<token_kind>;
-    auto check_call_expression(ast_arena const& ast, call_expr_syntax const& node) -> expression_info;
+    auto check_call_expression(ast_arena const& ast, call_expr_syntax const& node, expr_id id) -> expression_info;
+    auto check_member_call(ast_arena const& ast, call_expr_syntax const& node, member_expr_syntax const& callee)
+        -> expression_info;
+    auto check_associated_call(ast_arena const& ast, call_expr_syntax const& node, associated_name_expr_syntax const& callee)
+        -> expression_info;
+    auto check_member_expression(ast_arena const& ast, member_expr_syntax const& node, expr_id id) -> expression_info;
+    auto check_index_expression(ast_arena const& ast, index_expr_syntax const& node) -> expression_info;
+    auto check_associated_name_expression(associated_name_expr_syntax const& node, expr_id id) -> expression_info;
     auto check_cast_expression(ast_arena const& ast, cast_expr_syntax const& node) -> expression_info;
     auto check_array_literal(
         ast_arena const& ast,
@@ -232,6 +359,28 @@ private:
         tuple_literal_expr_syntax const& node,
         std::optional<semantic_type_id> expected
     ) -> expression_info;
+    auto check_struct_initializer(
+        ast_arena const& ast,
+        struct_init_expr_syntax const& node,
+        expr_id id,
+        std::optional<semantic_type_id> expected
+    ) -> expression_info;
+    auto check_block_expression(ast_arena const& ast, block_expr_syntax const& node) -> expression_info;
+    auto check_match_expression(ast_arena const& ast, match_expr_syntax const& node) -> expression_info;
+    auto check_lambda_expression(lambda_expr_syntax const& node, expr_id id, std::optional<semantic_type_id> expected)
+        -> expression_info;
+    auto apply_lambda_parameter_context(
+        lambda_expr_syntax const& node,
+        std::optional<semantic_type_id> expected
+    ) -> void;
+    auto check_lambda_body(lambda_expr_syntax const& node) -> semantic_lambda_info;
+    auto build_lambda_info(
+        lambda_expr_syntax const& node,
+        std::vector<semantic_lambda_capture> captures,
+        function_type callable
+    ) -> semantic_lambda_info;
+    auto record_lambda_capture(symbol_id symbol, expr_id id) -> void;
+    auto constant_integer_index(ast_arena const& ast, expr_id id) -> std::optional<std::int64_t>;
     auto parse_integer_literal(std::string_view text) -> std::int64_t;
     auto parse_float_literal(std::string_view text) -> double;
     auto parse_char_literal(std::string_view text) -> char;
@@ -243,12 +392,25 @@ private:
     std::vector<semantic_unit_state> units{}; ///< 待分析的翻译单元状态列表。
     std::map<std::string, std::map<std::string, symbol_id>> module_functions{}; ///< 按内部模块 key 索引的本模块函数符号表。
     std::map<std::string, std::map<std::string, symbol_id>> module_exports{}; ///< 按模块名索引的导出函数符号表。
+    std::map<std::string, std::map<std::string, symbol_id>> module_types{}; ///< 按内部模块 key 索引的本模块类型符号表。
+    std::map<std::string, std::map<std::string, symbol_id>> module_type_exports{}; ///< 按模块名索引的导出类型符号表。
+    std::map<std::string, std::map<std::string, symbol_id>> module_concepts{}; ///< 按内部模块 key 索引的本模块 concept 符号表。
+    std::map<std::string, std::map<std::string, symbol_id>> module_concept_exports{}; ///< 按模块名索引的导出 concept 符号表。
+    std::map<semantic_type_id, std::map<std::string, semantic_type_id>> associated_types{}; ///< 类型的扁平关联类型命名空间。
+    std::map<std::pair<symbol_id, semantic_type_id>, std::size_t> concept_impl_index{}; ///< concept + concrete type 的实现事实索引。
+    std::map<std::string, semantic_type_id> active_generic_parameters{}; ///< 当前声明中可见的泛型形参。
+    std::map<std::string, semantic_type_id> const* active_type_substitutions{}; ///< lowering 时的泛型类型替换。
+    semantic_type_id active_self_type{}; ///< concept 相关类型 lowering 中的 Self 替换目标。
+    std::map<std::string, semantic_type_id> const* active_type_aliases{}; ///< concept impl 当前可见关联类型。
     std::size_t active_unit_index{}; ///< 当前函数体检查所在的翻译单元下标。
     semantic_unit_state const* active_unit{}; ///< 当前函数体检查所在的翻译单元状态。
     ast_arena const* active_ast{}; ///< 当前函数体检查使用的 AST arena。
     function_id active_function{}; ///< 当前正在检查的函数语法节点 id。
+    symbol_id active_self{}; ///< 当前成员函数中的 self 绑定。
     std::vector<std::map<std::string, symbol_id>> scopes{}; ///< 函数体检查阶段的词法作用域栈。
+    std::vector<std::map<std::string, semantic_type_id>> type_scopes{}; ///< 函数体内 type alias 的词法作用域栈。
     std::vector<loop_label> loops{}; ///< 当前嵌套循环标签栈，用于校验跳转语句。
+    std::vector<lambda_capture_context> lambda_capture_stack{}; ///< 当前正在语义检查的嵌套 lambda 捕获上下文。
     std::map<return_inference_key, return_inference_state> return_states{}; ///< 函数返回类型推断状态表。
     std::vector<std::map<std::string, return_inference_binding>> return_scopes{}; ///< 返回类型推断阶段的词法绑定栈。
     std::size_t return_unit{}; ///< 当前返回类型推断所在的翻译单元下标。

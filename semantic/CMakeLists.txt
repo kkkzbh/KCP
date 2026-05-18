@@ -11,8 +11,10 @@ target_sources(semantic
             type/type.cppm
             symbol.cppm
             result.cppm
+            variants.cppm
             modules.cppm
             types.cppm
+            lambda.cppm
             expressions.cppm
             statements.cppm
             return_infer.cppm

@@ -167,7 +167,9 @@ private:
         if(auto const keyword = keyword_kind(text)) {
             return cursor_.make_token(*keyword, start, cursor_.offset(), flags);
         }
-        return cursor_.make_token(token_kind::identifier, start, cursor_.offset(), flags);
+        auto token = cursor_.make_token(token_kind::identifier, start, cursor_.offset(), flags);
+        token.text = std::string{ text };
+        return token;
     }
 
     auto lex_literal(literal_scan_result result, std::size_t start) -> token

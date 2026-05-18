@@ -1,5 +1,5 @@
-set(SEMANTIC_DESIGN_DIR "${CMAKE_SOURCE_DIR}/design/examples")
-string(REPLACE "\\" "\\\\" SEMANTIC_DESIGN_DIR_ESCAPED "${SEMANTIC_DESIGN_DIR}")
+set(SEMANTIC_FIXTURE_EXAMPLES_DIR "${CMAKE_SOURCE_DIR}/test/fixtures/examples")
+string(REPLACE "\\" "\\\\" SEMANTIC_FIXTURE_EXAMPLES_DIR_ESCAPED "${SEMANTIC_FIXTURE_EXAMPLES_DIR}")
 
 function(add_semantic_suite target_name source_name test_name)
     add_executable(${target_name})
@@ -24,7 +24,7 @@ function(add_semantic_suite target_name source_name test_name)
 
     target_compile_definitions(${target_name}
         PRIVATE
-            TEST_SEMANTIC_DESIGN_DIR="${SEMANTIC_DESIGN_DIR_ESCAPED}"
+            TEST_SEMANTIC_FIXTURE_EXAMPLES_DIR="${SEMANTIC_FIXTURE_EXAMPLES_DIR_ESCAPED}"
     )
 
     set_target_properties(${target_name} PROPERTIES

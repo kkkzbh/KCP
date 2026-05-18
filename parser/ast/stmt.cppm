@@ -18,9 +18,20 @@ export struct declaration_statement_syntax
 
     source_span full_span{};
     bool is_const{};
+    bool is_ref{};
     source_span name{};
+    std::vector<source_span> binding_names{};
     std::optional<type_id> declared_type{};
     expr_id initializer{};
+};
+
+export struct type_alias_statement_syntax
+{
+    auto constexpr operator==(type_alias_statement_syntax const& other) const -> bool = default;
+
+    source_span full_span{};
+    source_span name{};
+    type_id type{};
 };
 
 export struct if_statement_syntax
@@ -98,6 +109,7 @@ export struct expression_statement_syntax
 export using statement_syntax = std::variant<
     block_statement_syntax,
     declaration_statement_syntax,
+    type_alias_statement_syntax,
     if_statement_syntax,
     while_statement_syntax,
     do_while_statement_syntax,

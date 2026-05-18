@@ -58,12 +58,16 @@ export enum class ir_opcode : std::uint8_t
     literal,
     load,
     store,
+    field_address,
+    element_address,
     unary,
     binary,
     cast,
     aggregate_undef,
     insert_value,
     extract_value,
+    alloc_raw,
+    free_raw,
     call,
     branch,
     cond_branch,
@@ -100,6 +104,7 @@ export struct ir_instruction
     std::vector<ir_block_id> targets{};
     std::vector<std::uint64_t> indices{};
     token_kind operator_kind{ token_kind::eof };
+    semantic_type_id aggregate_type{};
     symbol_id symbol{};
     semantic_literal_value literal{};
     std::string name{};
@@ -148,6 +153,8 @@ export struct ir_function
 export struct ir_module
 {
     type_arena types{};
+    std::vector<semantic_struct> structs{};
+    std::vector<semantic_variant> variants{};
     std::vector<ir_function> functions{};
 };
 
@@ -194,6 +201,19 @@ struct function_lowerer
         current = add_block("entry");
 
         auto const& signature = semantics.signatures[signature_id.value];
+        auto parameter_index = 0uz;
+        auto lambda = semantics.lambda_of(unit_index, function_id_value);
+        if(lambda.valid() and lambda.env_symbol.valid()) {
+            bind_parameter(lambda.env_symbol, semantics.symbols[lambda.env_symbol.value].type, "closure.env");
+        }
+        if(semantics.symbols[symbol.value].function_kind == semantic_function_kind::destructor) {
+            auto self = implicit_destructor_self_symbol();
+            if(not self.valid()) {
+                return fail("destructor is missing implicit self binding");
+            }
+            bind_parameter(self, signature.parameters[parameter_index++], "self");
+        }
+
         for(auto index = 0uz; index < syntax.parameters.size(); ++index) {
             auto const& parameter = syntax.parameters[index];
             auto parameter_symbol = semantics.parameter_binding_of(unit_index, parameter.name);
@@ -201,42 +221,70 @@ struct function_lowerer
                 return fail("parameter is missing semantic binding");
             }
 
-            auto value = make_value();
-            function->parameters.emplace_back(
-                value,
-                signature.parameters[index],
+            bind_parameter(
                 parameter_symbol,
+                signature.parameters[parameter_index++],
                 std::string{ ast_source.slice(parameter.name) }
             );
-            auto address = emit_alloca(signature.parameters[index], function->parameters.back().name);
-            bind(parameter_symbol, address);
-            emit_store(address, value, signature.parameters[index]);
         }
 
         if(not emit_statement(syntax.body)) {
             return false;
         }
         if(not current_block().terminated()) {
+            emit_cleanups_to(0uz);
             emit_default_return(signature.returns);
         }
         return true;
     }
 
+    auto bind_parameter(symbol_id parameter_symbol, semantic_type_id type, std::string name) -> void
+    {
+        auto value = make_value();
+        function->parameters.emplace_back(value, type, parameter_symbol, name);
+        auto address = emit_alloca(type, function->parameters.back().name);
+        bind(parameter_symbol, address);
+        emit_store(address, value, type);
+    }
+
+    auto implicit_destructor_self_symbol() const -> symbol_id
+    {
+        for(auto index = 0uz; index < semantics.symbols.size(); ++index) {
+            auto const& symbol = semantics.symbols[index];
+            if(symbol.kind == symbol_kind::parameter
+               and symbol.name == "self"
+               and symbol.unit_index == unit_index
+               and symbol.function == function_id_value) {
+                return symbol_id{ static_cast<std::uint32_t>(index) };
+            }
+        }
+        return {};
+    }
+
     auto lowered_function_name(symbol_id symbol) -> std::string
     {
         auto const& value = semantics.symbols[symbol.value];
-        auto module = parsed_module_name();
-        if(module.empty() and value.name == "main") {
+        auto module_name = parsed_module_name();
+        if(value.function_kind != semantic_function_kind::free_function) {
+            auto owner_module = module_name.empty() ? "local" : module_name;
+            auto const& owner = module.structs[value.struct_index];
+            return std::format("cp.{}.{}.{}.{}", owner_module, owner.name, value.name, symbol.value);
+        }
+        if(module_name.empty() and value.name == "main") {
             return "main";
         }
-        if(module.empty()) {
+        if(module_name.empty()) {
             return value.name;
         }
-        return std::format("cp.{}.{}", module, value.name);
+        return std::format("cp.{}.{}", module_name, value.name);
     }
 
     auto lowered_function_linkage(function_syntax const& syntax) -> ir_linkage
     {
+        auto symbol = semantics.function_symbol_of(unit_index, function_id_value);
+        if(symbol.valid() and semantics.symbols[symbol.value].function_kind != semantic_function_kind::free_function) {
+            return ir_linkage::internal;
+        }
         auto name = ast_source.slice(syntax.name);
         if(parsed_module_name().empty() and name == "main") {
             return ir_linkage::external;
@@ -313,6 +361,33 @@ struct function_lowerer
         return emit(std::move(instruction));
     }
 
+    auto emit_field_address(
+        ir_value_id base,
+        semantic_type_id aggregate_type,
+        semantic_type_id field_type,
+        std::uint64_t index
+    ) -> ir_value_id
+    {
+        auto instruction = emit_value_instruction(ir_opcode::field_address, field_type);
+        instruction.operands = { base };
+        instruction.aggregate_type = aggregate_type;
+        instruction.indices = { index };
+        return emit(std::move(instruction));
+    }
+
+    auto emit_element_address(
+        ir_value_id base,
+        ir_value_id index,
+        semantic_type_id aggregate_type,
+        semantic_type_id element_type
+    ) -> ir_value_id
+    {
+        auto instruction = emit_value_instruction(ir_opcode::element_address, element_type);
+        instruction.operands = { base, index };
+        instruction.aggregate_type = aggregate_type;
+        return emit(std::move(instruction));
+    }
+
     auto emit_cast(ir_value_id value, semantic_type_id type) -> ir_value_id
     {
         auto instruction = emit_value_instruction(ir_opcode::cast, type);
@@ -332,17 +407,32 @@ struct function_lowerer
         std::uint64_t index
     ) -> ir_value_id
     {
+        return emit_insert_value(aggregate, value, type, std::vector<std::uint64_t>{ index });
+    }
+
+    auto emit_insert_value(
+        ir_value_id aggregate,
+        ir_value_id value,
+        semantic_type_id type,
+        std::vector<std::uint64_t> indices
+    ) -> ir_value_id
+    {
         auto instruction = emit_value_instruction(ir_opcode::insert_value, type);
         instruction.operands = { aggregate, value };
-        instruction.indices = { index };
+        instruction.indices = std::move(indices);
         return emit(std::move(instruction));
     }
 
     auto emit_extract_value(ir_value_id aggregate, semantic_type_id type, std::uint64_t index) -> ir_value_id
     {
+        return emit_extract_value(aggregate, type, std::vector<std::uint64_t>{ index });
+    }
+
+    auto emit_extract_value(ir_value_id aggregate, semantic_type_id type, std::vector<std::uint64_t> indices) -> ir_value_id
+    {
         auto instruction = emit_value_instruction(ir_opcode::extract_value, type);
         instruction.operands = { aggregate };
-        instruction.indices = { index };
+        instruction.indices = std::move(indices);
         return emit(std::move(instruction));
     }
 
@@ -354,23 +444,85 @@ struct function_lowerer
         });
     }
 
+    struct cleanup_entry
+    {
+        cleanup_entry() = default;
+
+        cleanup_entry(
+            symbol_id cleanup_symbol,
+            ir_value_id cleanup_address,
+            semantic_type_id cleanup_type,
+            symbol_id cleanup_destructor
+        ) :
+            symbol(cleanup_symbol),
+            address(cleanup_address),
+            type(cleanup_type),
+            destructor(cleanup_destructor) {}
+
+        symbol_id symbol{};
+        ir_value_id address{};
+        semantic_type_id type{};
+        symbol_id destructor{};
+    };
+
+    auto cleanup_depth() const -> std::size_t
+    {
+        return cleanups.size();
+    }
+
+    auto register_cleanup(symbol_id symbol, ir_value_id address, semantic_type_id type) -> void
+    {
+        auto destructor = destructor_for(type);
+        if(not destructor.valid()) {
+            return;
+        }
+        cleanups.emplace_back(symbol, address, read_type(type), destructor);
+    }
+
+    auto emit_cleanups_to(std::size_t depth) -> void
+    {
+        for(auto index = cleanups.size(); index > depth; --index) {
+            auto const& cleanup = cleanups[index - 1uz];
+            emit_void(ir_instruction {
+                .opcode = ir_opcode::call,
+                .type = semantic_type_ids::unit,
+                .operands = { cleanup.address },
+                .symbol = cleanup.destructor,
+            });
+        }
+    }
+
+    auto discard_cleanups_to(std::size_t depth) -> void
+    {
+        cleanups.resize(depth);
+    }
+
     auto emit_statement(stmt_id id) -> bool
     {
         auto const& statement = parsed.ast.node(id);
         return std::visit (
             overloaded {
                 [&](block_statement_syntax const& node) {
+                    auto depth = cleanup_depth();
                     for(auto child : node.statements) {
                         if(current_block().terminated()) {
+                            discard_cleanups_to(depth);
                             return true;
                         }
                         if(not emit_statement(child)) {
                             return false;
                         }
                     }
+                    if(not current_block().terminated()) {
+                        emit_cleanups_to(depth);
+                    }
+                    discard_cleanups_to(depth);
                     return true;
                 },
                 [&](declaration_statement_syntax const& node) {
+                    if(not node.binding_names.empty()) {
+                        return emit_destructuring_declaration(node);
+                    }
                     auto symbol = semantics.binding_of(unit_index, id);
                     if(not symbol.valid()) {
                         return fail("declaration is missing semantic binding");
@@ -391,6 +543,10 @@ struct function_lowerer
                         return false;
                     }
                     emit_store(address, materialize_conversion(node.initializer, initializer), type);
+                    register_cleanup(symbol, address, type);
+                    return true;
+                },
+                [](type_alias_statement_syntax const&) {
                     return true;
                 },
                 [&](if_statement_syntax const& node) {
@@ -408,12 +564,15 @@ struct function_lowerer
                         if(not value.valid()) {
                             return false;
                         }
+                        value = materialize_conversion(*node.value, value);
+                        emit_cleanups_to(0uz);
                         emit_void(ir_instruction {
                             .opcode = ir_opcode::return_,
                             .type = semantics.info_of(unit_index, *node.value).read_type,
-                            .operands = { materialize_conversion(*node.value, value) },
+                            .operands = { value },
                         });
                     } else {
+                        emit_cleanups_to(0uz);
                         emit_default_return(semantic_type_ids::unit);
                     }
                     return true;
@@ -426,6 +585,7 @@ struct function_lowerer
                     if(not target.valid()) {
                         return fail("break has no loop target");
                     }
+                    emit_cleanups_to(resolve_loop_cleanup_depth(node.label));
                     emit_void(ir_instruction {
                         .opcode = ir_opcode::branch,
                         .targets = { target },
@@ -437,6 +597,7 @@ struct function_lowerer
                     if(not target.valid()) {
                         return fail("continue has no loop target");
                     }
+                    emit_cleanups_to(resolve_loop_cleanup_depth(node.label));
                     emit_void(ir_instruction {
                         .opcode = ir_opcode::branch,
                         .targets = { target },
@@ -449,6 +610,56 @@ struct function_lowerer
             },
             statement
         );
+    }
+
+    auto emit_destructuring_declaration(declaration_statement_syntax const& node) -> bool
+    {
+        auto initializer_type = semantics.info_of(unit_index, node.initializer).read_type;
+        auto const* tuple = std::get_if<tuple_type>(&module.types.get(initializer_type));
+        if(tuple == nullptr) {
+            return fail("destructuring declaration requires tuple type metadata");
+        }
+
+        auto initializer_value = ir_value_id{};
+        auto initializer_address = ir_value_id{};
+        if(node.is_ref) {
+            initializer_address = emit_address(node.initializer);
+            if(not initializer_address.valid()) {
+                return false;
+            }
+        } else {
+            initializer_value = emit_expression(node.initializer);
+            if(not initializer_value.valid()) {
+                return false;
+            }
+        }
+
+        auto count = std::min(tuple->elements.size(), node.binding_names.size());
+        for(auto index = 0uz; index < count; ++index) {
+            auto binding = node.binding_names[index];
+            auto symbol = semantics.local_binding_of(unit_index, binding);
+            if(not symbol.valid()) {
+                return fail("destructuring binding is missing semantic symbol");
+            }
+
+            auto type = semantics.symbols[symbol.value].type;
+            auto address = emit_alloca(type, std::string{ ast_source.slice(binding) });
+            bind(symbol, address);
+            if(node.is_ref) {
+                auto element_address = emit_field_address(
+                    initializer_address,
+                    initializer_type,
+                    tuple->elements[index],
+                    index
+                );
+                emit_store(address, element_address, type);
+            } else {
+                auto element = emit_extract_value(initializer_value, tuple->elements[index], index);
+                emit_store(address, element, type);
+                register_cleanup(symbol, address, type);
+            }
+        }
+        return true;
     }
 
     auto emit_if_statement(if_statement_syntax const& node) -> bool
@@ -507,7 +718,7 @@ struct function_lowerer
         });
 
         current = body_block;
-        loop_targets.emplace_back(end_block, condition_block);
+        loop_targets.emplace_back(end_block, condition_block, cleanup_depth());
         if(not emit_statement(node.body)) {
             return false;
         }
@@ -528,7 +739,7 @@ struct function_lowerer
         emit_void(ir_instruction{ .opcode = ir_opcode::branch, .targets = { body_block } });
 
         current = body_block;
-        loop_targets.emplace_back(end_block, condition_block);
+        loop_targets.emplace_back(end_block, condition_block, cleanup_depth());
         if(not emit_statement(node.body)) {
             return false;
         }
@@ -595,14 +806,18 @@ struct function_lowerer
                 : end_block;
             auto value = emit_extract_value(range, shape->element, index);
             emit_store(address, value, shape->element);
-            loop_targets.emplace_back(end_block, next_block, label);
+            auto depth = cleanup_depth();
+            register_cleanup(symbol, address, shape->element);
+            loop_targets.emplace_back(end_block, next_block, depth, label);
             if(not emit_statement(node.body)) {
                 return false;
             }
             loop_targets.pop_back();
             if(not current_block().terminated()) {
+                emit_cleanups_to(depth);
                 emit_void(ir_instruction{ .opcode = ir_opcode::branch, .targets = { next_block } });
             }
+            discard_cleanups_to(depth);
         }
 
         current = end_block;
@@ -635,6 +850,30 @@ struct function_lowerer
                 [&](call_expr_syntax const& node) {
                     return emit_call_expression(node, id);
                 },
+                [&](member_expr_syntax const&) {
+                    auto address = emit_address(id);
+                    if(not address.valid()) {
+                        return ir_value_id{};
+                    }
+                    return emit_load(address, semantics.info_of(unit_index, id).read_type);
+                },
+                [&](index_expr_syntax const& node) {
+                    if(as_builtin(semantics.info_of(unit_index, node.object).read_type) == builtin_type_kind::str) {
+                        return emit_string_index(node);
+                    }
+                    auto address = emit_address(id);
+                    if(not address.valid()) {
+                        return ir_value_id{};
+                    }
+                    return emit_load(address, semantics.info_of(unit_index, id).read_type);
+                },
+                [&](associated_name_expr_syntax const&) {
+                    auto access = semantics.variant_case_of(unit_index, id);
+                    if(access.valid()) {
+                        return emit_variant_case_value(id, access, {});
+                    }
+                    return unsupported_expression("associated name cannot be emitted without a call");
+                },
                 [&](cast_expr_syntax const& node) {
                     auto operand = emit_expression(node.operand);
                     if(not operand.valid()) {
@@ -650,6 +889,28 @@ struct function_lowerer
                 },
                 [&](tuple_literal_expr_syntax const& node) {
                     return emit_tuple_literal(node.elements, semantics.info_of(unit_index, id).read_type);
+                },
+                [&](struct_init_expr_syntax const& node) {
+                    return emit_struct_initializer(node, id);
+                },
+                [&](block_expr_syntax const& node) {
+                    return emit_block_expression(node, id);
+                },
+                [&](match_expr_syntax const& node) {
+                    return emit_match_expression(node, id);
+                },
+                [&](lambda_expr_syntax const& node) {
+                    auto lambda = semantics.lambda_of(unit_index, node.function);
+                    if(lambda.valid() and lambda.closure_type.valid()) {
+                        return emit_lambda_closure(lambda);
+                    }
+                    auto symbol = semantics.resolved_name(unit_index, id);
+                    if(not symbol.valid()) {
+                        return unsupported_expression("lambda expression is missing resolved symbol");
+                    }
+                    auto instruction = emit_value_instruction(ir_opcode::literal, semantics.symbols[symbol.value].type);
+                    instruction.symbol = symbol;
+                    return emit(std::move(instruction));
                 },
             },
             expression
@@ -677,6 +938,20 @@ struct function_lowerer
         return aggregate;
     }
 
+    auto emit_lambda_closure(semantic_lambda_info const& lambda) -> ir_value_id
+    {
+        auto aggregate = emit_aggregate_undef(lambda.closure_type);
+        for(auto index = 0uz; index < lambda.captures.size(); ++index) {
+            auto const& capture = lambda.captures[index];
+            auto value = emit_symbol_read(capture.symbol, capture.type);
+            if(not value.valid()) {
+                return {};
+            }
+            aggregate = emit_insert_value(aggregate, value, lambda.closure_type, index);
+        }
+        return aggregate;
+    }
+
     auto emit_tuple_literal(std::vector<expr_id> const& elements, semantic_type_id type) -> ir_value_id
     {
         if(not std::holds_alternative<tuple_type>(module.types.get(type))) {
@@ -693,9 +968,299 @@ struct function_lowerer
         return aggregate;
     }
 
+    auto emit_struct_initializer(struct_init_expr_syntax const& node, expr_id id) -> ir_value_id
+    {
+        auto constructor = semantics.resolved_name(unit_index, id);
+        auto type = semantics.info_of(unit_index, id).read_type;
+        if(constructor.valid() and not parsed.ast.node(semantics.symbols[constructor.value].function).defaulted) {
+            auto const* function = std::get_if<function_type>(&module.types.get(semantics.symbols[constructor.value].type));
+            if(function == nullptr) {
+                return unsupported_expression("constructor is missing function type");
+            }
+            auto arguments = std::vector<ir_value_id>{};
+            auto positional = positional_initializers(node);
+            for(auto index = 0uz; index < positional.size(); ++index) {
+                auto value = emit_expression(positional[index]);
+                if(not value.valid()) {
+                    return {};
+                }
+                arguments.emplace_back(cast_to(value, semantics.info_of(unit_index, positional[index]).read_type, function->parameters[index]));
+            }
+            auto instruction = emit_value_instruction(ir_opcode::call, type);
+            instruction.symbol = constructor;
+            instruction.operands = std::move(arguments);
+            return emit(std::move(instruction));
+        }
+
+        auto aggregate = emit_default_value(type);
+        if(not std::holds_alternative<struct_type>(module.types.get(type))) {
+            return aggregate;
+        }
+        auto const& instance = std::get<struct_type>(module.types.get(type));
+        auto struct_index = instance.index;
+        auto positional_index = 0uz;
+        for(auto const& initializer : node.initializers) {
+            auto field = std::optional<std::uint64_t>{};
+            auto value_id = expr_id{};
+            if(auto const* named = std::get_if<named_field_initializer_syntax>(&initializer)) {
+                value_id = named->value;
+                auto const& item = module.structs[struct_index];
+                for(auto index = 0uz; index < item.fields.size(); ++index) {
+                    if(item.fields[index].name == ast_source.slice(named->name)) {
+                        field = index;
+                        break;
+                    }
+                }
+            } else {
+                value_id = std::get<positional_initializer_syntax>(initializer).value;
+                field = positional_index++;
+            }
+            if(not field) {
+                continue;
+            }
+            auto value = emit_expression(value_id);
+            if(not value.valid()) {
+                return {};
+            }
+            aggregate = emit_insert_value(aggregate, materialize_conversion(value_id, value), type, *field);
+        }
+        return aggregate;
+    }
+
+    auto positional_initializers(struct_init_expr_syntax const& node) -> std::vector<expr_id>
+    {
+        auto result = std::vector<expr_id>{};
+        for(auto const& initializer : node.initializers) {
+            if(auto const* positional = std::get_if<positional_initializer_syntax>(&initializer)) {
+                result.emplace_back(positional->value);
+            }
+        }
+        return result;
+    }
+
+    auto emit_default_value(semantic_type_id type) -> ir_value_id
+    {
+        auto instruction = emit_value_instruction(ir_opcode::literal, type);
+        instruction.literal = semantic_literal_value{};
+        return emit(std::move(instruction));
+    }
+
+    auto emit_integer_literal(semantic_type_id type, std::uint64_t value) -> ir_value_id
+    {
+        auto instruction = emit_value_instruction(ir_opcode::literal, type);
+        instruction.literal = semantic_literal_value {
+            .value = static_cast<std::int64_t>(value),
+        };
+        return emit(std::move(instruction));
+    }
+
+    auto emit_block_expression(block_expr_syntax const& node, expr_id id) -> ir_value_id
+    {
+        auto depth = cleanup_depth();
+        for(auto statement : node.statements) {
+            if(current_block().terminated()) {
+                discard_cleanups_to(depth);
+                return {};
+            }
+            if(not emit_statement(statement)) {
+                return {};
+            }
+        }
+        if(current_block().terminated()) {
+            discard_cleanups_to(depth);
+            return {};
+        }
+        auto value = ir_value_id{};
+        if(node.tail) {
+            value = emit_expression(*node.tail);
+            if(not value.valid()) {
+                return {};
+            }
+        } else {
+            value = emit_default_value(semantics.info_of(unit_index, id).read_type);
+        }
+        if(not current_block().terminated()) {
+            emit_cleanups_to(depth);
+        }
+        discard_cleanups_to(depth);
+        return value;
+    }
+
+    auto emit_variant_case_value(
+        expr_id id,
+        semantic_variant_case_access access,
+        std::vector<expr_id> const& arguments
+    ) -> ir_value_id
+    {
+        auto type = semantics.info_of(unit_index, id).read_type;
+        auto aggregate = emit_aggregate_undef(type);
+        auto tag = emit_integer_literal(semantic_type_ids::i32, access.case_index);
+        aggregate = emit_insert_value(aggregate, tag, type, 0uz);
+        auto const& variant_case = module.variants[access.variant_index].cases[access.case_index];
+        auto payloads = variant_case_payload_types(type, variant_case);
+        auto count = std::min(payloads.size(), arguments.size());
+        for(auto index = 0uz; index < count; ++index) {
+            auto value = emit_expression(arguments[index]);
+            if(not value.valid()) {
+                return {};
+            }
+            aggregate = emit_insert_value(
+                aggregate,
+                cast_to(value, semantics.info_of(unit_index, arguments[index]).read_type, payloads[index]),
+                type,
+                std::vector<std::uint64_t>{ access.case_index + 1uz, index }
+            );
+        }
+        return aggregate;
+    }
+
+    auto emit_match_expression(match_expr_syntax const& node, expr_id id) -> ir_value_id
+    {
+        auto matched = emit_expression(node.value);
+        if(not matched.valid()) {
+            return {};
+        }
+        auto matched_type = semantics.info_of(unit_index, node.value).read_type;
+        auto variant_index = variant_index_of(matched_type);
+        if(not variant_index) {
+            return unsupported_expression("match expression is missing variant type");
+        }
+
+        auto result_type = semantics.info_of(unit_index, id).read_type;
+        auto result_address = is_unit(result_type) ? ir_value_id{} : emit_alloca(result_type, "match.result");
+        auto end_block = add_block("match.end");
+        auto fallback_block = end_block;
+        auto arm_blocks = std::vector<ir_block_id>{};
+        for(auto index = 0uz; index < node.arms.size(); ++index) {
+            arm_blocks.emplace_back(add_block(std::format("match.arm.{}", index)));
+        }
+
+        auto tag = emit_extract_value(matched, semantic_type_ids::i32, 0uz);
+        auto next_check = std::vector<ir_block_id>{};
+        for(auto index = 0uz; index < node.arms.size(); ++index) {
+            next_check.emplace_back(index + 1uz < node.arms.size() ? add_block(std::format("match.check.{}", index + 1uz)) : fallback_block);
+        }
+
+        for(auto index = 0uz; index < node.arms.size(); ++index) {
+            if(index != 0uz) {
+                current = next_check[index - 1uz];
+            }
+            auto const& arm = node.arms[index];
+            if(auto const* wildcard = std::get_if<match_wildcard_pattern_syntax>(&arm.pattern)) {
+                static_cast<void>(wildcard);
+                emit_void(ir_instruction {
+                    .opcode = ir_opcode::branch,
+                    .targets = { arm_blocks[index] },
+                });
+                fallback_block = arm_blocks[index];
+                continue;
+            }
+
+            auto const& pattern = std::get<match_case_pattern_syntax>(arm.pattern);
+            auto case_index = module.variants[*variant_index].case_indices.find(std::string{ ast_source.identifier(pattern.name) })->second;
+            auto case_tag = emit_integer_literal(semantic_type_ids::i32, case_index);
+            auto condition = emit_value_instruction(ir_opcode::binary, semantic_type_ids::bool_);
+            condition.operator_kind = token_kind::equal_equal;
+            condition.operands = { tag, case_tag };
+            auto condition_value = emit(std::move(condition));
+            emit_void(ir_instruction {
+                .opcode = ir_opcode::cond_branch,
+                .operands = { condition_value },
+                .targets = { arm_blocks[index], next_check[index] },
+            });
+        }
+
+        for(auto index = 0uz; index < node.arms.size(); ++index) {
+            current = arm_blocks[index];
+            bind_match_pattern(node.arms[index].pattern, matched, matched_type);
+            auto value = emit_expression(node.arms[index].value);
+            if(value.valid() and result_address.valid()) {
+                emit_store(result_address, value, result_type);
+            }
+            if(not current_block().terminated()) {
+                emit_void(ir_instruction {
+                    .opcode = ir_opcode::branch,
+                    .targets = { end_block },
+                });
+            }
+        }
+
+        current = end_block;
+        if(result_address.valid()) {
+            return emit_load(result_address, result_type);
+        }
+        return emit_default_value(result_type);
+    }
+
+    auto bind_match_pattern(
+        match_pattern_syntax const& pattern,
+        ir_value_id matched,
+        semantic_type_id matched_type
+    ) -> void
+    {
+        auto const* case_pattern = std::get_if<match_case_pattern_syntax>(&pattern);
+        if(case_pattern == nullptr) {
+            return;
+        }
+        auto variant_index = variant_index_of(matched_type);
+        if(not variant_index) {
+            return;
+        }
+        auto const& variant = module.variants[*variant_index];
+        auto case_index = variant.case_indices.find(std::string{ ast_source.identifier(case_pattern->name) })->second;
+        auto payloads = variant_case_payload_types(matched_type, variant.cases[case_index]);
+        auto count = std::min(payloads.size(), case_pattern->bindings.size());
+        for(auto index = 0uz; index < count; ++index) {
+            auto symbol = semantics.pattern_binding_of(unit_index, case_pattern->bindings[index]);
+            if(not symbol.valid()) {
+                continue;
+            }
+            auto value = emit_extract_value(
+                matched,
+                payloads[index],
+                std::vector<std::uint64_t>{ case_index + 1uz, index }
+            );
+            auto address = emit_alloca(payloads[index], std::string{ ast_source.identifier(case_pattern->bindings[index]) });
+            emit_store(address, value, payloads[index]);
+            bind(symbol, address);
+        }
+    }
+
     auto emit_name_expression(name_expr_syntax const&, expr_id id) -> ir_value_id
     {
+        auto capture = semantics.lambda_capture_of(unit_index, id);
+        if(capture.valid()) {
+            auto lambda = semantics.lambda_of(unit_index, capture.function);
+            if(capture.field_index >= lambda.captures.size()) {
+                return unsupported_expression("lambda capture field is out of bounds");
+            }
+            auto address = emit_capture_address(capture);
+            if(not address.valid()) {
+                return {};
+            }
+            return emit_load(address, lambda.captures[capture.field_index].type);
+        }
+
         auto symbol = semantics.resolved_name(unit_index, id);
+        auto field = semantics.field_access_of(unit_index, id);
+        if(field.valid()) {
+            auto self = self_symbol();
+            if(not self.valid()) {
+                return unsupported_expression("implicit field access is missing self");
+            }
+            auto self_address = emit_symbol_address(self);
+            if(not self_address.valid()) {
+                return {};
+            }
+            auto self_type = read_type(semantics.symbols[self.value].type);
+            auto address = emit_field_address(
+                self_address,
+                self_type,
+                struct_field_type(self_type, field),
+                field.field_index
+            );
+            return emit_load(address, semantics.info_of(unit_index, id).read_type);
+        }
         if(not symbol.valid()) {
             return unsupported_expression("name expression is missing resolved symbol");
         }
@@ -736,6 +1301,24 @@ struct function_lowerer
         if(not left.valid() or not right.valid()) {
             return {};
         }
+        if(auto pointer = pointer_arithmetic_pointee(node, id)) {
+            auto instruction = emit_value_instruction(ir_opcode::binary, semantics.info_of(unit_index, id).read_type);
+            instruction.operator_kind = node.operator_kind;
+            instruction.aggregate_type = *pointer;
+            if(pointer_value_pointee(semantics.info_of(unit_index, node.left).read_type)) {
+                instruction.operands = { left, right };
+            } else {
+                instruction.operands = { right, left };
+            }
+            return emit(std::move(instruction));
+        }
+        if(auto pointer = pointer_difference_pointee(node, id)) {
+            auto instruction = emit_value_instruction(ir_opcode::binary, semantics.info_of(unit_index, id).read_type);
+            instruction.operator_kind = node.operator_kind;
+            instruction.aggregate_type = *pointer;
+            instruction.operands = { left, right };
+            return emit(std::move(instruction));
+        }
         auto instruction = emit_value_instruction(ir_opcode::binary, semantics.info_of(unit_index, id).read_type);
         instruction.operator_kind = node.operator_kind;
         auto operand_type = binary_operand_type(node, id);
@@ -744,6 +1327,35 @@ struct function_lowerer
             cast_to(right, semantics.info_of(unit_index, node.right).read_type, operand_type),
         };
         return emit(std::move(instruction));
+    }
+
+    auto pointer_arithmetic_pointee(binary_expr_syntax const& node, expr_id id) -> std::optional<semantic_type_id>
+    {
+        auto result_type = semantics.info_of(unit_index, id).read_type;
+        if(not pointer_value_pointee(result_type)) {
+            return std::nullopt;
+        }
+        if(node.operator_kind != token_kind::plus and node.operator_kind != token_kind::minus) {
+            return std::nullopt;
+        }
+        return pointer_value_pointee(result_type);
+    }
+
+    auto pointer_difference_pointee(binary_expr_syntax const& node, expr_id id) -> std::optional<semantic_type_id>
+    {
+        auto result_type = semantics.info_of(unit_index, id).read_type;
+        if(result_type != semantic_type_ids::builtin(builtin_type_kind::isize)) {
+            return std::nullopt;
+        }
+        if(node.operator_kind != token_kind::minus) {
+            return std::nullopt;
+        }
+        auto left = pointer_value_pointee(semantics.info_of(unit_index, node.left).read_type);
+        auto right = pointer_value_pointee(semantics.info_of(unit_index, node.right).read_type);
+        if(left and right and *left == *right) {
+            return *left;
+        }
+        return std::nullopt;
     }
 
     auto binary_operand_type(binary_expr_syntax const& node, expr_id id) -> semantic_type_id
@@ -789,6 +1401,15 @@ struct function_lowerer
             );
         }
         return left;
+    }
+
+    auto pointer_value_pointee(semantic_type_id type) const -> std::optional<semantic_type_id>
+    {
+        auto const& kind = module.types.get(read_type(type));
+        if(auto const* pointer = std::get_if<pointer_type>(&kind)) {
+            return pointer->pointee;
+        }
+        return std::nullopt;
     }
 
     auto emit_assignment_expression(assignment_expr_syntax const& node, expr_id id) -> ir_value_id
@@ -845,6 +1466,26 @@ struct function_lowerer
 
     auto emit_call_expression(call_expr_syntax const& node, expr_id id) -> ir_value_id
     {
+        auto builtin = semantics.builtin_call_of(unit_index, id);
+        if(builtin.type.valid()) {
+            return emit_builtin_call(node, builtin);
+        }
+
+        auto const& callee_syntax = parsed.ast.node(node.callee);
+        auto variant_case = semantics.variant_case_of(unit_index, node.callee);
+        if(variant_case.valid()) {
+            return emit_variant_case_value(id, variant_case, node.arguments);
+        }
+
+        if(auto const* member = std::get_if<member_expr_syntax>(&callee_syntax)) {
+            return emit_member_call_expression(*member, node, id);
+        }
+
+        auto closure = semantics.lambda_of_closure(semantics.info_of(unit_index, node.callee).read_type);
+        if(closure.valid()) {
+            return emit_closure_call_expression(node, id, closure);
+        }
+
         auto callee = semantics.resolved_name(unit_index, node.callee);
         if(not callee.valid()) {
             if(node.arguments.size() != 1uz) {
@@ -857,7 +1498,7 @@ struct function_lowerer
             return emit_cast(value, semantics.info_of(unit_index, id).read_type);
         }
         auto arguments = std::vector<ir_value_id>{};
-        auto const* function = std::get_if<function_type>(&module.types.get(semantics.symbols[callee.value].type));
+        auto const* function = callable_type(semantics.symbols[callee.value].type);
         if(function == nullptr) {
             return unsupported_expression("call callee is missing function type");
         }
@@ -875,6 +1516,150 @@ struct function_lowerer
             arguments.emplace_back(value);
         }
         auto instruction = emit_value_instruction(ir_opcode::call, semantics.info_of(unit_index, id).read_type);
+        if(semantics.symbols[callee.value].kind == symbol_kind::function) {
+            instruction.symbol = callee;
+        } else {
+            auto callee_value = emit_expression(node.callee);
+            if(not callee_value.valid()) {
+                return {};
+            }
+            arguments.insert(arguments.begin(), callee_value);
+            instruction.aggregate_type = read_type(semantics.info_of(unit_index, node.callee).type);
+        }
+        instruction.operands = std::move(arguments);
+        return emit(std::move(instruction));
+    }
+
+    auto emit_closure_call_expression(
+        call_expr_syntax const& node,
+        expr_id id,
+        semantic_lambda_info const& lambda
+    ) -> ir_value_id
+    {
+        auto environment = ir_value_id{};
+        auto callee_info = semantics.info_of(unit_index, node.callee);
+        if(callee_info.is_lvalue) {
+            environment = emit_address(node.callee);
+        } else {
+            auto value = emit_expression(node.callee);
+            if(not value.valid()) {
+                return {};
+            }
+            environment = emit_alloca(lambda.closure_type, "closure.call.tmp");
+            emit_store(environment, value, lambda.closure_type);
+        }
+        if(not environment.valid()) {
+            return {};
+        }
+
+        auto arguments = std::vector<ir_value_id>{ environment };
+        for(auto index = 0uz; index < node.arguments.size(); ++index) {
+            auto argument = node.arguments[index];
+            auto parameter = lambda.callable.parameters[index];
+            auto value = is_reference(parameter) ? emit_address(argument) : emit_expression(argument);
+            if(not value.valid()) {
+                return {};
+            }
+            arguments.emplace_back(value);
+        }
+
+        auto instruction = emit_value_instruction(ir_opcode::call, semantics.info_of(unit_index, id).read_type);
+        instruction.symbol = lambda.function_symbol;
+        instruction.operands = std::move(arguments);
+        return emit(std::move(instruction));
+    }
+
+    auto emit_builtin_call(call_expr_syntax const& node, semantic_builtin_call builtin) -> ir_value_id
+    {
+        using enum semantic_builtin_call_kind;
+        switch(builtin.kind) {
+            case alloc: {
+                auto count = emit_expression(node.arguments.front());
+                if(not count.valid()) {
+                    return {};
+                }
+                auto instruction = emit_value_instruction(ir_opcode::alloc_raw, result_pointer_type(builtin.type));
+                instruction.operands = { count };
+                instruction.aggregate_type = builtin.type;
+                return emit(std::move(instruction));
+            }
+            case free: {
+                auto pointer = emit_expression(node.arguments.front());
+                if(not pointer.valid()) {
+                    return {};
+                }
+                emit_void(ir_instruction {
+                    .opcode = ir_opcode::free_raw,
+                    .type = semantic_type_ids::unit,
+                    .operands = { pointer },
+                    .aggregate_type = builtin.type,
+                });
+                return emit_default_value(semantic_type_ids::unit);
+            }
+            case construct_at: {
+                auto pointer = emit_expression(node.arguments.front());
+                auto value = emit_expression(node.arguments[1uz]);
+                if(not pointer.valid() or not value.valid()) {
+                    return {};
+                }
+                emit_store(pointer, value, builtin.type);
+                return emit_default_value(semantic_type_ids::unit);
+            }
+            case destroy_at: {
+                auto pointer = emit_expression(node.arguments.front());
+                if(not pointer.valid()) {
+                    return {};
+                }
+                auto destructor = destructor_for(builtin.type);
+                if(destructor.valid()) {
+                    emit_void(ir_instruction {
+                        .opcode = ir_opcode::call,
+                        .type = semantic_type_ids::unit,
+                        .operands = { pointer },
+                        .symbol = destructor,
+                    });
+                }
+                return emit_default_value(semantic_type_ids::unit);
+            }
+        }
+        std::unreachable();
+    }
+
+    auto emit_member_call_expression(member_expr_syntax const& member, call_expr_syntax const& node, expr_id id)
+        -> ir_value_id
+    {
+        auto callee = semantics.resolved_name(unit_index, node.callee);
+        if(not callee.valid()) {
+            return unsupported_expression("member call callee is missing resolved symbol");
+        }
+        auto const* function = std::get_if<function_type>(&module.types.get(semantics.symbols[callee.value].type));
+        if(function == nullptr or function->parameters.empty()) {
+            return unsupported_expression("member call callee is missing method type");
+        }
+
+        auto arguments = std::vector<ir_value_id>{};
+        auto receiver = ir_value_id{};
+        if(is_reference(function->parameters.front())) {
+            receiver = emit_address(member.object);
+        } else {
+            receiver = emit_expression(member.object);
+        }
+        if(not receiver.valid()) {
+            return {};
+        }
+        arguments.emplace_back(receiver);
+
+        for(auto index = 0uz; index < node.arguments.size(); ++index) {
+            auto argument = node.arguments[index];
+            auto parameter = function->parameters[index + 1uz];
+            auto value = is_reference(parameter) ? emit_address(argument) : emit_expression(argument);
+            if(not value.valid()) {
+                return {};
+            }
+            arguments.emplace_back(value);
+        }
+
+        auto instruction = emit_value_instruction(ir_opcode::call, semantics.info_of(unit_index, id).read_type);
         instruction.symbol = callee;
         instruction.operands = std::move(arguments);
         return emit(std::move(instruction));
@@ -884,17 +1669,128 @@ struct function_lowerer
     {
         auto const& expression = parsed.ast.node(id);
         if(auto const* name = std::get_if<name_expr_syntax>(&expression)) {
+            auto capture = semantics.lambda_capture_of(unit_index, id);
+            if(capture.valid()) {
+                return emit_capture_address(capture);
+            }
             auto symbol = semantics.resolved_name(unit_index, id);
+            auto field = semantics.field_access_of(unit_index, id);
+            if(field.valid()) {
+                auto self = self_symbol();
+                auto self_address = emit_symbol_address(self);
+                if(not self_address.valid()) {
+                    return unsupported_expression("implicit field access is missing self address");
+                }
+                auto self_type = read_type(semantics.symbols[self.value].type);
+                return emit_field_address(
+                    self_address,
+                    self_type,
+                    struct_field_type(self_type, field),
+                    field.field_index
+                );
+            }
             if(not symbol.valid()) {
                 return unsupported_expression("address expression is missing resolved symbol");
             }
             static_cast<void>(name);
             return emit_symbol_address(symbol);
         }
+        if(auto const* member = std::get_if<member_expr_syntax>(&expression)) {
+            auto field = semantics.field_access_of(unit_index, id);
+            if(not field.valid()) {
+                return unsupported_expression("member expression is missing field access metadata");
+            }
+            auto base = emit_address(member->object);
+            if(not base.valid()) {
+                return {};
+            }
+            auto object_type = semantics.info_of(unit_index, member->object).read_type;
+            return emit_field_address(
+                base,
+                object_type,
+                struct_field_type(object_type, field),
+                field.field_index
+            );
+        }
+        if(auto const* index = std::get_if<index_expr_syntax>(&expression)) {
+            auto object_info = semantics.info_of(unit_index, index->object);
+            auto object_type = object_info.read_type;
+            auto object_address = ir_value_id{};
+            if(object_info.is_lvalue) {
+                object_address = emit_address(index->object);
+            } else {
+                auto object_value = emit_expression(index->object);
+                if(not object_value.valid()) {
+                    return {};
+                }
+                object_address = emit_alloca(object_type, "array.index.tmp");
+                emit_store(object_address, object_value, object_type);
+            }
+            auto index_value = emit_expression(index->index);
+            if(not object_address.valid() or not index_value.valid()) {
+                return {};
+            }
+            if(std::holds_alternative<tuple_type>(module.types.get(object_type))) {
+                auto tuple_index = constant_integer_index(index->index);
+                if(not tuple_index) {
+                    return unsupported_expression("tuple index is missing constant index metadata");
+                }
+                return emit_field_address(
+                    object_address,
+                    object_type,
+                    semantics.info_of(unit_index, id).read_type,
+                    static_cast<std::uint64_t>(*tuple_index)
+                );
+            }
+            return emit_element_address(
+                object_address,
+                index_value,
+                object_type,
+                semantics.info_of(unit_index, id).read_type
+            );
+        }
         if(auto const* unary = std::get_if<unary_expr_syntax>(&expression); unary and unary->operator_kind == token_kind::star) {
             return emit_expression(unary->operand);
         }
         return unsupported_expression("expression has no address");
+    }
+
+    auto emit_capture_address(semantic_lambda_capture_access capture) -> ir_value_id
+    {
+        auto lambda = semantics.lambda_of(unit_index, capture.function);
+        if(not lambda.valid() or not lambda.env_symbol.valid()) {
+            return unsupported_expression("lambda capture has no closure environment");
+        }
+        if(capture.field_index >= lambda.captures.size()) {
+            return unsupported_expression("lambda capture field is out of bounds");
+        }
+
+        auto environment = emit_symbol_address(lambda.env_symbol);
+        if(not environment.valid()) {
+            return {};
+        }
+        return emit_field_address(
+            environment,
+            lambda.closure_type,
+            lambda.captures[capture.field_index].type,
+            capture.field_index
+        );
+    }
+
+    auto emit_string_index(index_expr_syntax const& node) -> ir_value_id
+    {
+        auto pointer = emit_expression(node.object);
+        auto index = emit_expression(node.index);
+        if(not pointer.valid() or not index.valid()) {
+            return {};
+        }
+
+        auto instruction = emit_value_instruction(ir_opcode::binary, result_pointer_type(semantic_type_ids::char_));
+        instruction.operator_kind = token_kind::plus;
+        instruction.operands = { pointer, index };
+        instruction.aggregate_type = semantic_type_ids::char_;
+        auto address = emit(std::move(instruction));
+        return emit_load(address, semantic_type_ids::char_);
     }
 
     auto materialize_conversion(expr_id id, ir_value_id value) -> ir_value_id
@@ -914,9 +1810,216 @@ struct function_lowerer
         return emit_cast(value, to);
     }
 
+    auto constant_integer_index(expr_id id) -> std::optional<std::int64_t>
+    {
+        auto const& expression = parsed.ast.node(id);
+        if(auto const* literal = std::get_if<literal_expr_syntax>(&expression)) {
+            auto text = ast_source.slice(literal->full_span);
+            if(text.contains('.') or text.contains('e') or text.contains('E')) {
+                return std::nullopt;
+            }
+            auto value = std::int64_t{};
+            auto result = std::from_chars(text.data(), text.data() + text.size(), value);
+            if(result.ec != std::errc{}) {
+                return std::nullopt;
+            }
+            return value;
+        }
+        if(auto const* unary = std::get_if<unary_expr_syntax>(&expression); unary and unary->operator_kind == token_kind::minus) {
+            auto value = constant_integer_index(unary->operand);
+            if(value) {
+                return -*value;
+            }
+        }
+        return std::nullopt;
+    }
+
     auto is_reference(semantic_type_id type) const -> bool
     {
         return std::holds_alternative<reference_type>(module.types.get(type));
+    }
+
+    auto result_pointer_type(semantic_type_id pointee) -> semantic_type_id
+    {
+        return module.types.intern(pointer_type{ pointee });
+    }
+
+    auto callable_type(semantic_type_id type) const -> function_type const*
+    {
+        auto const& kind = module.types.get(type);
+        if(auto const* callable = std::get_if<function_type>(&kind)) {
+            return callable;
+        }
+        if(auto const* pointer = std::get_if<pointer_type>(&kind)) {
+            return std::get_if<function_type>(&module.types.get(pointer->pointee));
+        }
+        return nullptr;
+    }
+
+    auto read_type(semantic_type_id type) const -> semantic_type_id
+    {
+        auto current = type;
+        while(true) {
+            auto const& kind = module.types.get(current);
+            if(auto const* reference = std::get_if<reference_type>(&kind)) {
+                current = reference->pointee;
+                continue;
+            }
+            return current;
+        }
+    }
+
+    auto struct_index_of(semantic_type_id type) const -> std::optional<std::uint32_t>
+    {
+        auto const& kind = module.types.get(read_type(type));
+        if(auto const* value = std::get_if<struct_type>(&kind)) {
+            return value->index;
+        }
+        return std::nullopt;
+    }
+
+    auto struct_field_type(semantic_type_id object_type, semantic_field_access field) -> semantic_type_id
+    {
+        auto const& item = module.structs[field.struct_index];
+        auto field_type = item.fields[field.field_index].type;
+        auto const* instance = std::get_if<struct_type>(&module.types.get(read_type(object_type)));
+        if(instance == nullptr or instance->index != field.struct_index) {
+            return field_type;
+        }
+        return substitute_type(field_type, instance->arguments);
+    }
+
+    auto variant_index_of(semantic_type_id type) const -> std::optional<std::uint32_t>
+    {
+        auto const& kind = module.types.get(read_type(type));
+        if(auto const* value = std::get_if<variant_type>(&kind)) {
+            return value->index;
+        }
+        return std::nullopt;
+    }
+
+    auto substitute_type(
+        semantic_type_id type,
+        std::vector<semantic_type_id> const& arguments
+    ) -> semantic_type_id
+    {
+        auto const& kind = module.types.get(type);
+        return std::visit (
+            overloaded {
+                [&](unit_type const&) { return type; },
+                [&](error_type const&) { return type; },
+                [&](inferred_type const&) { return type; },
+                [&](builtin_type const&) { return type; },
+                [&](generic_parameter_type const& value) {
+                    if(value.index < arguments.size()) {
+                        return arguments[value.index];
+                    }
+                    return semantic_type_ids::error;
+                },
+                [&](array_type const& value) {
+                    return module.types.intern(array_type {
+                        .element = substitute_type(value.element, arguments),
+                        .length = value.length,
+                    });
+                },
+                [&](tuple_type const& value) {
+                    auto elements = (
+                        value.elements
+                        | std::views::transform([&](auto element) {
+                            return substitute_type(element, arguments);
+                        }) | std::ranges::to<std::vector<semantic_type_id>>()
+                    );
+                    return module.types.intern(tuple_type{ std::move(elements) });
+                },
+                [&](reference_type const& value) {
+                    return module.types.intern(reference_type {
+                        substitute_type(value.pointee, arguments),
+                        value.is_const,
+                    });
+                },
+                [&](pointer_type const& value) {
+                    return module.types.intern(pointer_type {
+                        substitute_type(value.pointee, arguments),
+                        value.is_const,
+                    });
+                },
+                [&](function_type const& value) {
+                    auto parameters = (
+                        value.parameters
+                        | std::views::transform([&](auto parameter) {
+                            return substitute_type(parameter, arguments);
+                        }) | std::ranges::to<std::vector<semantic_type_id>>()
+                    );
+                    return module.types.intern(function_type {
+                        .parameters = std::move(parameters),
+                        .returns = substitute_type(value.returns, arguments),
+                    });
+                },
+                [&](struct_type const& value) {
+                    auto substituted = (
+                        value.arguments
+                        | std::views::transform([&](auto argument) {
+                            return substitute_type(argument, arguments);
+                        }) | std::ranges::to<std::vector<semantic_type_id>>()
+                    );
+                    return module.types.intern(struct_type {
+                        .index = value.index,
+                        .arguments = std::move(substituted),
+                    });
+                },
+                [&](variant_type const& value) {
+                    auto substituted = (
+                        value.arguments
+                        | std::views::transform([&](auto argument) {
+                            return substitute_type(argument, arguments);
+                        }) | std::ranges::to<std::vector<semantic_type_id>>()
+                    );
+                    return module.types.intern(variant_type {
+                        .index = value.index,
+                        .arguments = std::move(substituted),
+                    });
+                },
+            },
+            kind
+        );
+    }
+
+    auto variant_case_payload_types(
+        semantic_type_id type,
+        semantic_variant_case const& variant_case
+    ) -> std::vector<semantic_type_id>
+    {
+        auto const* variant = std::get_if<variant_type>(&module.types.get(read_type(type)));
+        if(variant == nullptr) {
+            return {};
+        }
+
+        return (
+            variant_case.payload_types
+            | std::views::transform([&](auto payload) {
+                return substitute_type(payload, variant->arguments);
+            }) | std::ranges::to<std::vector<semantic_type_id>>()
+        );
+    }
+
+    auto destructor_for(semantic_type_id type) const -> symbol_id
+    {
+        auto owner = struct_index_of(type);
+        if(not owner) {
+            return {};
+        }
+        return module.structs[*owner].destructor;
+    }
+
+    auto self_symbol() const -> symbol_id
+    {
+        for(auto const& [symbol, address] : addresses) {
+            static_cast<void>(address);
+            if(semantics.symbols[symbol.value].name == "self") {
+                return symbol;
+            }
+        }
+        return {};
     }
 
     auto emit_symbol_read(symbol_id symbol, semantic_type_id read_type) -> ir_value_id
@@ -998,14 +2101,17 @@ struct function_lowerer
         loop_target(
             ir_block_id target_break,
             ir_block_id target_continue,
+            std::size_t target_cleanup_depth,
             std::optional<std::string> target_label = std::nullopt
         ) :
             break_target(target_break),
             continue_target(target_continue),
+            cleanup_depth(target_cleanup_depth),
             label(std::move(target_label)) {}
 
         ir_block_id break_target{};
         ir_block_id continue_target{};
+        std::size_t cleanup_depth{};
         std::optional<std::string> label{};
     };
 
@@ -1028,6 +2134,24 @@ struct function_lowerer
         return {};
     }
 
+    auto resolve_loop_cleanup_depth(std::optional<source_span> label) -> std::size_t
+    {
+        if(loop_targets.empty()) {
+            return 0uz;
+        }
+        if(not label) {
+            return loop_targets.back().cleanup_depth;
+        }
+
+        auto name = std::string{ ast_source.slice(*label) };
+        for(auto target = loop_targets.rbegin(); target != loop_targets.rend(); ++target) {
+            if(target->label and *target->label == name) {
+                return target->cleanup_depth;
+            }
+        }
+        return 0uz;
+    }
+
     ast_source_view ast_source;
     parse_result const& parsed;
     semantic_result const& semantics;
@@ -1039,6 +2163,7 @@ struct function_lowerer
     std::uint32_t next_value{};
     std::map<symbol_id, ir_value_id> addresses{};
     std::vector<loop_target> loop_targets{};
+    std::vector<cleanup_entry> cleanups{};
     std::string error{};
 };
 
@@ -1050,12 +2175,16 @@ export auto emit_ir(
 {
     auto result = ir_emit_result {
         .accepted = false,
-        .module = ir_module{ .types = semantics.types },
+        .module = ir_module{
+            .types = semantics.types,
+            .structs = semantics.structs,
+        },
     };
     if(not semantics.accepted()) {
         result.error = "IR emission requires accepted semantic results";
         return result;
     }
+    result.module.variants = semantics.variants;
 
     for(auto unit_index : std::views::iota(0uz, units.size())) {
         auto const& parsed = units[unit_index];
@@ -1068,6 +2197,29 @@ export auto emit_ir(
             if(not lowerer.lower()) {
                 result.error = std::move(lowerer.error);
                 return result;
+            }
+        }
+        for(auto impl_id : parsed.root->impls) {
+            auto const& impl = parsed.ast.node(impl_id);
+            for(auto function_id : impl.functions) {
+                if(parsed.ast.node(function_id).defaulted) {
+                    continue;
+                }
+                auto lowerer = function_lowerer{ sources, parsed, semantics, result.module, unit_index, function_id };
+                if(not lowerer.lower()) {
+                    result.error = std::move(lowerer.error);
+                    return result;
+                }
+            }
+        }
+        for(auto impl_id : parsed.root->concept_impls) {
+            auto const& impl = parsed.ast.node(impl_id);
+            for(auto function_id : impl.functions) {
+                auto lowerer = function_lowerer{ sources, parsed, semantics, result.module, unit_index, function_id };
+                if(not lowerer.lower()) {
+                    result.error = std::move(lowerer.error);
+                    return result;
+                }
             }
         }
     }
@@ -1093,12 +2245,16 @@ auto opcode_name(ir_opcode opcode) -> std::string_view
         case literal: return "literal";
         case load: return "load";
         case store: return "store";
+        case field_address: return "field_address";
+        case element_address: return "element_address";
         case unary: return "unary";
         case binary: return "binary";
         case cast: return "cast";
         case aggregate_undef: return "aggregate_undef";
         case insert_value: return "insert_value";
         case extract_value: return "extract_value";
+        case alloc_raw: return "alloc_raw";
+        case free_raw: return "free_raw";
         case call: return "call";
         case branch: return "branch";
         case cond_branch: return "cond_branch";

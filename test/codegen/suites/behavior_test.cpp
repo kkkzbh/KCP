@@ -131,6 +131,31 @@ auto check_aggregate_literals() -> void
     test_parser::assert_true(emitted.ir.contains("{ i32, double }"), "LLVM IR should contain tuple aggregate values");
 }
 
+auto check_array_index_operations() -> void
+{
+    auto sources = source_manager{};
+    auto parsed = parse_source(
+        sources,
+        "array_index.cp",
+        R"(answer() -> i32
+{
+    let data = [4, 5, 6];
+    data[1] = 8;
+    return data[1] + [1, 2, 3][2];
+})");
+    auto checked = analyze_single(sources, parsed);
+    test_parser::assert_true(checked.accepted(), "array index source should pass semantic analysis");
+
+    auto ir = emit_ir(sources, parsed, checked);
+    test_parser::assert_true(ir.accepted, ir.error.empty() ? "IR emission should pass" : ir.error);
+    auto text = dump_ir(ir.module);
+    test_parser::assert_true(text.contains("element_address"), "MIR dump should contain element_address");
+
+    auto emitted = emit_llvm_ir(ir.module);
+    test_parser::assert_true(emitted.verified, emitted.error.empty() ? "LLVM module should verify" : emitted.error);
+    test_parser::assert_true(emitted.ir.contains("getelementptr"), "LLVM IR should compute array element addresses");
+}
+
 auto check_range_for_control_flow() -> void
 {
     auto sources = source_manager{};
@@ -193,8 +218,81 @@ auto check_labeled_loop_jumps() -> void
     test_parser::assert_true(text.contains("for.iter.1"), "MIR dump should contain expanded outer iterations");
     test_parser::assert_true(text.contains("branch ^1"), "MIR dump should contain labeled break to outer end");
 
+	    auto emitted = emit_llvm_ir(ir.module);
+	    test_parser::assert_true(emitted.verified, emitted.error.empty() ? "LLVM module should verify" : emitted.error);
+	}
+
+auto check_variant_match_codegen() -> void
+{
+    auto sources = source_manager{};
+    auto parsed = parse_source(
+        sources,
+        "variant_match.cp",
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+answer() -> i32
+{
+    let value = optional<i32>::some(42);
+    return match value {
+        .some(item) => item,
+        .none => 0,
+    };
+})");
+    auto checked = analyze_single(sources, parsed);
+    test_parser::assert_true(checked.accepted(), "variant match source should pass semantic analysis");
+
+    auto ir = emit_ir(sources, parsed, checked);
+    test_parser::assert_true(ir.accepted, ir.error.empty() ? "IR emission should pass" : ir.error);
+    auto text = dump_ir(ir.module);
+    test_parser::assert_true(text.contains("extract_value"), "MIR dump should inspect the variant tag and payload");
+    test_parser::assert_true(text.contains("match.arm.0"), "MIR dump should contain match arms");
+
     auto emitted = emit_llvm_ir(ir.module);
     test_parser::assert_true(emitted.verified, emitted.error.empty() ? "LLVM module should verify" : emitted.error);
+    test_parser::assert_true(emitted.ir.contains("extractvalue"), "LLVM IR should extract variant payloads");
+}
+
+auto check_function_pointer_and_memory_codegen() -> void
+{
+    auto sources = source_manager{};
+    auto parsed = parse_source(
+        sources,
+        "function_pointer_memory.cp",
+        R"(add(x: i32, y: i32) -> i32
+{
+    return x + y;
+}
+
+answer() -> i32
+{
+    let callback: f(i32, i32) -> i32 = add;
+    let raw: f*(i32, i32) -> i32 = add;
+    let pointer = alloc<i32>(2);
+    construct_at(pointer, callback(20, 1));
+    construct_at(pointer + 1, raw(20, 1));
+    let result = *pointer + *(pointer + 1);
+    destroy_at(pointer + 1);
+    destroy_at(pointer);
+    free(pointer);
+    return result;
+})");
+    auto checked = analyze_single(sources, parsed);
+    test_parser::assert_true(checked.accepted(), "function pointer memory source should pass semantic analysis");
+
+    auto ir = emit_ir(sources, parsed, checked);
+    test_parser::assert_true(ir.accepted, ir.error.empty() ? "IR emission should pass" : ir.error);
+    auto text = dump_ir(ir.module);
+    test_parser::assert_true(text.contains("alloc_raw"), "MIR dump should contain raw allocation");
+    test_parser::assert_true(text.contains("free_raw"), "MIR dump should contain raw free");
+
+    auto emitted = emit_llvm_ir(ir.module);
+    test_parser::assert_true(emitted.verified, emitted.error.empty() ? "LLVM module should verify" : emitted.error);
+    test_parser::assert_true(emitted.ir.contains("@cp_alloc"), "LLVM IR should define/call cp_alloc");
+    test_parser::assert_true(emitted.ir.contains("@cp_free"), "LLVM IR should define/call cp_free");
+    test_parser::assert_true(emitted.ir.contains("getelementptr i32"), "LLVM IR should use typed pointer arithmetic");
 }
 } // namespace
 
@@ -204,7 +302,10 @@ auto main() -> int
     check_locals_assignment_and_call();
     check_if_control_flow();
     check_aggregate_literals();
+    check_array_index_operations();
     check_range_for_control_flow();
     check_labeled_loop_jumps();
+    check_variant_match_codegen();
+    check_function_pointer_and_memory_codegen();
     return 0;
 }

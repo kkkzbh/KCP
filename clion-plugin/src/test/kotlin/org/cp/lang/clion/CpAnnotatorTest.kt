@@ -55,31 +55,28 @@ class CpAnnotatorTest : BasePlatformTestCase() {
     fun testSemanticHighlightsRealExampleFiles() {
         val repoRoot = Path.of(System.getProperty("cp.repo.root") ?: error("cp.repo.root is not configured"))
         val cases = mapOf(
-            "design/examples/flow_demo.cp" to listOf(
+            "design/examples/flow/main.cp" to listOf(
                 "sum_non_negative" to CpSyntaxHighlighter.FUNCTION_DECLARATION,
-                "accumulate_until" to CpSyntaxHighlighter.FUNCTION_DECLARATION,
                 "countdown" to CpSyntaxHighlighter.FUNCTION_DECLARATION,
                 "contains_target" to CpSyntaxHighlighter.FUNCTION_DECLARATION,
                 "total" to CpSyntaxHighlighter.LOCAL_VARIABLE,
                 "values" to CpSyntaxHighlighter.PARAMETER,
                 "i32" to CpSyntaxHighlighter.TYPE,
             ),
-            "design/examples/main.cp" to listOf(
+            "design/examples/basics/main.cp" to listOf(
                 "main" to CpSyntaxHighlighter.FUNCTION_DECLARATION,
-                "add" to CpSyntaxHighlighter.FUNCTION_CALL,
-                "sum_non_negative" to CpSyntaxHighlighter.FUNCTION_CALL,
-                "x" to CpSyntaxHighlighter.LOCAL_VARIABLE,
+                "answer" to CpSyntaxHighlighter.LOCAL_VARIABLE,
+                "rounded" to CpSyntaxHighlighter.LOCAL_VARIABLE,
                 "i32" to CpSyntaxHighlighter.TYPE,
             ),
-            "design/examples/math.cp" to listOf(
+            "design/examples/modules/math.cp" to listOf(
                 "add" to CpSyntaxHighlighter.FUNCTION_DECLARATION,
-                "clamp_zero" to CpSyntaxHighlighter.FUNCTION_DECLARATION,
+                "clamp_min" to CpSyntaxHighlighter.FUNCTION_DECLARATION,
                 "value" to CpSyntaxHighlighter.PARAMETER,
                 "i32" to CpSyntaxHighlighter.TYPE,
             ),
-            "design/examples/types_demo.cp" to listOf(
-                "literals_and_casts" to CpSyntaxHighlighter.FUNCTION_DECLARATION,
-                "types_demo" to CpSyntaxHighlighter.MODULE_NAME,
+            "design/examples/types/main.cp" to listOf(
+                "main" to CpSyntaxHighlighter.FUNCTION_DECLARATION,
                 "count" to CpSyntaxHighlighter.LOCAL_VARIABLE,
                 "array" to CpSyntaxHighlighter.TYPE,
                 "i32" to CpSyntaxHighlighter.TYPE,

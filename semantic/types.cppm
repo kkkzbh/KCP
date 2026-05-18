@@ -5,9 +5,85 @@ import semantic;
 auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic_type_id
 {
     auto const& syntax = ast.node(id);
+    if(syntax.is_function_type) {
+        auto parameters = (
+            syntax.function_parameters
+            | std::views::transform([&](function_type_parameter_syntax const& parameter) {
+                return lower_type(ast, parameter.type);
+            }) | std::ranges::to<std::vector<semantic_type_id>>()
+        );
+        auto function = result.types.intern(function_type {
+            .parameters = std::move(parameters),
+            .returns = lower_type(ast, syntax.function_return),
+        });
+        return syntax.is_function_pointer
+            ? result.types.intern(pointer_type{ function })
+            : function;
+    }
+
+    if(syntax.is_decltype) {
+        auto info = expression_info{};
+        if(active_ast == &ast) {
+            info = check_expression(ast, syntax.decltype_expression, std::nullopt);
+        } else {
+            info = infer_expression_type(ast, syntax.decltype_expression, std::nullopt);
+        }
+        return read_type(info.type);
+    }
+
     auto name = ast_source.identifier(syntax.name);
     auto lowered = semantic_type_id{};
-    if(auto builtin = is_builtin_name(name)) {
+    if(name == "Self" and active_self_type.valid()) {
+        lowered = active_self_type;
+        if(not syntax.arguments.empty()) {
+            report (
+                diagnostic_kind::invalid_type_argument,
+                syntax.full_span,
+                "Self does not take arguments"
+            );
+            lowered = semantic_type_ids::error;
+        }
+    } else if(active_type_substitutions and active_type_substitutions->contains(std::string{ name })) {
+        lowered = active_type_substitutions->find(std::string{ name })->second;
+        if(not syntax.arguments.empty()) {
+            report (
+                diagnostic_kind::invalid_type_argument,
+                syntax.full_span,
+                "substituted type does not take arguments"
+            );
+            lowered = semantic_type_ids::error;
+        }
+    } else if(active_generic_parameters.contains(std::string{ name })) {
+        lowered = active_generic_parameters.find(std::string{ name })->second;
+        if(not syntax.arguments.empty()) {
+            report (
+                diagnostic_kind::invalid_type_argument,
+                syntax.full_span,
+                "generic parameter does not take arguments"
+            );
+            lowered = semantic_type_ids::error;
+        }
+    } else if(auto alias = resolve_type_alias(name)) {
+        lowered = *alias;
+        if(not syntax.arguments.empty()) {
+            report (
+                diagnostic_kind::invalid_type_argument,
+                syntax.full_span,
+                "type alias does not take arguments"
+            );
+            lowered = semantic_type_ids::error;
+        }
+    } else if(active_type_aliases and active_type_aliases->contains(std::string{ name })) {
+        lowered = active_type_aliases->find(std::string{ name })->second;
+        if(not syntax.arguments.empty()) {
+            report (
+                diagnostic_kind::invalid_type_argument,
+                syntax.full_span,
+                "associated type alias does not take arguments"
+            );
+            lowered = semantic_type_ids::error;
+        }
+    } else if(auto builtin = is_builtin_name(name)) {
         lowered = semantic_type_ids::builtin(*builtin);
         if(not syntax.arguments.empty()) {
             report (
@@ -21,6 +97,69 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
         lowered = lower_array_type(ast, syntax);
     } else if(name == "tuple") {
         lowered = lower_tuple_type(ast, syntax);
+    } else if(auto symbol = resolve_type_symbol(active_unit_index, name)) {
+        auto const& value = result.symbols[symbol->value];
+        if(value.variant_index < result.variants.size() and result.variants[value.variant_index].symbol == *symbol) {
+            auto const& variant = result.variants[value.variant_index];
+            if(syntax.arguments.size() != variant.generic_parameters.size()) {
+                report (
+                    diagnostic_kind::invalid_type_argument,
+                    syntax.full_span,
+                    std::format(
+                        "variant type '{}' expects {} type argument(s)",
+                        variant.name,
+                        variant.generic_parameters.size()
+                    )
+                );
+                lowered = semantic_type_ids::error;
+            } else {
+                auto arguments = (
+                    syntax.arguments
+                    | std::views::transform([&](type_argument_syntax const& argument) {
+                        if(not std::holds_alternative<type_argument_type_syntax>(argument)) {
+                            report(diagnostic_kind::invalid_type_argument, syntax.full_span, "variant type arguments must be types");
+                            return semantic_type_ids::error;
+                        }
+                        return lower_type(ast, std::get<type_argument_type_syntax>(argument).type);
+                    }) | std::ranges::to<std::vector<semantic_type_id>>()
+                );
+                lowered = result.types.intern(variant_type {
+                    .index = value.variant_index,
+                    .arguments = std::move(arguments),
+                });
+            }
+        } else {
+            auto const& item = result.structs[value.struct_index];
+            if(syntax.arguments.size() != item.generic_parameters.size()) {
+                report (
+                    diagnostic_kind::invalid_type_argument,
+                    syntax.full_span,
+                    std::format(
+                        "struct type '{}' expects {} type argument(s)",
+                        item.name,
+                        item.generic_parameters.size()
+                    )
+                );
+                lowered = semantic_type_ids::error;
+            } else if(syntax.arguments.empty()) {
+                lowered = value.type;
+            } else {
+                auto arguments = (
+                    syntax.arguments
+                    | std::views::transform([&](type_argument_syntax const& argument) {
+                        if(not std::holds_alternative<type_argument_type_syntax>(argument)) {
+                            report(diagnostic_kind::invalid_type_argument, syntax.full_span, "struct type arguments must be types");
+                            return semantic_type_ids::error;
+                        }
+                        return lower_type(ast, std::get<type_argument_type_syntax>(argument).type);
+                    }) | std::ranges::to<std::vector<semantic_type_id>>()
+                );
+                lowered = result.types.intern(struct_type {
+                    .index = value.struct_index,
+                    .arguments = std::move(arguments),
+                });
+            }
+        }
     } else {
         report (
             diagnostic_kind::unknown_type,
@@ -28,6 +167,31 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
             std::format("unknown type '{}'", name)
         );
         lowered = semantic_type_ids::error;
+    }
+
+    for(auto associated : syntax.associated_names) {
+        auto key = std::string{ ast_source.identifier(associated) };
+        auto found_types = associated_types.find(read_type(lowered));
+        if(found_types == associated_types.end()) {
+            report(
+                diagnostic_kind::unknown_type,
+                associated,
+                std::format("unknown associated type '{}'", key)
+            );
+            lowered = semantic_type_ids::error;
+            break;
+        }
+        auto found = found_types->second.find(key);
+        if(found == found_types->second.end()) {
+            report(
+                diagnostic_kind::unknown_type,
+                associated,
+                std::format("unknown associated type '{}'", key)
+            );
+            lowered = semantic_type_ids::error;
+            break;
+        }
+        lowered = found->second;
     }
 
     for(auto suffix : syntax.suffix_operators) {
@@ -38,6 +202,236 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
         }
     }
     return lowered;
+}
+
+auto semantic_analyzer::lower_type_with_substitutions(
+    ast_arena const& ast,
+    type_id id,
+    std::map<std::string, semantic_type_id> const& substitutions
+) -> semantic_type_id
+{
+    auto old_substitutions = active_type_substitutions;
+    active_type_substitutions = &substitutions;
+    auto result_type = lower_type(ast, id);
+    active_type_substitutions = old_substitutions;
+    return result_type;
+}
+
+auto semantic_analyzer::resolve_type_symbol(std::size_t unit_index, std::string_view name) const
+    -> std::optional<symbol_id>
+{
+    auto key = std::string{ name };
+    auto const& unit = units[unit_index];
+    if(auto local = module_types.find(unit.module_key); local != module_types.end()) {
+        if(auto found = local->second.find(key); found != local->second.end()) {
+            return found->second;
+        }
+    }
+
+    for(auto const& import : unit.root.imports) {
+        auto module_name = ast_source.module_name(import.name);
+        auto visiting = std::set<std::string>{};
+        if(auto found = resolve_exported_type_symbol(module_name, key, visiting)) {
+            return *found;
+        }
+    }
+    return std::nullopt;
+}
+
+auto semantic_analyzer::resolve_concept_symbol(std::size_t unit_index, std::string_view name) const
+    -> std::optional<symbol_id>
+{
+    auto key = std::string{ name };
+    auto const& unit = units[unit_index];
+    if(auto local = module_concepts.find(unit.module_key); local != module_concepts.end()) {
+        if(auto found = local->second.find(key); found != local->second.end()) {
+            return found->second;
+        }
+    }
+
+    for(auto const& import : unit.root.imports) {
+        auto module_name = ast_source.module_name(import.name);
+        auto visiting = std::set<std::string>{};
+        if(auto found = resolve_exported_concept_symbol(module_name, key, visiting)) {
+            return *found;
+        }
+    }
+    return std::nullopt;
+}
+
+auto semantic_analyzer::resolve_exported_type_symbol(
+    std::string_view module_name,
+    std::string_view name,
+    std::set<std::string>& visiting
+) const -> std::optional<symbol_id>
+{
+    auto module_key = std::string{ module_name };
+    if(not visiting.emplace(module_key).second) {
+        return std::nullopt;
+    }
+
+    if(auto exports = module_type_exports.find(module_key); exports != module_type_exports.end()) {
+        if(auto found = exports->second.find(std::string{ name }); found != exports->second.end()) {
+            return found->second;
+        }
+    }
+
+    for(auto const& unit : units) {
+        if(not unit.named_module or unit.module_name != module_key) {
+            continue;
+        }
+        for(auto const& import : unit.root.imports) {
+            if(not import.exported) {
+                continue;
+            }
+            auto imported_module = ast_source.module_name(import.name);
+            if(auto found = resolve_exported_type_symbol(imported_module, name, visiting)) {
+                return *found;
+            }
+        }
+    }
+
+    return std::nullopt;
+}
+
+auto semantic_analyzer::resolve_exported_concept_symbol(
+    std::string_view module_name,
+    std::string_view name,
+    std::set<std::string>& visiting
+) const -> std::optional<symbol_id>
+{
+    auto module_key = std::string{ module_name };
+    if(not visiting.emplace(module_key).second) {
+        return std::nullopt;
+    }
+
+    if(auto exports = module_concept_exports.find(module_key); exports != module_concept_exports.end()) {
+        if(auto found = exports->second.find(std::string{ name }); found != exports->second.end()) {
+            return found->second;
+        }
+    }
+
+    for(auto const& unit : units) {
+        if(not unit.named_module or unit.module_name != module_key) {
+            continue;
+        }
+        for(auto const& import : unit.root.imports) {
+            if(not import.exported) {
+                continue;
+            }
+            auto imported_module = ast_source.module_name(import.name);
+            if(auto found = resolve_exported_concept_symbol(imported_module, name, visiting)) {
+                return *found;
+            }
+        }
+    }
+
+    return std::nullopt;
+}
+
+auto semantic_analyzer::struct_index_of(semantic_type_id type) const -> std::optional<std::uint32_t>
+{
+    auto const& kind = result.types.get(read_type(type));
+    if(auto const* value = std::get_if<struct_type>(&kind)) {
+        return value->index;
+    }
+    return std::nullopt;
+}
+
+auto semantic_analyzer::struct_named(std::size_t unit_index, std::string_view name) const
+    -> std::optional<std::uint32_t>
+{
+    auto symbol = resolve_type_symbol(unit_index, name);
+    if(not symbol) {
+        return std::nullopt;
+    }
+    auto const& value = result.symbols[symbol->value];
+    if(value.kind != symbol_kind::type) {
+        return std::nullopt;
+    }
+    return value.struct_index;
+}
+
+auto semantic_analyzer::field_index(std::uint32_t struct_index, std::string_view name) const
+    -> std::optional<std::uint32_t>
+{
+    auto const& item = result.structs[struct_index];
+    for(auto index = 0uz; index < item.fields.size(); ++index) {
+        if(item.fields[index].name == name) {
+            return static_cast<std::uint32_t>(index);
+        }
+    }
+    return std::nullopt;
+}
+
+auto semantic_analyzer::is_default_initializable(semantic_type_id type) -> bool
+{
+    auto const& kind = result.types.get(type);
+    return std::visit (
+        overloaded {
+            [](unit_type const&) { return true; },
+            [](error_type const&) { return true; },
+            [](inferred_type const&) { return false; },
+            [](builtin_type const&) { return true; },
+            [&](array_type const& value) { return is_default_initializable(value.element); },
+            [&](tuple_type const& value) {
+                return std::ranges::all_of(value.elements, [&](auto element) {
+                    return is_default_initializable(element);
+                });
+            },
+            [](reference_type const&) { return false; },
+            [](pointer_type const&) { return true; },
+            [](function_type const&) { return false; },
+            [](generic_parameter_type const&) { return false; },
+            [&](struct_type const& value) {
+                auto const& item = result.structs[value.index];
+                return std::ranges::all_of(item.fields, [&](auto const& field) {
+                    return is_default_initializable(substitute_type(field.type, value.arguments));
+                });
+            },
+            [](variant_type const&) { return false; },
+        },
+        kind
+    );
+}
+
+auto semantic_analyzer::is_dependent_type(semantic_type_id type) const -> bool
+{
+    auto const& kind = result.types.get(read_type(type));
+    return std::visit (
+        overloaded {
+            [](unit_type const&) { return false; },
+            [](error_type const&) { return false; },
+            [](inferred_type const&) { return false; },
+            [](builtin_type const&) { return false; },
+            [&](array_type const& value) { return is_dependent_type(value.element); },
+            [&](tuple_type const& value) {
+                return std::ranges::any_of(value.elements, [&](auto element) {
+                    return is_dependent_type(element);
+                });
+            },
+            [&](reference_type const& value) { return is_dependent_type(value.pointee); },
+            [&](pointer_type const& value) { return is_dependent_type(value.pointee); },
+            [&](function_type const& value) {
+                return is_dependent_type(value.returns)
+                    or std::ranges::any_of(value.parameters, [&](auto parameter) {
+                        return is_dependent_type(parameter);
+                    });
+            },
+            [](generic_parameter_type const&) { return true; },
+            [&](struct_type const& value) {
+                return std::ranges::any_of(value.arguments, [&](auto argument) {
+                    return is_dependent_type(argument);
+                });
+            },
+            [&](variant_type const& value) {
+                return std::ranges::any_of(value.arguments, [&](auto argument) {
+                    return is_dependent_type(argument);
+                });
+            },
+        },
+        kind
+    );
 }
 
 auto semantic_analyzer::range_element_type(semantic_type_id type) -> semantic_type_id
@@ -70,9 +464,30 @@ auto semantic_analyzer::pointer_pointee(semantic_type_id type) -> std::optional<
     return std::nullopt;
 }
 
-auto semantic_analyzer::target_const(semantic_type_id type, bool lvalue_const) -> bool
+auto semantic_analyzer::callable_type(semantic_type_id type) const -> function_type const*
+{
+    auto const& kind = result.types.get(type);
+    if(auto const* callable = std::get_if<function_type>(&kind)) {
+        return callable;
+    }
+    if(auto const* pointer = std::get_if<pointer_type>(&kind)) {
+        return std::get_if<function_type>(&result.types.get(pointer->pointee));
+    }
+    return nullptr;
+}
+
+auto semantic_analyzer::pointer_value_pointee(semantic_type_id type) const -> std::optional<semantic_type_id>
 {
     auto const& kind = result.types.get(read_type(type));
+    if(auto const* pointer = std::get_if<pointer_type>(&kind)) {
+        return pointer->pointee;
+    }
+    return std::nullopt;
+}
+
+auto semantic_analyzer::target_const(semantic_type_id type, bool lvalue_const) -> bool
+{
+    auto const& kind = result.types.get(type);
     if(auto const* pointer = std::get_if<pointer_type>(&kind)) {
         return pointer->is_const;
     }
@@ -82,7 +497,7 @@ auto semantic_analyzer::target_const(semantic_type_id type, bool lvalue_const) -
     return lvalue_const;
 }
 
-auto semantic_analyzer::read_type(semantic_type_id type) -> semantic_type_id
+auto semantic_analyzer::read_type(semantic_type_id type) const -> semantic_type_id
 {
     auto current = type;
     while(true) {
@@ -107,6 +522,12 @@ auto semantic_analyzer::can_implicitly_convert(semantic_type_id from, semantic_t
 {
     if(from == to or is_error(from) or is_error(to)) {
         return true;
+    }
+
+    if(auto const* target_pointer = std::get_if<pointer_type>(&result.types.get(to))) {
+        if(std::holds_alternative<function_type>(result.types.get(target_pointer->pointee))) {
+            return from == target_pointer->pointee;
+        }
     }
 
     auto source = read_type(from);
@@ -365,7 +786,27 @@ auto semantic_analyzer::binary_type(token_kind operator_kind, semantic_type_id l
         case greater_equal:
             return expression_info{ .type = semantic_type_ids::bool_ };
         case plus:
+            if(pointer_value_pointee(left_type)) {
+                return expression_info{ .type = left_type };
+            }
+            if(pointer_value_pointee(right_type)) {
+                return expression_info{ .type = right_type };
+            }
+            if(auto common = common_numeric_type(left_type, right_type)) {
+                return expression_info{ .type = *common };
+            }
+            return expression_info{ .type = semantic_type_ids::error };
         case minus:
+            if(pointer_value_pointee(left_type) and pointer_value_pointee(right_type)) {
+                return expression_info{ .type = semantic_type_ids::builtin(builtin_type_kind::isize) };
+            }
+            if(pointer_value_pointee(left_type)) {
+                return expression_info{ .type = left_type };
+            }
+            if(auto common = common_numeric_type(left_type, right_type)) {
+                return expression_info{ .type = *common };
+            }
+            return expression_info{ .type = semantic_type_ids::error };
         case star:
         case slash:
         case percent:
@@ -399,6 +840,15 @@ auto semantic_analyzer::function_style_cast_type(ast_arena const& ast, call_expr
     if(auto builtin = is_builtin_name(text)) {
         return semantic_type_ids::builtin(*builtin);
     }
+    if(auto alias = resolve_type_alias(text)) {
+        return *alias;
+    }
+    if(active_type_aliases and active_type_aliases->contains(std::string{ text })) {
+        return active_type_aliases->find(std::string{ text })->second;
+    }
+    if(auto symbol = resolve_type_symbol(active_unit_index, text)) {
+        return result.symbols[symbol->value].type;
+    }
     return std::nullopt;
 }
 
@@ -416,6 +866,15 @@ auto semantic_analyzer::aggregate_context_for(std::optional<semantic_type_id> ex
         };
     }
     return std::nullopt;
+}
+
+auto semantic_analyzer::struct_context_for(std::optional<semantic_type_id> expected)
+    -> std::optional<std::uint32_t>
+{
+    if(not expected) {
+        return std::nullopt;
+    }
+    return struct_index_of(*expected);
 }
 
 auto semantic_analyzer::join_return_types(std::vector<semantic_type_id> const& values) -> semantic_type_id

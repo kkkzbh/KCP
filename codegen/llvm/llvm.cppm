@@ -64,11 +64,82 @@ struct llvm_type_lowerer
                 return llvm::PointerType::get(context, 0);
             },
             [&](function_type const& type) -> llvm::Type* {
-                auto parameters = std::vector<llvm::Type*>{};
-                for(auto parameter : type.parameters) {
-                    parameters.emplace_back(lower(parameter));
+                static_cast<void>(type);
+                return llvm::PointerType::get(context, 0);
+            },
+            [&](generic_parameter_type const&) -> llvm::Type* {
+                return llvm::Type::getVoidTy(context);
+            },
+            [&](struct_type const& type) -> llvm::Type* {
+                auto elements = std::vector<llvm::Type*>{};
+                for(auto const& field : module.structs[type.index].fields) {
+                    elements.emplace_back(lower_substituted(field.type, type.arguments));
                 }
-                return llvm::FunctionType::get(lower(type.returns), parameters, false);
+                return llvm::StructType::get(context, elements);
+            },
+            [&](variant_type const& type) -> llvm::Type* {
+                auto elements = std::vector<llvm::Type*>{ llvm::Type::getInt32Ty(context) };
+                auto const& variant = module.variants[type.index];
+                for(auto const& variant_case : variant.cases) {
+                    auto payloads = std::vector<llvm::Type*>{};
+                    for(auto payload : variant_case.payload_types) {
+                        payloads.emplace_back(lower_substituted(payload, type.arguments));
+                    }
+                    elements.emplace_back(llvm::StructType::get(context, payloads));
+                }
+                return llvm::StructType::get(context, elements);
+            },
+        }, kind);
+    }
+
+    auto lower_substituted(
+        semantic_type_id id,
+        std::vector<semantic_type_id> const& arguments
+    ) -> llvm::Type*
+    {
+        auto const& kind = module.types.get(id);
+        return std::visit(overloaded {
+            [&](unit_type const&) -> llvm::Type* { return lower(id); },
+            [&](error_type const&) -> llvm::Type* { return lower(id); },
+            [&](inferred_type const&) -> llvm::Type* { return lower(id); },
+            [&](builtin_type const&) -> llvm::Type* { return lower(id); },
+            [&](generic_parameter_type const& parameter) -> llvm::Type* {
+                if(parameter.index < arguments.size()) {
+                    return lower(arguments[parameter.index]);
+                }
+                return llvm::Type::getVoidTy(context);
+            },
+            [&](array_type const& type) -> llvm::Type* {
+                return llvm::ArrayType::get(lower_substituted(type.element, arguments), type.length);
+            },
+            [&](tuple_type const& type) -> llvm::Type* {
+                auto elements = std::vector<llvm::Type*>{};
+                for(auto element : type.elements) {
+                    elements.emplace_back(lower_substituted(element, arguments));
+                }
+                return llvm::StructType::get(context, elements);
+            },
+            [&](reference_type const&) -> llvm::Type* { return lower(id); },
+            [&](pointer_type const&) -> llvm::Type* { return lower(id); },
+            [&](function_type const&) -> llvm::Type* { return lower(id); },
+            [&](struct_type const& type) -> llvm::Type* {
+                auto elements = std::vector<llvm::Type*>{};
+                for(auto const& field : module.structs[type.index].fields) {
+                    elements.emplace_back(lower_substituted(field.type, type.arguments));
+                }
+                return llvm::StructType::get(context, elements);
+            },
+            [&](variant_type const& type) -> llvm::Type* {
+                auto elements = std::vector<llvm::Type*>{ llvm::Type::getInt32Ty(context) };
+                auto const& variant = module.variants[type.index];
+                for(auto const& variant_case : variant.cases) {
+                    auto payloads = std::vector<llvm::Type*>{};
+                    for(auto payload : variant_case.payload_types) {
+                        payloads.emplace_back(lower_substituted(payload, type.arguments));
+                    }
+                    elements.emplace_back(llvm::StructType::get(context, payloads));
+                }
+                return llvm::StructType::get(context, elements);
             },
         }, kind);
     }
@@ -90,6 +161,8 @@ struct llvm_type_lowerer
                 return llvm::Type::getInt32Ty(context);
             case i64:
             case u64:
+            case isize:
+            case usize:
                 return llvm::Type::getInt64Ty(context);
             case f32:
                 return llvm::Type::getFloatTy(context);
@@ -99,6 +172,32 @@ struct llvm_type_lowerer
                 return llvm::PointerType::get(context, 0);
         }
         std::unreachable();
+    }
+
+    auto lower_function_signature(semantic_type_id id) -> llvm::FunctionType*
+    {
+        auto const* callable = callable_type(id);
+        if(callable == nullptr) {
+            return llvm::FunctionType::get(llvm::Type::getVoidTy(context), false);
+        }
+
+        auto parameters = std::vector<llvm::Type*>{};
+        for(auto parameter : callable->parameters) {
+            parameters.emplace_back(lower(parameter));
+        }
+        return llvm::FunctionType::get(lower(callable->returns), parameters, false);
+    }
+
+    auto callable_type(semantic_type_id id) const -> function_type const*
+    {
+        auto const& kind = module.types.get(id);
+        if(auto const* callable = std::get_if<function_type>(&kind)) {
+            return callable;
+        }
+        if(auto const* pointer = std::get_if<pointer_type>(&kind)) {
+            return std::get_if<function_type>(&module.types.get(pointer->pointee));
+        }
+        return nullptr;
     }
 
     llvm::LLVMContext& context;
@@ -202,6 +301,26 @@ struct llvm_module_lowerer
             case store:
                 builder.CreateStore(value(instruction.operands[1]), value(instruction.operands[0]));
                 break;
+            case field_address:
+                bind(
+                    instruction.result,
+                    builder.CreateStructGEP(
+                        types.lower(instruction.aggregate_type),
+                        value(instruction.operands.front()),
+                        static_cast<unsigned>(instruction.indices.front())
+                    )
+                );
+                break;
+            case element_address:
+                bind(
+                    instruction.result,
+                    builder.CreateGEP(
+                        types.lower(instruction.aggregate_type),
+                        value(instruction.operands[0]),
+                        { builder.getInt32(0), value(instruction.operands[1]) }
+                    )
+                );
+                break;
             case unary:
                 bind(instruction.result, lower_unary(instruction));
                 break;
@@ -229,6 +348,12 @@ struct llvm_module_lowerer
                     instruction.result,
                     builder.CreateExtractValue(value(instruction.operands.front()), llvm_indices(instruction.indices))
                 );
+                break;
+            case alloc_raw:
+                bind(instruction.result, lower_alloc_raw(instruction));
+                break;
+            case free_raw:
+                builder.CreateCall(cp_free_function(), { value(instruction.operands.front()) });
                 break;
             case call:
                 bind_call(instruction);
@@ -265,7 +390,11 @@ struct llvm_module_lowerer
         return std::visit (
             overloaded {
                 [&](std::monostate) -> llvm::Value* {
-                    return llvm::Constant::getNullValue(types.lower(type));
+                    auto lowered = types.lower(type);
+                    if(lowered->isVoidTy()) {
+                        return nullptr;
+                    }
+                    return llvm::Constant::getNullValue(lowered);
                 },
                 [&](bool value) -> llvm::Value* {
                     return llvm::ConstantInt::get(types.lower(type), value ? 1 : 0);
@@ -317,6 +446,18 @@ struct llvm_module_lowerer
         auto left = value(instruction.operands[0]);
         auto right = value(instruction.operands[1]);
         using enum token_kind;
+        if(instruction.aggregate_type.valid() and instruction.type.valid()) {
+            if(
+                instruction.operator_kind == minus
+                and instruction.type == semantic_type_ids::builtin(builtin_type_kind::isize)
+            ) {
+                return builder.CreatePtrDiff(types.lower(instruction.aggregate_type), left, right);
+            }
+            if(instruction.operator_kind == minus) {
+                right = builder.CreateNeg(right);
+            }
+            return builder.CreateGEP(types.lower(instruction.aggregate_type), left, right);
+        }
         switch(instruction.operator_kind) {
             case plus:
                 return left->getType()->isFloatingPointTy()
@@ -368,13 +509,206 @@ struct llvm_module_lowerer
     auto bind_call(ir_instruction const& instruction) -> void
     {
         auto arguments = std::vector<llvm::Value*>{};
-        for(auto operand : instruction.operands) {
-            arguments.emplace_back(value(operand));
+        llvm::Value* callee{};
+        llvm::FunctionType* signature{};
+        if(instruction.symbol.valid()) {
+            callee = functions[instruction.symbol];
+            signature = functions[instruction.symbol]->getFunctionType();
+            for(auto operand : instruction.operands) {
+                arguments.emplace_back(value(operand));
+            }
+        } else {
+            callee = value(instruction.operands.front());
+            signature = types.lower_function_signature(instruction.aggregate_type);
+            for(auto operand : instruction.operands | std::views::drop(1uz)) {
+                arguments.emplace_back(value(operand));
+            }
         }
-        auto call = builder.CreateCall(functions[instruction.symbol], arguments);
+        auto call = builder.CreateCall(signature, callee, arguments);
         if(instruction.result.valid() and not call->getType()->isVoidTy()) {
             bind(instruction.result, call);
         }
+    }
+
+    auto lower_alloc_raw(ir_instruction const& instruction) -> llvm::Value*
+    {
+        auto count = cast_value(value(instruction.operands.front()), semantic_type_ids::builtin(builtin_type_kind::u64));
+        auto elem_size = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), type_size(instruction.aggregate_type));
+        auto align = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 8);
+        return builder.CreateCall(cp_alloc_function(), { elem_size, align, count });
+    }
+
+    auto cp_alloc_function() -> llvm::Function*
+    {
+        if(auto function = llvm_module.getFunction("cp_alloc")) {
+            return function;
+        }
+
+        auto i64 = llvm::Type::getInt64Ty(context);
+        auto pointer = llvm::PointerType::get(context, 0);
+        auto function_type = llvm::FunctionType::get(pointer, { i64, i64, i64 }, false);
+        auto function = llvm::Function::Create(
+            function_type,
+            llvm::Function::InternalLinkage,
+            "cp_alloc",
+            llvm_module
+        );
+        auto argument = function->arg_begin();
+        auto elem_size = &*argument++;
+        elem_size->setName("elem_size");
+        auto align = &*argument++;
+        align->setName("align");
+        auto count = &*argument;
+        count->setName("count");
+        static_cast<void>(align);
+
+        auto guard = llvm::IRBuilderBase::InsertPointGuard{ builder };
+        auto block = llvm::BasicBlock::Create(context, "entry", function);
+        builder.SetInsertPoint(block);
+        auto bytes = builder.CreateMul(elem_size, count);
+        auto allocation = builder.CreateCall(malloc_function(), { bytes });
+        builder.CreateRet(allocation);
+        return function;
+    }
+
+    auto cp_free_function() -> llvm::Function*
+    {
+        if(auto function = llvm_module.getFunction("cp_free")) {
+            return function;
+        }
+
+        auto pointer = llvm::PointerType::get(context, 0);
+        auto function_type = llvm::FunctionType::get(llvm::Type::getVoidTy(context), { pointer }, false);
+        auto function = llvm::Function::Create(
+            function_type,
+            llvm::Function::InternalLinkage,
+            "cp_free",
+            llvm_module
+        );
+        auto argument = function->arg_begin();
+        argument->setName("ptr");
+
+        auto guard = llvm::IRBuilderBase::InsertPointGuard{ builder };
+        auto block = llvm::BasicBlock::Create(context, "entry", function);
+        builder.SetInsertPoint(block);
+        builder.CreateCall(free_function(), { &*argument });
+        builder.CreateRetVoid();
+        return function;
+    }
+
+    auto malloc_function() -> llvm::Function*
+    {
+        if(auto function = llvm_module.getFunction("malloc")) {
+            return function;
+        }
+        auto i64 = llvm::Type::getInt64Ty(context);
+        auto pointer = llvm::PointerType::get(context, 0);
+        auto function_type = llvm::FunctionType::get(pointer, { i64 }, false);
+        return llvm::Function::Create(
+            function_type,
+            llvm::Function::ExternalLinkage,
+            "malloc",
+            llvm_module
+        );
+    }
+
+    auto free_function() -> llvm::Function*
+    {
+        if(auto function = llvm_module.getFunction("free")) {
+            return function;
+        }
+        auto pointer = llvm::PointerType::get(context, 0);
+        auto function_type = llvm::FunctionType::get(llvm::Type::getVoidTy(context), { pointer }, false);
+        return llvm::Function::Create(
+            function_type,
+            llvm::Function::ExternalLinkage,
+            "free",
+            llvm_module
+        );
+    }
+
+    auto type_size(semantic_type_id id) -> std::uint64_t
+    {
+        auto const& kind = ir.types.get(id);
+        return std::visit (
+            overloaded {
+                [](unit_type const&) -> std::uint64_t { return 0; },
+                [](error_type const&) -> std::uint64_t { return 0; },
+                [](inferred_type const&) -> std::uint64_t { return 0; },
+                [&](builtin_type const& type) { return builtin_size(type.kind); },
+                [&](array_type const& type) { return type_size(type.element) * type.length; },
+                [&](tuple_type const& type) -> std::uint64_t {
+                    auto total = std::uint64_t{};
+                    for(auto element : type.elements) {
+                        total += type_size(element);
+                    }
+                    return total;
+                },
+                [](reference_type const&) -> std::uint64_t { return 8; },
+                [](pointer_type const&) -> std::uint64_t { return 8; },
+                [](function_type const&) -> std::uint64_t { return 8; },
+                [](generic_parameter_type const&) -> std::uint64_t { return 0; },
+                [&](struct_type const& type) -> std::uint64_t {
+                    auto total = std::uint64_t{};
+                    for(auto const& field : ir.structs[type.index].fields) {
+                        total += type_size_substituted(field.type, type.arguments);
+                    }
+                    return total;
+                },
+                [&](variant_type const& type) -> std::uint64_t {
+                    auto total = std::uint64_t{4};
+                    for(auto const& variant_case : ir.variants[type.index].cases) {
+                        for(auto payload : variant_case.payload_types) {
+                            total += type_size_substituted(payload, type.arguments);
+                        }
+                    }
+                    return total;
+                },
+            },
+            kind
+        );
+    }
+
+    auto type_size_substituted(
+        semantic_type_id id,
+        std::vector<semantic_type_id> const& arguments
+    ) -> std::uint64_t
+    {
+        auto const& kind = ir.types.get(id);
+        if(auto const* parameter = std::get_if<generic_parameter_type>(&kind)) {
+            if(parameter->index < arguments.size()) {
+                return type_size(arguments[parameter->index]);
+            }
+            return 0;
+        }
+        return type_size(id);
+    }
+
+    auto builtin_size(builtin_type_kind kind) -> std::uint64_t
+    {
+        using enum builtin_type_kind;
+        switch(kind) {
+            case bool_:
+            case i8:
+            case u8:
+            case char_:
+                return 1uz;
+            case i16:
+            case u16:
+                return 2uz;
+            case i32:
+            case u32:
+            case f32:
+                return 4uz;
+            case i64:
+            case u64:
+            case isize:
+            case usize:
+            case f64:
+            case str:
+                return 8uz;
+        }
+        std::unreachable();
     }
 
     auto llvm_indices(std::vector<std::uint64_t> const& values) -> std::vector<unsigned>
@@ -457,6 +791,9 @@ struct llvm_module_lowerer
 
     auto bind(ir_value_id id, llvm::Value* value) -> void
     {
+        if(value == nullptr) {
+            return;
+        }
         values.emplace(id, value);
     }
 

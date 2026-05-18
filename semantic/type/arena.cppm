@@ -76,6 +76,8 @@ private:
             semantic_type_kind{ builtin_type{ builtin_type_kind::u16 } },
             semantic_type_kind{ builtin_type{ builtin_type_kind::u32 } },
             semantic_type_kind{ builtin_type{ builtin_type_kind::u64 } },
+            semantic_type_kind{ builtin_type{ builtin_type_kind::isize } },
+            semantic_type_kind{ builtin_type{ builtin_type_kind::usize } },
             semantic_type_kind{ builtin_type{ builtin_type_kind::f32 } },
             semantic_type_kind{ builtin_type{ builtin_type_kind::f64 } },
             semantic_type_kind{ builtin_type{ builtin_type_kind::char_ } },

@@ -59,6 +59,21 @@ export enum class diagnostic_kind : std::uint16_t
     invalid_cast,
     return_type_mismatch,
     cannot_infer_return_type,
+    duplicate_field,
+    unknown_field,
+    duplicate_field_initializer,
+    default_initialization_failure,
+    unknown_member,
+    invalid_self_parameter,
+    invalid_constructor,
+    invalid_destructor,
+    ambiguous_constructor,
+    unknown_concept,
+    duplicate_concept_impl,
+    missing_concept_item,
+    unknown_variant_case,
+    duplicate_variant_case,
+    non_exhaustive_match,
 };
 
 
@@ -187,6 +202,36 @@ export auto spec(diagnostic_kind kind) -> diagnostic_spec
             return { semantic, error, "return_type_mismatch"sv, "return type mismatch"sv };
         case cannot_infer_return_type:
             return { semantic, error, "cannot_infer_return_type"sv, "cannot infer return type"sv };
+        case duplicate_field:
+            return { semantic, error, "duplicate_field"sv, "duplicate field"sv };
+        case unknown_field:
+            return { semantic, error, "unknown_field"sv, "unknown field"sv };
+        case duplicate_field_initializer:
+            return { semantic, error, "duplicate_field_initializer"sv, "duplicate field initializer"sv };
+        case default_initialization_failure:
+            return { semantic, error, "default_initialization_failure"sv, "default initialization failure"sv };
+        case unknown_member:
+            return { semantic, error, "unknown_member"sv, "unknown member"sv };
+        case invalid_self_parameter:
+            return { semantic, error, "invalid_self_parameter"sv, "invalid self parameter"sv };
+        case invalid_constructor:
+            return { semantic, error, "invalid_constructor"sv, "invalid constructor"sv };
+        case invalid_destructor:
+            return { semantic, error, "invalid_destructor"sv, "invalid destructor"sv };
+        case ambiguous_constructor:
+            return { semantic, error, "ambiguous_constructor"sv, "ambiguous constructor"sv };
+        case unknown_concept:
+            return { semantic, error, "unknown_concept"sv, "unknown concept"sv };
+        case duplicate_concept_impl:
+            return { semantic, error, "duplicate_concept_impl"sv, "duplicate concept implementation"sv };
+        case missing_concept_item:
+            return { semantic, error, "missing_concept_item"sv, "missing concept item"sv };
+        case unknown_variant_case:
+            return { semantic, error, "unknown_variant_case"sv, "unknown variant case"sv };
+        case duplicate_variant_case:
+            return { semantic, error, "duplicate_variant_case"sv, "duplicate variant case"sv };
+        case non_exhaustive_match:
+            return { semantic, error, "non_exhaustive_match"sv, "non-exhaustive match"sv };
     }
 
     std::unreachable();

@@ -9,7 +9,7 @@ struct test_tools
     std::filesystem::path cp{};
     std::filesystem::path clang{};
     std::filesystem::path llvm_as{};
-    std::filesystem::path examples{};
+    std::filesystem::path fixture_examples{};
 };
 
 auto shell_quote(std::string_view value) -> std::string
@@ -222,6 +222,53 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 7, "range-for sum should return 7");
 }
 
+auto check_array_index_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("array-index");
+    auto source = dir / "array_index.cp";
+    auto app = dir / "array_index";
+    write_source(
+        source,
+        R"(pick(values: array<i32,3> const&, index: i32) -> i32
+{
+    return values[index];
+}
+
+main() -> i32
+{
+    let data = [4, 5, 6];
+    let index = 1;
+    data[index] = 8;
+    let rows = [[1, 2, 3], [4, 5, 6]];
+    return data[index] + rows[index][2] + [7, 8, 9][0] + pick(data, index);
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile array index reads and writes");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 29, "array index binary should return indexed values");
+}
+
+auto check_tuple_index_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("tuple-index");
+    auto source = dir / "tuple_index.cp";
+    auto app = dir / "tuple_index";
+    write_source(
+        source,
+        R"(main() -> i32
+{
+    let pair = (10, 20);
+    pair[0] = 22;
+    return pair[0] + pair[1];
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile tuple index reads and writes");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "tuple index binary should return indexed values");
+}
+
 auto check_accumulate_and_countdown(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("while-do");
@@ -299,48 +346,62 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "labeled range-for should return 42");
 }
 
-auto check_types_demo_emit_ll(test_tools const& tools) -> void
+auto check_types_example_emit_ll(test_tools const& tools) -> void
 {
-    auto dir = unique_temp_dir("types-demo");
+    auto dir = unique_temp_dir("types-example");
     auto output = dir / "types.ll";
     auto bitcode = dir / "types.bc";
-    auto source = tools.examples / "types_demo.cp";
+    auto source = tools.fixture_examples / "types" / "main.cp";
 
     auto status = compile(tools, { source.string(), "--emit", "ll", "-o", output.string() });
-    test_parser::assert_true(status == 0, "cp should emit LLVM IR for types_demo.cp");
+    test_parser::assert_true(status == 0, "cp should emit LLVM IR for types example");
     test_parser::assert_true(
         run_status({ tools.llvm_as.string(), output.string(), "-o", bitcode.string() }) == 0,
-        "llvm-as should accept types_demo LLVM IR"
+        "llvm-as should accept types example LLVM IR"
     );
 }
 
-auto check_design_examples(test_tools const& tools) -> void
+auto check_fixture_examples(test_tools const& tools) -> void
 {
-    auto dir = unique_temp_dir("design-examples");
-    auto output = dir / "examples.ll";
-    auto bitcode = dir / "examples.bc";
-    auto app = dir / "examples";
-    auto math = tools.examples / "math.cp";
-    auto flow = tools.examples / "flow_demo.cp";
-    auto types = tools.examples / "types_demo.cp";
-    auto main = tools.examples / "main.cp";
+	    auto groups = std::vector<std::pair<std::string, std::vector<std::filesystem::path>>> {
+	        { "basics", { tools.fixture_examples / "basics" / "main.cp" } },
+	        { "modules", { tools.fixture_examples / "modules" / "main.cp" } },
+	        { "types", { tools.fixture_examples / "types" / "main.cp" } },
+	        { "flow", { tools.fixture_examples / "flow" / "main.cp" } },
+	        { "structs", { tools.fixture_examples / "structs" / "main.cp" } },
+	        { "concepts", { tools.fixture_examples / "concepts" / "main.cp" } },
+	    };
 
-    auto ll_status = compile(
-        tools,
-        { math.string(), flow.string(), types.string(), main.string(), "--emit", "ll", "-o", output.string() }
-    );
-    test_parser::assert_true(ll_status == 0, "cp should emit LLVM IR for all design examples");
-    test_parser::assert_true(
-        run_status({ tools.llvm_as.string(), output.string(), "-o", bitcode.string() }) == 0,
-        "llvm-as should accept design examples LLVM IR"
-    );
+    for(auto const& [name, sources] : groups) {
+        auto dir = unique_temp_dir("fixture-" + name);
+        auto output = dir / "example.ll";
+        auto bitcode = dir / "example.bc";
+        auto app = dir / "example";
+        auto ll_args = (
+            sources
+            | std::views::transform([](std::filesystem::path const& path) { return path.string(); })
+            | std::ranges::to<std::vector<std::string>>()
+        );
+        ll_args.insert(ll_args.end(), { "--emit", "ll", "-o", output.string() });
 
-    auto bin_status = compile(
-        tools,
-        { math.string(), flow.string(), types.string(), main.string(), "-o", app.string() }
-    );
-    test_parser::assert_true(bin_status == 0, "cp should emit binary for all design examples");
-    test_parser::assert_true(std::filesystem::exists(app), "design examples binary should exist");
+        auto ll_status = compile(tools, ll_args);
+        test_parser::assert_true(ll_status == 0, std::format("cp should emit LLVM IR for {} example", name));
+        test_parser::assert_true(
+            run_status({ tools.llvm_as.string(), output.string(), "-o", bitcode.string() }) == 0,
+            std::format("llvm-as should accept {} example LLVM IR", name)
+        );
+
+        auto bin_args = (
+            sources
+            | std::views::transform([](std::filesystem::path const& path) { return path.string(); })
+            | std::ranges::to<std::vector<std::string>>()
+        );
+        bin_args.insert(bin_args.end(), { "-o", app.string() });
+
+        auto bin_status = compile(tools, bin_args);
+        test_parser::assert_true(bin_status == 0, std::format("cp should emit binary for {} example", name));
+        test_parser::assert_true(std::filesystem::exists(app), std::format("{} example binary should exist", name));
+    }
 }
 
 auto check_const_double_pointer_reference_alias(test_tools const& tools) -> void
@@ -479,16 +540,280 @@ main() -> i32
     test_parser::assert_true(status == 0, "cp should compile reference parameters");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 13, "reference parameter should alias caller slot");
 }
+
+auto check_destructor_cleanup_paths(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("destructor-paths");
+    auto source = dir / "destructor_paths.cp";
+    auto app = dir / "destructor_paths";
+    write_source(
+        source,
+        R"(struct ordered_guard {
+    counter: i32*;
+    id: i32;
+}
+
+impl ordered_guard {
+    ~ordered_guard()
+    {
+        *counter = *counter * 10 + id;
+    }
+}
+
+struct count_guard {
+    counter: i32*;
+}
+
+impl count_guard {
+    ~count_guard()
+    {
+        *counter += 1;
+    }
+}
+
+reverse_order() -> i32
+{
+    let count = 0;
+    {
+        let first = ordered_guard{ .counter = &count, .id = 1 };
+        let second = ordered_guard{ .counter = &count, .id = 2 };
+    }
+    return count;
+}
+
+break_count() -> i32
+{
+    let count = 0;
+    for(let value : [0, 1, 2]) {
+        let item = count_guard{ .counter = &count };
+        if(value == 1) {
+            break;
+        }
+    }
+    return count;
+}
+
+continue_count() -> i32
+{
+    let count = 0;
+    for(let value : [0, 1, 2]) {
+        let item = count_guard{ .counter = &count };
+        if(value < 2) {
+            continue;
+        }
+    }
+    return count;
+}
+
+main() -> i32
+{
+    return reverse_order() + break_count() * 10 + continue_count();
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile destructor cleanup paths");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 44, "destructors should run on block, break, and continue paths");
+}
+
+auto check_return_destructor_ir(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("return-destructor");
+    auto source = dir / "return_destructor.cp";
+    auto output = dir / "return_destructor.ll";
+    write_source(
+        source,
+        R"(struct guard {
+    counter: i32*;
+}
+
+impl guard {
+    ~guard()
+    {
+        *counter += 1;
+    }
+}
+
+main() -> i32
+{
+    let count = 0;
+    {
+        let item = guard{ .counter = &count };
+        return count;
+    }
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "--emit", "ll", "-o", output.string() });
+    test_parser::assert_true(status == 0, "cp should emit LLVM IR for return cleanup");
+    auto text = read_text(output);
+    auto call = text.find("call void @cp.local.guard.guard.");
+    auto ret = call == std::string::npos ? std::string::npos : text.find("ret i32", call);
+    test_parser::assert_true(call != std::string::npos, "return path should call the destructor");
+    test_parser::assert_true(ret != std::string::npos and call < ret, "return path destructor call should precede ret");
+}
+
+auto check_function_pointer_memory_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("function-pointer-memory");
+    auto source = dir / "function_pointer_memory.cp";
+    auto app = dir / "function_pointer_memory";
+    write_source(
+        source,
+        R"(add(x: i32, y: i32) -> i32
+{
+    return x + y;
+}
+
+main() -> i32
+{
+    let callback: f(i32, i32) -> i32 = add;
+    let raw: f*(i32, i32) -> i32 = add;
+    let pointer = alloc<i32>(2);
+    construct_at(pointer, callback(20, 1));
+    construct_at(pointer + 1, raw(20, 1));
+    let result = *pointer + *(pointer + 1);
+    destroy_at(pointer + 1);
+    destroy_at(pointer);
+    free(pointer);
+    return result;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile function pointer memory binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "function pointer memory binary should return 42");
+}
+
+auto check_pointer_difference_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("pointer-difference");
+    auto source = dir / "pointer_difference.cp";
+    auto app = dir / "pointer_difference";
+    write_source(
+        source,
+        R"(main() -> i32
+{
+    let values = [10, 20, 30];
+    let first = &values[0];
+    let third = &values[2];
+    let distance: isize = third - first;
+    return i32(distance) + 40;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile pointer difference binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "pointer difference should count elements");
+}
+
+auto check_decltype_ref_destructure_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("decltype-ref-destructure");
+    auto source = dir / "decltype_ref_destructure.cp";
+    auto app = dir / "decltype_ref_destructure";
+    write_source(
+        source,
+        R"(main() -> i32
+{
+    let pair = (10, 20);
+    let ref
+        (left, right) = pair;
+    left = 21;
+    type item = decltype(right);
+    let value: item = right;
+    let (copy_left, copy_right) = pair;
+    return copy_left + copy_right + value - 19;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile decltype/ref/destructure binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "decltype/ref/destructure binary should return 42");
+}
+
+auto check_lambda_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("lambda");
+    auto source = dir / "lambda.cp";
+    auto app = dir / "lambda";
+    write_source(
+        source,
+        R"(main() -> i32
+{
+    let inc: f(i32) -> i32 =
+        fn(x) => x + 1;
+    let square = fn(x: i32) -> i32 {
+        x * x
+    };
+    let bias = 1;
+    let add_bias = fn(x: i32) -> i32 {
+        x + bias
+    };
+    return inc(20) + square(4) + add_bias(1) + 3;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile lambda binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "lambda binary should return 42");
+}
+
+auto check_generic_struct_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("generic-struct");
+    auto source = dir / "generic_struct.cp";
+    auto app = dir / "generic_struct";
+    write_source(
+        source,
+        R"(struct vector<T> {
+    item: T;
+    size: usize;
+}
+
+main() -> i32
+{
+    let values: vector<i32> = vector<i32>{ .item = 40, .size = 2 };
+    return values.item + i32(values.size);
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile generic struct binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "generic struct binary should return 42");
+}
+
+auto check_string_index_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("string-index");
+    auto source = dir / "string_index.cp";
+    auto app = dir / "string_index";
+    write_source(
+        source,
+R"(main() -> i32
+{
+    let title: str = "cp";
+    if(title[0] == 'c') {
+        return 42;
+    }
+    return 1;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile string index binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "string index binary should read first char");
+}
 } // namespace
 
 auto main(int argc, char** argv) -> int
 {
-    test_parser::assert_true(argc == 5, "compiler behavior test expects cp, clang, llvm-as, and examples paths");
+    test_parser::assert_true(argc == 5, "compiler behavior test expects cp, clang, llvm-as, and fixture examples paths");
     auto tools = test_tools {
         .cp = argv[1],
         .clang = argv[2],
         .llvm_as = argv[3],
-        .examples = argv[4],
+        .fixture_examples = argv[4],
     };
 
     check_binary_exit(tools);
@@ -499,14 +824,24 @@ auto main(int argc, char** argv) -> int
     check_keep_ll(tools);
     check_keep_obj(tools);
     check_sum_non_negative(tools);
+    check_array_index_binary(tools);
+    check_tuple_index_binary(tools);
     check_accumulate_and_countdown(tools);
     check_labeled_for_binary(tools);
-    check_types_demo_emit_ll(tools);
-    check_design_examples(tools);
+    check_types_example_emit_ll(tools);
+    check_fixture_examples(tools);
     check_const_double_pointer_reference_alias(tools);
     check_mutable_double_pointer_reference_write(tools);
     check_i64_triple_pointer_read_write(tools);
     check_i64_pointer_reference_slot_alias(tools);
     check_reference_parameter_alias(tools);
+    check_destructor_cleanup_paths(tools);
+    check_return_destructor_ir(tools);
+    check_function_pointer_memory_binary(tools);
+    check_pointer_difference_binary(tools);
+    check_decltype_ref_destructure_binary(tools);
+    check_lambda_binary(tools);
+    check_generic_struct_binary(tools);
+    check_string_index_binary(tools);
     return 0;
 }

@@ -301,7 +301,18 @@ auto collect_type_highlights(highlight_collector& collector, ast_arena const& as
             },
         }, argument);
     }
+    for(auto associated : type.associated_names) {
+        collector.add("type", associated);
+    }
 }
+
+auto collect_statement_highlights(
+    highlight_collector& collector,
+    ast_arena const& ast,
+    semantic_result const* checked,
+    std::size_t unit_index,
+    stmt_id id
+) -> void;
 
 auto collect_expression_highlights(
     highlight_collector& collector,
@@ -326,6 +337,12 @@ auto collect_expression_highlights(
                     switch(checked->symbols[symbol.value].kind) {
                         case symbol_kind::function:
                             collector.add("function.reference", node.name);
+                            return;
+                        case symbol_kind::type:
+                            collector.add("type", node.name);
+                            return;
+                        case symbol_kind::concept_:
+                            collector.add("type", node.name);
                             return;
                         case symbol_kind::parameter:
                             collector.add("parameter.reference", node.name);
@@ -359,6 +376,18 @@ auto collect_expression_highlights(
                 collect_expression_highlights(collector, ast, checked, unit_index, argument);
             }
         },
+        [&](member_expr_syntax const& node) {
+            collect_expression_highlights(collector, ast, checked, unit_index, node.object);
+            collector.add(call_callee ? "function.call" : "field.reference", node.name);
+        },
+        [&](index_expr_syntax const& node) {
+            collect_expression_highlights(collector, ast, checked, unit_index, node.object);
+            collect_expression_highlights(collector, ast, checked, unit_index, node.index);
+        },
+        [&](associated_name_expr_syntax const& node) {
+            collect_type_highlights(collector, ast, node.type);
+            collector.add(call_callee ? "function.call" : "function.reference", node.name);
+        },
         [&](cast_expr_syntax const& node) {
             collect_expression_highlights(collector, ast, checked, unit_index, node.operand);
             collect_type_highlights(collector, ast, node.type);
@@ -376,7 +405,89 @@ auto collect_expression_highlights(
         [&](grouped_expr_syntax const& node) {
             collect_expression_highlights(collector, ast, checked, unit_index, node.expression);
         },
+        [&](struct_init_expr_syntax const& node) {
+            collect_type_highlights(collector, ast, node.type);
+            for(auto const& initializer : node.initializers) {
+                if(auto const* named = std::get_if<named_field_initializer_syntax>(&initializer)) {
+                    collector.add("field.reference", named->name);
+                    collect_expression_highlights(collector, ast, checked, unit_index, named->value);
+                } else {
+                    collect_expression_highlights(
+                        collector,
+                        ast,
+                        checked,
+                        unit_index,
+                        std::get<positional_initializer_syntax>(initializer).value
+                    );
+                }
+            }
+        },
+        [&](block_expr_syntax const& node) {
+            for(auto statement : node.statements) {
+                collect_statement_highlights(collector, ast, checked, unit_index, statement);
+            }
+            if(node.tail) {
+                collect_expression_highlights(collector, ast, checked, unit_index, *node.tail);
+            }
+        },
+        [&](match_expr_syntax const& node) {
+            collect_expression_highlights(collector, ast, checked, unit_index, node.value);
+            for(auto const& arm : node.arms) {
+                std::visit(overloaded {
+                    [&](match_case_pattern_syntax const& pattern) {
+                        collector.add("variant.case", pattern.name);
+                        for(auto binding : pattern.bindings) {
+                            collector.add("local.declaration", binding);
+                        }
+                    },
+                    [&](match_wildcard_pattern_syntax const& pattern) {
+                        collector.add("local.declaration", pattern.full_span);
+                    },
+                }, arm.pattern);
+                collect_expression_highlights(collector, ast, checked, unit_index, arm.value);
+            }
+        },
+        [&](lambda_expr_syntax const& node) {
+            collector.add("function.reference", node.full_span);
+        },
     }, expression);
+}
+
+auto collect_generic_parameter_highlights(
+    highlight_collector& collector,
+    std::span<generic_parameter_syntax const> parameters
+) -> void
+{
+    for(auto const& parameter : parameters) {
+        collector.add("type.parameter", parameter.name);
+        for(auto concept_name : parameter.concept_bounds) {
+            collector.add("type", concept_name);
+        }
+    }
+}
+
+auto collect_function_highlights(
+    highlight_collector& collector,
+    ast_arena const& ast,
+    semantic_result const* checked,
+    std::size_t unit_index,
+    function_syntax const& function
+) -> void
+{
+    collector.add("function.declaration", function.name);
+    collect_generic_parameter_highlights(collector, function.generic_parameters);
+    for(auto const& parameter : function.parameters) {
+        collector.add("parameter.declaration", parameter.name);
+        if(parameter.type) {
+            collect_type_highlights(collector, ast, *parameter.type);
+        }
+    }
+    if(function.return_type) {
+        collect_type_highlights(collector, ast, *function.return_type);
+    }
+    if(not function.defaulted) {
+        collect_statement_highlights(collector, ast, checked, unit_index, function.body);
+    }
 }
 
 auto collect_statement_highlights(
@@ -400,6 +511,10 @@ auto collect_statement_highlights(
                 collect_type_highlights(collector, ast, *node.declared_type);
             }
             collect_expression_highlights(collector, ast, checked, unit_index, node.initializer);
+        },
+        [&](type_alias_statement_syntax const& node) {
+            collector.add("type.declaration", node.name);
+            collect_type_highlights(collector, ast, node.type);
         },
         [&](if_statement_syntax const& node) {
             collect_expression_highlights(collector, ast, checked, unit_index, node.condition);
@@ -475,17 +590,104 @@ auto collect_ast_highlights(
         collect_module_name_highlights(collector, import.name, "import.name");
     }
 
+    for(auto id : root.structs) {
+        auto const& value = parsed.ast.node(id);
+        collector.add("type", value.name);
+        collect_generic_parameter_highlights(collector, value.generic_parameters);
+        for(auto const& field : value.fields) {
+            collector.add("field.declaration", field.name);
+            collect_type_highlights(collector, parsed.ast, field.type);
+        }
+    }
+    for(auto id : root.variants) {
+        auto const& value = parsed.ast.node(id);
+        collector.add("type", value.name);
+        collect_generic_parameter_highlights(collector, value.generic_parameters);
+        for(auto const& variant_case : value.cases) {
+            collector.add("variant.case", variant_case.name);
+            for(auto payload : variant_case.payloads) {
+                collect_type_highlights(collector, parsed.ast, payload);
+            }
+        }
+    }
+    for(auto id : root.concepts) {
+        auto const& value = parsed.ast.node(id);
+        collector.add("type", value.name);
+        for(auto const& item : value.items) {
+            std::visit(overloaded {
+                [&](concept_requires_syntax const& requirement) {
+                    for(auto const& constraint : requirement.constraints) {
+                        std::visit(overloaded {
+                            [&](concept_parent_constraint_syntax const& parent) {
+                                collector.add("type", parent.name);
+                            },
+                            [&](concept_type_bound_constraint_syntax const& bound) {
+                                collect_type_highlights(collector, parsed.ast, bound.type);
+                                for(auto concept_name : bound.concept_bounds) {
+                                    collector.add("type", concept_name);
+                                }
+                            },
+                            [&](concept_type_equality_constraint_syntax const& equality) {
+                                collect_type_highlights(collector, parsed.ast, equality.left);
+                                collect_type_highlights(collector, parsed.ast, equality.right);
+                            },
+                        }, constraint);
+                    }
+                },
+                [&](type_alias_syntax const& alias) {
+                    collector.add("type.declaration", alias.name);
+                    if(alias.value) {
+                        collect_type_highlights(collector, parsed.ast, *alias.value);
+                    }
+                },
+                [&](concept_function_requirement_syntax const& function) {
+                    collector.add("function.declaration", function.name);
+                    for(auto const& parameter : function.parameters) {
+                        collector.add("parameter.declaration", parameter.name);
+                        if(parameter.type) {
+                            collect_type_highlights(collector, parsed.ast, *parameter.type);
+                        }
+                    }
+                    if(function.return_type) {
+                        collect_type_highlights(collector, parsed.ast, *function.return_type);
+                    }
+                },
+            }, item);
+        }
+    }
+    for(auto id : root.impls) {
+        auto const& value = parsed.ast.node(id);
+        collect_type_highlights(collector, parsed.ast, value.type);
+        for(auto const& alias : value.type_aliases) {
+            collector.add("type.declaration", alias.name);
+            if(alias.value) {
+                collect_type_highlights(collector, parsed.ast, *alias.value);
+            }
+        }
+        for(auto function_id : value.functions) {
+            auto const& function = parsed.ast.node(function_id);
+            collect_function_highlights(collector, parsed.ast, checked, unit_index, function);
+        }
+    }
+    for(auto id : root.concept_impls) {
+        auto const& value = parsed.ast.node(id);
+        collector.add("type", value.concept_name);
+        collect_type_highlights(collector, parsed.ast, value.target_type);
+        for(auto const& alias : value.type_aliases) {
+            collector.add("type.declaration", alias.name);
+            if(alias.value) {
+                collect_type_highlights(collector, parsed.ast, *alias.value);
+            }
+        }
+        for(auto function_id : value.functions) {
+            auto const& function = parsed.ast.node(function_id);
+            collect_function_highlights(collector, parsed.ast, checked, unit_index, function);
+        }
+    }
+
     for(auto id : root.functions) {
         auto const& function = parsed.ast.node(id);
-        collector.add("function.declaration", function.name);
-        for(auto const& parameter : function.parameters) {
-            collector.add("parameter.declaration", parameter.name);
-            collect_type_highlights(collector, parsed.ast, parameter.type);
-        }
-        if(function.return_type) {
-            collect_type_highlights(collector, parsed.ast, *function.return_type);
-        }
-        collect_statement_highlights(collector, parsed.ast, checked, unit_index, function.body);
+        collect_function_highlights(collector, parsed.ast, checked, unit_index, function);
     }
 }
 

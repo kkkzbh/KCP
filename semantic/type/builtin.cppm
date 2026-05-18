@@ -13,6 +13,8 @@ export enum class builtin_type_kind : std::uint8_t
     u16,
     u32,
     u64,
+    isize,
+    usize,
     f32,
     f64,
     char_,
@@ -35,6 +37,8 @@ auto constexpr builtin_types = std::array{
     builtin_type_info{ builtin_type_kind::u16, "u16" },
     builtin_type_info{ builtin_type_kind::u32, "u32" },
     builtin_type_info{ builtin_type_kind::u64, "u64" },
+    builtin_type_info{ builtin_type_kind::isize, "isize" },
+    builtin_type_info{ builtin_type_kind::usize, "usize" },
     builtin_type_info{ builtin_type_kind::f32, "f32" },
     builtin_type_info{ builtin_type_kind::f64, "f64" },
     builtin_type_info{ builtin_type_kind::char_, "char" },
@@ -82,7 +86,8 @@ export auto is_integer(builtin_type_kind kind) -> bool
 {
     using enum builtin_type_kind;
     return kind == i8 or kind == i16 or kind == i32 or kind == i64
-           or kind == u8 or kind == u16 or kind == u32 or kind == u64;
+           or kind == u8 or kind == u16 or kind == u32 or kind == u64
+           or kind == isize or kind == usize;
 }
 
 export auto is_float(builtin_type_kind kind) -> bool
@@ -111,6 +116,8 @@ export auto integer_rank(builtin_type_kind kind) -> int
             return 3;
         case i64:
         case u64:
+        case isize:
+        case usize:
             return 4;
         default:
             return 0;

@@ -12,9 +12,9 @@ class CpLexerContractTest {
     fun lexerMatchesHelperOnRepresentativeSamples() {
         val repoRoot = repoRoot()
         val cases = listOf(
-            repoRoot.resolve("design/examples/main.cp"),
-            repoRoot.resolve("design/examples/flow_demo.cp"),
-            repoRoot.resolve("design/examples/types_demo.cp"),
+            repoRoot.resolve("design/examples/basics/main.cp"),
+            repoRoot.resolve("design/examples/flow/main.cp"),
+            repoRoot.resolve("design/examples/types/main.cp"),
             repoRoot.resolve("test/lexer/cases/valid/trivia/block_comment.lex"),
             repoRoot.resolve("test/lexer/cases/valid/trivia/line_comment.lex"),
             repoRoot.resolve("test/lexer/cases/invalid/misc/invalid_character.lex"),

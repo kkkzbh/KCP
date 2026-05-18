@@ -31,5 +31,5 @@ add_dependencies(compiler_behavior_test cp)
 
 add_test(
     NAME compiler_behavior
-    COMMAND compiler_behavior_test $<TARGET_FILE:cp> ${CP_TEST_CLANG} ${CP_TEST_LLVM_AS} ${CMAKE_SOURCE_DIR}/design/examples
+    COMMAND compiler_behavior_test $<TARGET_FILE:cp> ${CP_TEST_CLANG} ${CP_TEST_LLVM_AS} ${CMAKE_SOURCE_DIR}/test/fixtures/examples
 )

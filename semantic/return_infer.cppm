@@ -8,6 +8,9 @@ auto semantic_analyzer::infer_return_types() -> void
         auto const& unit = units[unit_index];
         auto const& syntax = unit.root;
         for(auto function_id : syntax.functions) {
+            if(unit.ast.node(function_id).kind == function_syntax_kind::lambda) {
+                continue;
+            }
             auto signature_id = result.signature_of(unit_index, function_id);
             if(not signature_id.valid()) {
                 continue;
@@ -15,6 +18,32 @@ auto semantic_analyzer::infer_return_types() -> void
             auto const& signature = result.signatures[signature_id.value];
             if(signature.inferred_return) {
                 ensure_function_return_inferred(unit_index, function_id);
+            }
+        }
+        for(auto impl_id : syntax.impls) {
+            auto const& impl = unit.ast.node(impl_id);
+            for(auto function_id : impl.functions) {
+                auto signature_id = result.signature_of(unit_index, function_id);
+                if(not signature_id.valid()) {
+                    continue;
+                }
+                auto const& signature = result.signatures[signature_id.value];
+                if(signature.inferred_return) {
+                    ensure_function_return_inferred(unit_index, function_id);
+                }
+            }
+        }
+        for(auto impl_id : syntax.concept_impls) {
+            auto const& impl = unit.ast.node(impl_id);
+            for(auto function_id : impl.functions) {
+                auto signature_id = result.signature_of(unit_index, function_id);
+                if(not signature_id.valid()) {
+                    continue;
+                }
+                auto const& signature = result.signatures[signature_id.value];
+                if(signature.inferred_return) {
+                    ensure_function_return_inferred(unit_index, function_id);
+                }
             }
         }
     }
@@ -75,13 +104,20 @@ auto semantic_analyzer::infer_function_body_return(std::size_t unit_index, funct
     auto const& unit = units[unit_index];
     auto const& ast = unit.ast;
     auto const& function = ast.node(id);
+    active_unit_index = unit_index;
+    if(function.defaulted) {
+        return semantic_type_ids::unit;
+    }
 
     auto old_unit = return_unit;
     auto old_return_scopes = std::move(return_scopes);
+    auto old_type_scopes = std::move(type_scopes);
     return_unit = unit_index;
+    type_scopes.clear();
 
     auto observed = std::vector<semantic_type_id>{};
     return_scopes.emplace_back();
+    type_scopes.emplace_back();
     auto const& signature = result.signatures[result.signature_of(unit_index, id).value];
     for(auto index = 0uz; index < function.parameters.size(); ++index) {
         auto const& parameter = function.parameters[index];
@@ -95,6 +131,7 @@ auto semantic_analyzer::infer_function_body_return(std::size_t unit_index, funct
     }
 
     infer_statement_returns(ast, function.body, observed);
+    type_scopes = std::move(old_type_scopes);
     return_scopes = std::move(old_return_scopes);
     return_unit = old_unit;
     return join_return_types(observed);
@@ -111,9 +148,11 @@ auto semantic_analyzer::infer_statement_returns(
         overloaded {
             [&](block_statement_syntax const& node) {
                 return_scopes.emplace_back();
+                type_scopes.emplace_back();
                 for(auto child : node.statements) {
                     infer_statement_returns(ast, child, observed);
                 }
+                type_scopes.pop_back();
                 return_scopes.pop_back();
             },
             [&](declaration_statement_syntax const& node) {
@@ -122,13 +161,49 @@ auto semantic_analyzer::infer_statement_returns(
                     declared = lower_type(ast, *node.declared_type);
                 }
                 auto initializer = infer_expression_type(ast, node.initializer, declared);
+                if(not node.binding_names.empty()) {
+                    auto initializer_type = declared.value_or(read_type(initializer.type));
+                    auto const* tuple = std::get_if<tuple_type>(&result.types.get(read_type(initializer_type)));
+                    if(tuple == nullptr) {
+                        return;
+                    }
+                    auto elements = tuple->elements;
+                    auto count = std::min(elements.size(), node.binding_names.size());
+                    for(auto index = 0uz; index < count; ++index) {
+                        auto element = elements[index];
+                        auto binding_type = node.is_ref
+                            ? result.types.intern(reference_type {
+                                element,
+                                node.is_const or target_const(initializer.type, initializer.is_const),
+                            })
+                            : element;
+                        return_scopes.back().emplace (
+                            std::string{ ast_source.slice(node.binding_names[index]) },
+                            return_inference_binding {
+                                .type = binding_type,
+                                .is_const = node.is_const,
+                            }
+                        );
+                    }
+                    return;
+                }
+                auto binding_type = declared.value_or(initializer.type);
+                if(node.is_ref) {
+                    binding_type = result.types.intern(reference_type {
+                        read_type(binding_type),
+                        node.is_const or target_const(initializer.type, initializer.is_const),
+                    });
+                }
                 return_scopes.back().emplace (
                     std::string{ ast_source.slice(node.name) },
                     return_inference_binding {
-                        .type = declared.value_or(initializer.type),
+                        .type = binding_type,
                         .is_const = node.is_const,
                     }
                 );
+            },
+            [&](type_alias_statement_syntax const& node) {
+                bind_type_alias(node.name, lower_type(ast, node.type));
             },
             [&](if_statement_syntax const& node) {
                 infer_expression_type(ast, node.condition, semantic_type_ids::bool_);
@@ -152,6 +227,7 @@ auto semantic_analyzer::infer_statement_returns(
                     element = semantic_type_ids::error;
                 }
                 return_scopes.emplace_back();
+                type_scopes.emplace_back();
                 return_scopes.back().emplace (
                     std::string{ ast_source.slice(node.name) },
                     return_inference_binding {
@@ -160,6 +236,7 @@ auto semantic_analyzer::infer_statement_returns(
                     }
                 );
                 infer_statement_returns(ast, node.body, observed);
+                type_scopes.pop_back();
                 return_scopes.pop_back();
             },
             [&](return_statement_syntax const& node) {
@@ -212,6 +289,15 @@ auto semantic_analyzer::infer_expression_type(
             [&](call_expr_syntax const& node) {
                 return infer_call_expression(ast, node);
             },
+            [&](member_expr_syntax const& node) {
+                return infer_expression_type(ast, node.object, std::nullopt);
+            },
+            [&](index_expr_syntax const& node) {
+                return infer_index_expression(ast, node);
+            },
+            [&](associated_name_expr_syntax const&) {
+                return expression_info{ .type = semantic_type_ids::error };
+            },
             [&](cast_expr_syntax const& node) {
                 infer_expression_type(ast, node.operand, std::nullopt);
                 return expression_info{ .type = lower_type(ast, node.type) };
@@ -225,9 +311,190 @@ auto semantic_analyzer::infer_expression_type(
             [&](grouped_expr_syntax const& node) {
                 return infer_expression_type(ast, node.expression, expected);
             },
+            [&](struct_init_expr_syntax const& node) {
+                for(auto const& initializer : node.initializers) {
+                    if(auto const* named = std::get_if<named_field_initializer_syntax>(&initializer)) {
+                        infer_expression_type(ast, named->value, std::nullopt);
+                    } else {
+                        infer_expression_type(ast, std::get<positional_initializer_syntax>(initializer).value, std::nullopt);
+                    }
+                }
+                return expression_info{ .type = lower_type(ast, node.type) };
+            },
+            [&](block_expr_syntax const& node) {
+                return_scopes.emplace_back();
+                type_scopes.emplace_back();
+                auto observed = std::vector<semantic_type_id>{};
+                for(auto statement : node.statements) {
+                    infer_statement_returns(ast, statement, observed);
+                }
+                auto type = node.tail
+                    ? infer_expression_type(ast, *node.tail, std::nullopt).type
+                    : semantic_type_ids::unit;
+                type_scopes.pop_back();
+                return_scopes.pop_back();
+                return expression_info{ .type = type };
+            },
+            [&](match_expr_syntax const& node) {
+                auto matched = infer_expression_type(ast, node.value, std::nullopt);
+                auto variant_index = variant_index_of(matched.type);
+                auto result_type = std::optional<semantic_type_id>{};
+                for(auto const& arm : node.arms) {
+                    return_scopes.emplace_back();
+                    if(variant_index) {
+                        auto const& variant = result.variants[*variant_index];
+                        if(auto const* pattern = std::get_if<match_case_pattern_syntax>(&arm.pattern)) {
+                            auto name = std::string{ ast_source.identifier(pattern->name) };
+                            if(auto found = variant.case_indices.find(name); found != variant.case_indices.end()) {
+                                auto payloads = variant_case_payload_types(matched.type, variant.cases[found->second]);
+                                auto count = std::min(payloads.size(), pattern->bindings.size());
+                                for(auto index = 0uz; index < count; ++index) {
+                                    return_scopes.back().emplace(
+                                        std::string{ ast_source.identifier(pattern->bindings[index]) },
+                                        return_inference_binding {
+                                            .type = payloads[index],
+                                        }
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    auto branch = infer_expression_type(ast, arm.value, result_type);
+                    if(not result_type) {
+                        result_type = branch.type;
+                    }
+                    return_scopes.pop_back();
+                }
+                return expression_info{ .type = result_type.value_or(semantic_type_ids::unit) };
+            },
+            [&](lambda_expr_syntax const& node) {
+                return infer_lambda_expression(node, expected);
+            },
         },
         expression
     );
+}
+
+auto semantic_analyzer::infer_lambda_expression(
+    lambda_expr_syntax const& node,
+    std::optional<semantic_type_id> expected
+) -> expression_info
+{
+    auto symbol = result.function_symbol_of(return_unit, node.function);
+    if(not symbol.valid()) {
+        return expression_info{ .type = semantic_type_ids::error };
+    }
+    auto old_active_unit = active_unit_index;
+    active_unit_index = return_unit;
+    apply_lambda_parameter_context(node, expected);
+    active_unit_index = old_active_unit;
+    infer_lambda_return_from_current_return_scope(return_unit, node.function);
+    return expression_info{ .type = result.symbols[symbol.value].type };
+}
+
+auto semantic_analyzer::infer_lambda_return_from_current_return_scope(
+    std::size_t unit_index,
+    function_id id
+) -> void
+{
+    infer_lambda_return_with_base_scopes(unit_index, id, return_scopes, type_scopes);
+}
+
+auto semantic_analyzer::infer_lambda_return_from_current_value_scope(
+    std::size_t unit_index,
+    function_id id
+) -> void
+{
+    auto base_scopes = std::vector<std::map<std::string, return_inference_binding>>{};
+    base_scopes.reserve(scopes.size());
+    for(auto const& scope : scopes) {
+        auto converted = std::map<std::string, return_inference_binding>{};
+        for(auto const& [name, symbol] : scope) {
+            if(not symbol.valid()) {
+                continue;
+            }
+            auto const& value = result.symbols[symbol.value];
+            converted.emplace(
+                name,
+                return_inference_binding {
+                    .type = value.type,
+                    .is_const = value.is_const,
+                }
+            );
+        }
+        base_scopes.emplace_back(std::move(converted));
+    }
+
+    infer_lambda_return_with_base_scopes(unit_index, id, std::move(base_scopes), type_scopes);
+}
+
+auto semantic_analyzer::infer_lambda_return_with_base_scopes(
+    std::size_t unit_index,
+    function_id id,
+    std::vector<std::map<std::string, return_inference_binding>> base_scopes,
+    std::vector<std::map<std::string, semantic_type_id>> base_type_scopes
+) -> void
+{
+    auto signature_id = result.signature_of(unit_index, id);
+    if(not signature_id.valid()) {
+        return;
+    }
+    auto& signature = result.signatures[signature_id.value];
+    if(not signature.inferred_return or not is_inferred(signature.returns)) {
+        return;
+    }
+
+    auto key = return_inference_key{ unit_index, id };
+    auto& state = return_states[key];
+    if(state == return_inference_state::resolved or state == return_inference_state::failed) {
+        return;
+    }
+    if(state == return_inference_state::visiting) {
+        return;
+    }
+
+    state = return_inference_state::visiting;
+    auto const& unit = units[unit_index];
+    auto const& ast = unit.ast;
+    auto const& function = ast.node(id);
+
+    auto old_unit = return_unit;
+    auto old_return_scopes = std::move(return_scopes);
+    auto old_type_scopes = std::move(type_scopes);
+    return_unit = unit_index;
+    return_scopes = std::move(base_scopes);
+    type_scopes = std::move(base_type_scopes);
+
+    auto observed = std::vector<semantic_type_id>{};
+    return_scopes.emplace_back();
+    type_scopes.emplace_back();
+    for(auto index = 0uz; index < function.parameters.size(); ++index) {
+        auto const& parameter = function.parameters[index];
+        return_scopes.back().emplace(
+            std::string{ ast_source.slice(parameter.name) },
+            return_inference_binding {
+                .type = signature.parameters[index],
+                .is_const = parameter.is_const,
+            }
+        );
+    }
+
+    infer_statement_returns(ast, function.body, observed);
+    auto inferred = join_return_types(observed);
+    if(is_inferred(inferred)) {
+        report_cannot_infer_return_type(unit_index, id);
+        inferred = semantic_type_ids::error;
+        state = return_inference_state::failed;
+    } else if(is_error(inferred)) {
+        state = return_inference_state::failed;
+    } else {
+        state = return_inference_state::resolved;
+    }
+
+    type_scopes = std::move(old_type_scopes);
+    return_scopes = std::move(old_return_scopes);
+    return_unit = old_unit;
+    update_inferred_function_return(unit_index, id, inferred);
 }
 
 auto semantic_analyzer::infer_name_expression(name_expr_syntax const& node) -> expression_info
@@ -246,13 +513,98 @@ auto semantic_analyzer::infer_name_expression(name_expr_syntax const& node) -> e
     return expression_info{ .type = semantic_type_ids::error };
 }
 
+auto semantic_analyzer::infer_index_expression(ast_arena const& ast, index_expr_syntax const& node) -> expression_info
+{
+    auto object = infer_expression_type(ast, node.object, std::nullopt);
+    infer_expression_type(ast, node.index, std::nullopt);
+    auto const& type = result.types.get(read_type(object.type));
+    if(auto const* tuple = std::get_if<tuple_type>(&type)) {
+        auto value = constant_integer_index(ast, node.index);
+        if(value and *value >= 0 and static_cast<std::uint64_t>(*value) < tuple->elements.size()) {
+            return expression_info {
+                .type = tuple->elements[static_cast<std::size_t>(*value)],
+                .is_lvalue = object.is_lvalue,
+                .is_const = object.is_const,
+            };
+        }
+        return expression_info{ .type = semantic_type_ids::error };
+    }
+    if(auto const* array = std::get_if<array_type>(&type)) {
+        return expression_info {
+            .type = array->element,
+            .is_lvalue = object.is_lvalue,
+            .is_const = target_const(object.type, object.is_const),
+        };
+    }
+    return expression_info{ .type = semantic_type_ids::error };
+}
+
 auto semantic_analyzer::infer_call_expression(ast_arena const& ast, call_expr_syntax const& node) -> expression_info
 {
+    auto const& callee_syntax = ast.node(node.callee);
+    if(auto const* name_expression = std::get_if<name_expr_syntax>(&callee_syntax)) {
+        auto name = ast_source.identifier(name_expression->name);
+        if(name == "alloc") {
+            for(auto argument : node.arguments) {
+                infer_expression_type(ast, argument, std::nullopt);
+            }
+            if(node.type_arguments.size() != 1uz) {
+                return expression_info{ .type = semantic_type_ids::error };
+            }
+            auto const* type_argument = std::get_if<type_argument_type_syntax>(&node.type_arguments.front());
+            if(type_argument == nullptr) {
+                return expression_info{ .type = semantic_type_ids::error };
+            }
+            return expression_info {
+                .type = intern_type(pointer_type{ lower_type(ast, type_argument->type) }),
+            };
+        }
+        if(name == "free" or name == "construct_at" or name == "destroy_at") {
+            for(auto argument : node.arguments) {
+                infer_expression_type(ast, argument, std::nullopt);
+            }
+            return expression_info{ .type = semantic_type_ids::unit };
+        }
+    }
+
     if(auto cast_type = function_style_cast_type(ast, node)) {
         for(auto argument : node.arguments) {
             infer_expression_type(ast, argument, std::nullopt);
         }
         return expression_info{ .type = *cast_type };
+    }
+
+    if(auto const* associated = std::get_if<associated_name_expr_syntax>(&callee_syntax)) {
+        auto type = lower_type(ast, associated->type);
+        auto owner = struct_index_of(type);
+        if(not owner) {
+            return expression_info{ .type = semantic_type_ids::error };
+        }
+        auto name = std::string{ ast_source.identifier(associated->name) };
+        auto found = result.structs[*owner].associated_functions.find(name);
+        for(auto argument : node.arguments) {
+            infer_expression_type(ast, argument, std::nullopt);
+        }
+        if(found == result.structs[*owner].associated_functions.end()) {
+            return expression_info{ .type = semantic_type_ids::error };
+        }
+        return expression_info{ .type = infer_callable_return(found->second) };
+    }
+    if(auto const* member = std::get_if<member_expr_syntax>(&callee_syntax)) {
+        auto object = infer_expression_type(ast, member->object, std::nullopt);
+        auto owner = struct_index_of(object.type);
+        for(auto argument : node.arguments) {
+            infer_expression_type(ast, argument, std::nullopt);
+        }
+        if(not owner) {
+            return expression_info{ .type = semantic_type_ids::error };
+        }
+        auto name = std::string{ ast_source.identifier(member->name) };
+        auto found = result.structs[*owner].methods.find(name);
+        if(found == result.structs[*owner].methods.end()) {
+            return expression_info{ .type = semantic_type_ids::error };
+        }
+        return expression_info{ .type = infer_callable_return(found->second) };
     }
 
     if(auto function = callee_function_symbol(ast, node.callee)) {
@@ -266,7 +618,7 @@ auto semantic_analyzer::infer_call_expression(ast_arena const& ast, call_expr_sy
     for(auto argument : node.arguments) {
         infer_expression_type(ast, argument, std::nullopt);
     }
-    if(auto const* callable = std::get_if<function_type>(&result.types.get(callee.type))) {
+    if(auto const* callable = callable_type(callee.type)) {
         return expression_info{ .type = callable->returns };
     }
     return expression_info{ .type = semantic_type_ids::error };

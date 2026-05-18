@@ -1,14 +1,18 @@
-export module types_demo;
-
-export literals_and_casts() -> i32
+main() -> i32
 {
     let flag: bool = true;
     const letter: char = 'x';
     let count = 42;
     let ratio = 0.5;
-    let title: str = "cp";
+    let title: str = "";
 
     let data: array<i32,3> = [4, 5, 6];
+    let picked = data[1];
+    data[2] = picked + 1;
+
+    let rows: array<array<i32,3>,2> = [[1, 2, 3], [4, 5, 6]];
+    let nested = rows[1][0];
+
     let triple: tuple<i32,f64,char> = (count, ratio, letter);
 
     let count_ref: i32& = count;
@@ -25,5 +29,5 @@ export literals_and_casts() -> i32
         return 0;
     }
 
-    return readonly_count + count_ref + narrowed;
+    return readonly_count + count_ref + narrowed + data[2] + nested + [1, 2, 3][0];
 }

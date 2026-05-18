@@ -1,6 +1,4 @@
-export module flow_demo;
-
-export sum_non_negative(values: array<i32,4>) -> i32
+sum_non_negative(values: array<i32,4>) -> i32
 {
     let total: i32 = 0;
 
@@ -15,20 +13,7 @@ export sum_non_negative(values: array<i32,4>) -> i32
     return total;
 }
 
-export accumulate_until(limit: i32) -> i32
-{
-    let total: i32 = 0;
-    let current: i32 = 0;
-
-    while(current < limit) {
-        total = total + current;
-        current = current + 1;
-    }
-
-    return total;
-}
-
-export countdown(start: i32) -> i32
+countdown(start: i32) -> i32
 {
     let current = start;
 
@@ -39,7 +24,7 @@ export countdown(start: i32) -> i32
     return current;
 }
 
-export contains_target(rows: array<array<i32,3>,2>, target: i32) -> bool
+contains_target(rows: array<array<i32,3>,2>, target: i32) -> bool
 {
     let found: bool = false;
 
@@ -57,4 +42,16 @@ export contains_target(rows: array<array<i32,3>,2>, target: i32) -> bool
     }
 
     return found;
+}
+
+main() -> i32
+{
+    let values: array<i32,4> = [3, -1, 4, 0];
+    let rows: array<array<i32,3>,2> = [[1, 2, 3], [-1, 4, 5]];
+
+    if(contains_target(rows, 4)) {
+        return sum_non_negative(values) + countdown(3);
+    }
+
+    return 0;
 }

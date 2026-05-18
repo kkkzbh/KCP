@@ -1,3 +1,410 @@
 # 结构
 
-struct / impl / trait 三件套，比较类似Rust
+本文档记录非泛型 `struct / impl` 的基础语言设计。目标是保留 C++ 风格的数据类型与花括号初始化，同时借鉴 Rust 的 `impl` 分离模型。
+
+泛型 `struct`、泛型固有 `impl` 和条件 `impl` 见 [generic.md](generic.md)。`concept` 见 [concept.md](concept.md)。
+
+## 语法总览
+
+```text
+StructDecl      -> export? struct identifier { FieldDecl* }
+FieldDecl       -> identifier : Type ;
+
+ImplBlock       -> impl TypeName { ImplItem* }
+ImplItem        -> Constructor
+                | Destructor
+                | Function
+
+Constructor     -> TypeName ( ParameterList? ) FunctionBody
+                | TypeName ( ) = default ;
+Destructor      -> ~ TypeName ( ) FunctionBody
+Function        -> identifier ( ParameterList? ) ReturnType? FunctionBody
+
+StructInit      -> TypeName { InitArgList? }
+InitArgList     -> NamedFieldInit ( , NamedFieldInit )*
+                | Expression ( , Expression )*
+NamedFieldInit  -> . identifier = Expression
+```
+
+## 结构体定义
+
+`struct` 定义一个名义类型和它的字段布局：
+
+```cp
+struct vec2 {
+    x: f64;
+    y: f64;
+}
+```
+
+结构体类型名使用小写命名，和当前语言/项目里的 C++ 风格一致，例如 `vec2`、`file_buffer`，不使用 Rust 风格的 `Vec2` / `FileBuffer`。
+
+字段规则：
+
+- 字段名在同一个 `struct` 内不能重复。
+- 字段类型必须能被解析为合法类型。
+- 不设计 `public/private`，字段都视为 public。
+- `struct` 是名义类型。两个字段完全相同的结构体仍然是不同类型。
+
+`export struct` 导出结构体类型名，使它可以被其他模块 `import` 后使用：
+
+```cp
+export struct vec2 {
+    x: f64;
+    y: f64;
+}
+```
+
+因为没有访问限定，导出类型后字段也按 public 规则处理。
+
+## impl 块
+
+`impl` 把构造函数、析构函数、成员函数和关联函数挂到某个结构体类型下：
+
+```cp
+impl vec2 {
+    vec2(x: f64, y: f64) {
+        return vec2{ .x = x, .y = y };
+    }
+
+    ~vec2() {
+    }
+
+    length(self: vec2 const&) -> f64 {
+        return sqrt(x * x + y * y);
+    }
+
+    zero() -> vec2 {
+        return vec2{};
+    }
+}
+```
+
+一个结构体可以有多个 `impl` 块。`impl` 只能出现在顶层，不能嵌套在函数或其他块中。
+
+`impl` 的物理文件位置不重要。只要 `impl` 所在文件参与同一次编译输入，且该位置能解析到目标结构体类型，`impl` 中的构造函数、析构函数、成员函数和关联函数就挂到对应结构体类型下。使用者能看见该结构体类型时，就可以使用这些挂到类型上的项，不需要单独导入 `impl` 所在文件。
+
+泛型类型的 `impl` 使用目标类型模式引入泛型参数，例如 `impl vector<T>`；`impl` 级 `requires` 约束和成员泛型函数规则见 [generic.md](generic.md)。
+
+## 构造函数
+
+构造函数写在 `impl type_name` 中，名字必须与当前结构体名一致：
+
+```cp
+impl vec2 {
+    vec2(x: f64, y: f64) {
+        return vec2{ .x = x, .y = y };
+    }
+}
+```
+
+构造函数规则：
+
+- 构造函数禁止显式写返回类型。
+- 构造函数返回类型固定为当前 `impl` 的结构体类型，不参与普通函数返回类型推导。
+- 构造函数不能声明 `self` 参数。
+- 构造函数体是普通函数体，使用普通 `return value;` 返回构造出的值。
+- 构造函数里的所有带值 `return` 都必须能转换到当前结构体类型。
+- `return;` 不允许用于构造函数。
+- 构造函数允许重载，多个构造函数可以有不同参数列表。
+
+构造函数建议只放不太可能失败的初始化逻辑，例如字段初始化、参数归一化和建立对象不变量。文件打开、网络连接、解析外部输入、权限检查等很可能失败的创建逻辑，应使用关联函数表达，并通过返回 `optional<type_name>`、`expected<type_name,error>` 或标准库中的等价结果类型表示失败。
+
+### 默认构造
+
+没有任何用户声明构造函数时，结构体隐式拥有默认构造行为：逐字段默认初始化。
+
+```cp
+struct vec2 {
+    x: f64;
+    y: f64;
+}
+
+let v = vec2{};
+```
+
+如果用户声明了任意构造函数，编译器不再额外生成隐式默认构造函数。因为所有字段都是 public，`type_name{}` 仍可在没有零参构造函数匹配时退化为字段默认初始化。
+
+用户可以显式请求默认构造函数：
+
+```cp
+impl vec2 {
+    vec2() = default;
+}
+```
+
+`= default` 规则：
+
+- 只允许用于零参数构造函数。
+- 不能带函数体。
+- 行为是逐字段默认初始化。
+- 如果某个字段类型不可默认初始化，则该 default 构造函数非法。
+- 它参与构造函数候选选择，因此 `vec2{}` 会优先匹配它。
+
+## 析构函数
+
+析构函数写作 `~type_name()`，名字必须匹配当前 `impl` 类型：
+
+```cp
+impl buffer {
+    ~buffer() {
+        release(handle);
+    }
+}
+```
+
+析构函数规则：
+
+- 析构函数没有参数。
+- 析构函数没有返回类型，返回内部 `unit`。
+- 析构函数不能使用 `return value;`。
+- 析构函数体是普通语句块。
+- 析构函数中存在一个隐式 `self: type_name&`。
+- 析构函数中可以直接访问字段，也可以写 `self.field`。
+- 一个结构体最多声明一个析构函数。
+
+析构调用由编译器在对象生命周期结束时插入，不允许用户直接调用 `value.~type_name()`。显式释放通过标准库函数或所有权规则表达。
+
+## 成员函数
+
+普通 `impl` 函数的第一个参数名为 `self` 时，它是成员函数：
+
+```cp
+impl vec2 {
+    length(self: vec2 const&) -> f64 {
+        return sqrt(x * x + y * y);
+    }
+
+    move(self: vec2&, dx: f64, dy: f64) {
+        x = x + dx;
+        self.y = self.y + dy;
+    }
+}
+```
+
+`self` 参数规则：
+
+- `self` 必须是第一个参数。
+- `self` 的类型必须是当前结构体类型、当前结构体引用，或当前结构体 const 引用。
+- `self: type_name const&` 只能读字段，不能写字段。
+- `self: type_name&` 可以读写字段。
+- 不设计 `mut self`，直接使用现有引用和 `const` 类型语法表达可变性。
+
+成员函数调用使用点号：
+
+```cp
+let v = vec2{ 3.0, 4.0 };
+let n = v.length();
+```
+
+`type_name::name(...)` 用于关联函数调用，不作为显式成员函数调用入口。
+
+## UFCS 调用
+
+UFCS 允许成员调用形式和自由函数调用形式共享同一套能力，但它只是名字查找的备用路径，不是重载候选集。
+
+```cp
+length(v: vec2 const&) -> f64
+{
+    return sqrt(v.x * v.x + v.y * v.y);
+}
+
+let v = vec2{ 3.0, 4.0 };
+let n = v.length(); // 找不到 vec2.length 时，按 length(v) 检查
+```
+
+点号调用 `object.name(args...)` 的解析顺序：
+
+1. 先在 `object` 的类型上查找成员函数 `name`。
+2. 如果存在同名成员函数，直接按成员函数调用检查参数、`self` 可变性和返回类型。检查失败时报错，不继续回退。
+3. 如果不存在同名成员函数，再在当前可见自由函数中查找 `name`。
+4. 如果存在自由函数 `name`，按 `name(object, args...)` 检查。
+
+普通调用 `name(first, args...)` 的解析顺序：
+
+1. 先在当前可见自由函数中查找 `name`。
+2. 如果存在同名自由函数，直接按普通函数调用检查参数和返回类型。检查失败时报错，不继续回退。
+3. 如果不存在同名自由函数，且调用至少有一个参数，再在 `first` 的类型上查找成员函数 `name`。
+4. 如果存在成员函数 `name`，按 `first.name(args...)` 检查。
+
+这里的“当前可见自由函数”遵循 [module.md](module.md) 的模块可见性规则，包括当前模块内声明和 `import` 引入的导出函数。没有函数重载；因此一旦首选路径中存在同名函数，就视为用户明确选择了该名字，参数不匹配时应报告错误，而不是换到另一条 UFCS 路径。
+
+UFCS 不递归展开。实现时应直接查询自由函数表和成员函数表，而不是让 `object.name(args...)` 重新调用 `name(object, args...)`，再让普通调用反向回到点号调用。
+
+关联函数不参与 UFCS。`type_name::make(...)` 这类没有 `self` 的函数只能通过类型限定调用，不能通过 `value.make(...)` 或 `make(value, ...)` 隐式匹配。
+
+## 关联函数
+
+不带 `self`、又不是构造函数或析构函数的 `impl` 函数是关联函数：
+
+```cp
+impl vec2 {
+    zero() -> vec2 {
+        return vec2{};
+    }
+
+    from_polar(r: f64, theta: f64) -> vec2 {
+        return vec2{ r * cos(theta), r * sin(theta) };
+    }
+}
+```
+
+关联函数调用写作：
+
+```cp
+let origin = vec2::zero();
+let p = vec2::from_polar(r, theta);
+```
+
+关联函数的主要用途是类型命名空间和工厂函数。可能失败的创建逻辑应优先设计为关联函数，而不是放进构造函数。
+
+## 初始化表达式
+
+结构体初始化统一使用花括号，支持三种形式：
+
+```cp
+vec2{ .x = x, .y = y }
+vec2{ x, y }
+vec2{}
+```
+
+### 命名字段聚合
+
+`type_name{ .field = expr, ... }` 是命名字段聚合初始化，不走构造函数匹配：
+
+```cp
+let a = vec2{ .x = 1.0, .y = 2.0 };
+let b = vec2{ .x = 1.0 };
+```
+
+规则：
+
+- 显式指定的字段不能重复。
+- 未指定字段按字段类型默认初始化。
+- 字段顺序不影响语义。
+- 字段初始化表达式按字段声明类型做上下文检查。
+- 因为所有字段都是 public，命名字段聚合始终允许，即使结构体声明了构造函数。
+
+### 顺序初始化
+
+`type_name{ expr, ... }` 是顺序初始化：
+
+```cp
+let a = vec2{ 1.0, 2.0 };
+let b = vec2{ 1.0 };
+```
+
+解析顺序：
+
+1. 先按参数列表匹配构造函数。
+2. 没有可用构造函数时，再按字段声明顺序做聚合初始化。
+
+顺序聚合初始化规则：
+
+- 实参数量不能超过字段数量。
+- 已提供实参按字段声明顺序填充字段。
+- 剩余字段按字段类型默认初始化。
+- 字段初始化表达式按字段声明类型做上下文检查。
+
+本语言没有 C++ `initializer_list` 特权。`vector{ n, 0 }` 不会被隐式解释为元素列表；它只表示构造函数调用或顺序聚合。元素列表应使用数组字面量和显式关联函数，例如 `vector::from_array([10, 0])` 或 `vector::filled(n, 0)`。
+
+### 默认初始化
+
+`type_name{}` 是结构体默认初始化表达式：
+
+```cp
+let a = vec2{};
+```
+
+解析顺序：
+
+1. 优先匹配零参数构造函数，包括显式 `type_name() = default;`。
+2. 没有零参数构造函数匹配时，按字段默认初始化。
+
+如果某个缺省字段的类型不可默认初始化，初始化失败并报告错误。默认初始化结果由 [type_system.md](type_system.md) 定义。
+
+### 构造函数候选选择
+
+如果顺序初始化同时存在多个可用构造函数，语义分析使用小型重载规则选择候选：
+
+1. 参数数量必须一致。
+2. 完全类型匹配优先于需要隐式转换的匹配。
+3. 如果最高优先级仍有多个候选，报二义性错误。
+
+这个规则只用于结构体初始化选择构造函数。不支持 C++ 完整重载体系，例如默认参数、初始化列表优先级、用户自定义转换和模板偏序。
+
+除构造函数外，不支持重载：
+
+- 普通函数同名即冲突。
+- 成员函数同名即冲突。
+- 关联函数同名即冲突。
+- 析构函数不能重载，一个结构体最多一个析构函数。
+
+## 字段访问和隐式成员查找
+
+显式字段访问写作：
+
+```cp
+self.x
+point.x
+```
+
+在成员函数和析构函数中，普通名字也可以查找 `self` 的字段：
+
+```cp
+length(self: vec2 const&) -> f64 {
+    return sqrt(x * x + y * y);
+}
+```
+
+名字解析顺序：
+
+1. 从内到外查找普通词法作用域中的名字，包括局部变量和函数参数。
+2. 如果当前函数有 `self`，查找 `self` 的字段。
+3. 当前模块和导入模块中可见的顶层名字。
+
+如果局部名字和字段同名，局部名字优先。此时必须写 `self.x` 才能访问字段：
+
+```cp
+set_x(self: vec2&, x: f64) {
+    self.x = x;
+}
+```
+
+字段赋值必须满足现有赋值规则。`self: type_name const&` 下字段视为 const，不能赋值。
+
+## 块表达式
+
+普通 `{ ... }` 可以在表达式位置作为块表达式：
+
+```cp
+let value = {
+    let a = 1;
+    let b = 2;
+    a + b
+};
+```
+
+块表达式规则：
+
+- 块表达式创建新作用域。
+- 最后一项如果是没有分号的表达式，块表达式类型就是该表达式类型。
+- 没有尾表达式，或尾表达式后有分号，块表达式类型为内部 `unit`。
+- 块表达式内部可以包含普通语句。
+- `return` 仍然从所在函数返回，不是从块表达式返回。
+
+lambda 的 `{ ... }` body 也复用尾表达式规则，但 lambda 自身形成新的函数边界；其中的 `return` 返回当前 lambda。详见 [lambda.md](lambda.md)。
+
+普通块表达式和语句块按上下文区分：
+
+```cp
+{
+    let x = 1;
+}
+
+let x = {
+    1
+};
+```
+
+第一段是语句块，第二段是块表达式。裸 `{}` 不表示默认初始化；默认初始化必须写作 `Type{}`，详见 [initial.md](initial.md)。

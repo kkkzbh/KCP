@@ -49,6 +49,97 @@ auto read_all(std::filesystem::path const& path) -> std::optional<std::string>
     );
 }
 
+auto normalized_path(std::filesystem::path const& path) -> std::string
+{
+    auto error = std::error_code{};
+    auto canonical = std::filesystem::weakly_canonical(path, error);
+    if(error) {
+        canonical = std::filesystem::absolute(path, error);
+    }
+    return error ? path.lexically_normal().string() : canonical.lexically_normal().string();
+}
+
+auto module_name(source_manager const& sources, module_name_syntax const& name) -> std::string
+{
+    auto result = std::string{};
+    for(auto component : name.components) {
+        if(not result.empty()) {
+            result += '.';
+        }
+        result += sources.slice(component);
+    }
+    return result;
+}
+
+auto module_relative_path(std::string_view name) -> std::filesystem::path
+{
+    auto result = std::filesystem::path{};
+    auto start = 0uz;
+    while(start < name.size()) {
+        auto end = name.find('.', start);
+        if(end == std::string_view::npos) {
+            auto leaf = std::string{ name.substr(start) };
+            leaf += ".cp";
+            result /= leaf;
+            break;
+        }
+        result /= std::string{ name.substr(start, end - start) };
+        start = end + 1uz;
+    }
+    return result;
+}
+
+auto module_leaf_path(std::string_view name) -> std::filesystem::path
+{
+    auto position = name.rfind('.');
+    auto leaf = position == std::string_view::npos ? name : name.substr(position + 1uz);
+    auto result = std::string{ leaf };
+    result += ".cp";
+    return result;
+}
+
+auto import_roots(std::string_view executable) -> std::vector<std::filesystem::path>
+{
+    auto roots = std::vector<std::filesystem::path>{ std::filesystem::current_path() };
+    auto error = std::error_code{};
+    auto path = std::filesystem::weakly_canonical(std::filesystem::path{ executable }, error);
+    if(error) {
+        path = std::filesystem::absolute(std::filesystem::path{ executable }, error);
+    }
+    if(not error) {
+        path = path.parent_path();
+        for(auto depth = 0uz; depth < 5uz and not path.empty(); ++depth) {
+            roots.emplace_back(path);
+            path = path.parent_path();
+        }
+    }
+    return roots;
+}
+
+auto resolve_import_path(
+    std::filesystem::path const& importer,
+    std::string_view name,
+    std::span<std::filesystem::path const> roots
+)
+    -> std::optional<std::filesystem::path>
+{
+    auto const base = importer.parent_path();
+    auto candidates = std::vector<std::filesystem::path> {
+        base / module_leaf_path(name),
+        base / module_relative_path(name),
+    };
+    for(auto const& root : roots) {
+        candidates.emplace_back(root / module_relative_path(name));
+    }
+    for(auto const& candidate : candidates) {
+        auto error = std::error_code{};
+        if(std::filesystem::is_regular_file(candidate, error)) {
+            return candidate;
+        }
+    }
+    return std::nullopt;
+}
+
 auto print_help(std::ostream& output) -> void
 {
     output
@@ -273,13 +364,26 @@ auto append_all(std::vector<std::string>& output, std::vector<std::string> const
     output.insert(output.end(), values.begin(), values.end());
 }
 
+auto resolve_tool_path(std::string const& tool) -> std::string
+{
+    if(tool.find('/') != std::string::npos) {
+        return tool;
+    }
+    auto candidate = std::filesystem::path{ "/usr/bin" } / tool;
+    auto error = std::error_code{};
+    if(std::filesystem::is_regular_file(candidate, error)) {
+        return candidate.string();
+    }
+    return tool;
+}
+
 auto compile_object(
     cli_options const& options,
     std::filesystem::path const& ll_path,
     std::filesystem::path const& obj_path
 ) -> bool
 {
-    auto command = std::vector<std::string>{ options.clang };
+    auto command = std::vector<std::string>{ resolve_tool_path(options.clang) };
     command.emplace_back("-Wno-override-module");
     append_all(command, options.clang_args);
     command.emplace_back("-c");
@@ -295,7 +399,7 @@ auto link_binary(
     std::filesystem::path const& output_path
 ) -> bool
 {
-    auto command = std::vector<std::string>{ options.clang };
+    auto command = std::vector<std::string>{ resolve_tool_path(options.clang) };
     command.emplace_back("-Wno-override-module");
     append_all(command, options.clang_args);
     command.emplace_back(input_path.string());
@@ -385,14 +489,28 @@ auto main(int argc, char** argv) -> int
     auto sources = source_manager{};
     auto parsed_units = std::vector<parse_result>{};
     parsed_units.reserve(options.inputs.size());
+    auto roots = import_roots(argv[0]);
+    auto pending_inputs = (
+        options.inputs
+        | std::views::transform([](std::string const& value) { return std::filesystem::path{ value }; })
+        | std::ranges::to<std::vector<std::filesystem::path>>()
+    );
+    auto loaded_inputs = std::set<std::string>{};
     auto parse_ok = true;
-    for(auto const& input : options.inputs) {
+    for(auto input_index = 0uz; input_index < pending_inputs.size(); ++input_index) {
+        auto const& input = pending_inputs[input_index];
+        auto normalized = normalized_path(input);
+        if(loaded_inputs.contains(normalized)) {
+            continue;
+        }
+        loaded_inputs.emplace(std::move(normalized));
+
         auto text = read_all(input);
         if(not text) {
-            std::cerr << "failed to open " << input << '\n';
+            std::cerr << "failed to open " << input.string() << '\n';
             return 2;
         }
-        auto file = sources.add_source(input, std::move(*text));
+        auto file = sources.add_source(input.string(), std::move(*text));
         auto preprocessed = preprocess(sources, file);
         for(auto const& diagnostic : preprocessed.diagnostics) {
             print_diagnostic(sources, diagnostic);
@@ -415,6 +533,18 @@ auto main(int argc, char** argv) -> int
         parse_ok = parse_ok and parsed.accepted;
         for(auto const& diagnostic : parsed.diagnostics) {
             print_diagnostic(sources, diagnostic);
+        }
+        if(parsed.accepted and parsed.root) {
+            for(auto const& import : parsed.root->imports) {
+                auto imported_module = module_name(sources, import.name);
+                auto resolved = resolve_import_path(input, imported_module, roots);
+                if(not resolved) {
+                    continue;
+                }
+                if(not loaded_inputs.contains(normalized_path(*resolved))) {
+                    pending_inputs.emplace_back(std::move(*resolved));
+                }
+            }
         }
         parsed_units.push_back(std::move(parsed));
     }

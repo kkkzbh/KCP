@@ -87,6 +87,29 @@ export struct function_type
     semantic_type_id returns{};
 };
 
+export struct generic_parameter_type
+{
+    auto constexpr operator==(generic_parameter_type const&) const -> bool = default;
+
+    std::uint32_t index{};
+};
+
+export struct struct_type
+{
+    auto constexpr operator==(struct_type const&) const -> bool = default;
+
+    std::uint32_t index{};
+    std::vector<semantic_type_id> arguments{};
+};
+
+export struct variant_type
+{
+    auto constexpr operator==(variant_type const&) const -> bool = default;
+
+    std::uint32_t index{};
+    std::vector<semantic_type_id> arguments{};
+};
+
 export using semantic_type_kind = std::variant <
     unit_type,
     error_type,
@@ -96,5 +119,8 @@ export using semantic_type_kind = std::variant <
     tuple_type,
     reference_type,
     pointer_type,
-    function_type
+    function_type,
+    generic_parameter_type,
+    struct_type,
+    variant_type
 >;

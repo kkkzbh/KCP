@@ -58,11 +58,13 @@ export auto keyword_kind(std::string_view text) -> std::optional<token_kind>
             if(text == "false"sv) {
                 return token_kind::kw_false;
             }
-            if(text == "trait"sv) {
-                return token_kind::kw_trait;
-            }
             if(text == "while"sv) {
                 return token_kind::kw_while;
+            }
+            break;
+        case 7:
+            if(text == "concept"sv) {
+                return token_kind::kw_concept;
             }
             break;
         case 6:

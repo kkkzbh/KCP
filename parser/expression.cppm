@@ -78,6 +78,7 @@ auto parser::starts_expression(token_kind kind) const -> bool
         star,
         plus_plus,
         minus_minus,
+        l_brace,
     };
 
     return std::ranges::contains(expression_starts, kind);
@@ -247,10 +248,62 @@ auto parser::parse_postfix() -> std::optional<expr_id>
     }
 
     while(true) {
+        auto type_arguments = std::vector<type_argument_syntax>{};
+        if(looks_like_generic_call_suffix()) {
+            auto parsed = parse_type_argument_list();
+            if(not parsed) {
+                return std::nullopt;
+            }
+            type_arguments = std::move(*parsed);
+        }
+
+        if(check(token_kind::colon_colon)) {
+            auto const& expression = arena.node(*operand);
+            if(not is<name_expr_syntax>(expression)) {
+                report_current(
+                    diagnostic_kind::expected_identifier,
+                    "associated function access requires a type name"
+                );
+                return std::nullopt;
+            }
+            consume();
+            auto name = expect_identifier("associated function name");
+            if(not name) {
+                return std::nullopt;
+            }
+            auto const& base = as<name_expr_syntax>(expression);
+            auto type = type_from_name(base.name);
+            operand = arena.add(expr_syntax {
+                associated_name_expr_syntax {
+                    .full_span = combine_spans(base.full_span, name->span),
+                    .type = type,
+                    .name = name->span,
+                }
+            });
+            continue;
+        }
+
+        if(check(token_kind::dot)) {
+            consume();
+            auto name = expect_identifier("member name");
+            if(not name) {
+                return std::nullopt;
+            }
+            operand = arena.add(expr_syntax {
+                member_expr_syntax {
+                    .full_span = combine_spans(arena.span(*operand), name->span),
+                    .object = *operand,
+                    .name = name->span,
+                }
+            });
+            continue;
+        }
+
         if(check(token_kind::l_paren)) {
             auto open = consume();
             auto call = call_expr_syntax {
                 .callee = *operand,
+                .type_arguments = std::move(type_arguments),
             };
 
             if(not check(token_kind::r_paren)) {
@@ -286,6 +339,37 @@ auto parser::parse_postfix() -> std::optional<expr_id>
             continue;
         }
 
+        if(not type_arguments.empty()) {
+            report_current(
+                diagnostic_kind::expected_token,
+                "generic call type arguments must be followed by an argument list"
+            );
+            return std::nullopt;
+        }
+
+        if(check(token_kind::l_bracket)) {
+            consume();
+            if(not expect_expression_start()) {
+                return std::nullopt;
+            }
+            auto index = parse_expression();
+            if(not index) {
+                return std::nullopt;
+            }
+            auto close = expect(token_kind::r_bracket);
+            if(not close) {
+                return std::nullopt;
+            }
+            operand = arena.add(expr_syntax {
+                index_expr_syntax {
+                    .full_span = combine_spans(arena.span(*operand), close->span),
+                    .object = *operand,
+                    .index = *index,
+                }
+            });
+            continue;
+        }
+
         if(check_any({ token_kind::plus_plus, token_kind::minus_minus })) {
             auto operation = consume();
             auto unary = unary_expr_syntax {
@@ -303,9 +387,59 @@ auto parser::parse_postfix() -> std::optional<expr_id>
     return operand;
 }
 
+auto parser::looks_like_generic_call_suffix() const -> bool
+{
+    if(not check(token_kind::less)) {
+        return false;
+    }
+
+    auto depth = 0;
+    auto lookahead = 0uz;
+    while(true) {
+        auto kind = peek(lookahead).kind;
+        if(kind == token_kind::eof) {
+            return false;
+        }
+
+        if(kind == token_kind::less) {
+            ++depth;
+        } else if(kind == token_kind::greater) {
+            --depth;
+        } else if(kind == token_kind::greater_greater) {
+            depth -= 2;
+        } else if(kind == token_kind::greater_greater_equal) {
+            return false;
+        }
+
+        ++lookahead;
+        if(depth == 0) {
+            return peek(lookahead).kind == token_kind::l_paren;
+        }
+        if(depth < 0) {
+            return false;
+        }
+    }
+}
+
 auto parser::parse_primary() -> std::optional<expr_id>
 {
     std::optional<expr_id> expression{};
+
+    if(check_contextual("match")) {
+        return parse_match_expression();
+    }
+
+    if(check_contextual("fn") and peek(1uz).kind == token_kind::l_paren) {
+        return parse_lambda_expression();
+    }
+
+    if(looks_like_associated_name_expression()) {
+        return parse_associated_name_expression();
+    }
+
+    if(looks_like_type_initializer()) {
+        return parse_type_initializer();
+    }
 
     switch(peek().kind) {
         case token_kind::identifier: {
@@ -340,6 +474,9 @@ auto parser::parse_primary() -> std::optional<expr_id>
         case token_kind::l_paren:
             expression = parse_paren_expression();
             break;
+        case token_kind::l_brace:
+            expression = parse_block_expression();
+            break;
         default:
             report_current(
                 diagnostic_kind::expected_expression,
@@ -351,6 +488,463 @@ auto parser::parse_primary() -> std::optional<expr_id>
             return std::nullopt;
     }
     return expression;
+}
+
+auto parser::parse_match_expression() -> std::optional<expr_id>
+{
+    auto match_kw = expect_identifier("match");
+    auto value = std::optional<expr_id>{};
+    if(check(token_kind::identifier) and peek(1uz).kind == token_kind::l_brace) {
+        auto const name = consume();
+        value = arena.add(expr_syntax {
+            name_expr_syntax {
+                .full_span = name.span,
+                .name = name.span,
+            }
+        });
+    } else {
+        value = parse_expected_expression();
+    }
+    auto open = expect(token_kind::l_brace);
+    if(not match_kw or not value or not open) {
+        return std::nullopt;
+    }
+
+    auto arms = std::vector<match_arm_syntax>{};
+    while(not check_any({ token_kind::r_brace, token_kind::eof })) {
+        auto arm = parse_match_arm();
+        if(not arm) {
+            synchronize_statement();
+            continue;
+        }
+        arms.emplace_back(std::move(*arm));
+    }
+
+    auto close = expect(token_kind::r_brace);
+    if(not close) {
+        return std::nullopt;
+    }
+
+    return arena.add(expr_syntax {
+        match_expr_syntax {
+            .full_span = combine_spans(match_kw->span, close->span),
+            .value = *value,
+            .arms = std::move(arms),
+        }
+    });
+}
+
+auto parser::parse_match_arm() -> std::optional<match_arm_syntax>
+{
+    auto pattern = parse_match_pattern();
+    auto equal = expect(token_kind::equal);
+    auto greater = expect(token_kind::greater);
+    auto value = parse_expected_expression();
+    auto comma = expect(token_kind::comma);
+    if(not pattern or not equal or not greater or not value or not comma) {
+        return std::nullopt;
+    }
+
+    return match_arm_syntax {
+        .full_span = combine_spans(
+            std::visit([](auto const& item) { return item.full_span; }, *pattern),
+            comma->span
+        ),
+        .pattern = std::move(*pattern),
+        .value = *value,
+    };
+}
+
+auto parser::parse_match_pattern() -> std::optional<match_pattern_syntax>
+{
+    if(check(token_kind::identifier) and peek().text == "_") {
+        auto wildcard = consume();
+        return match_pattern_syntax {
+            match_wildcard_pattern_syntax {
+                .full_span = wildcard.span,
+            }
+        };
+    }
+
+    auto dot = expect(token_kind::dot);
+    auto name = expect_identifier("variant case name");
+    if(not dot or not name) {
+        return std::nullopt;
+    }
+
+    auto bindings = std::vector<source_span>{};
+    auto end = name->span;
+    if(check(token_kind::l_paren)) {
+        consume();
+        auto first = expect_identifier("pattern binding");
+        if(not first) {
+            return std::nullopt;
+        }
+        bindings.emplace_back(first->span);
+        while(check(token_kind::comma)) {
+            consume();
+            auto next = expect_identifier("pattern binding");
+            if(not next) {
+                return std::nullopt;
+            }
+            bindings.emplace_back(next->span);
+        }
+        auto close = expect(token_kind::r_paren);
+        if(not close) {
+            return std::nullopt;
+        }
+        end = close->span;
+    }
+
+    return match_pattern_syntax {
+        match_case_pattern_syntax {
+            .full_span = combine_spans(dot->span, end),
+            .name = name->span,
+            .bindings = std::move(bindings),
+        }
+    };
+}
+
+auto parser::parse_lambda_expression() -> std::optional<expr_id>
+{
+    auto marker = expect_identifier("lambda marker");
+    if(not marker) {
+        return std::nullopt;
+    }
+
+    auto l_paren = expect(token_kind::l_paren);
+    if(not l_paren) {
+        return std::nullopt;
+    }
+    auto parameters = parse_lambda_parameter_list();
+    auto r_paren = expect(token_kind::r_paren);
+    auto return_type = std::optional<type_id>{};
+    if(check(token_kind::arrow)) {
+        consume();
+        return_type = parse_expected_type();
+    }
+    auto body = parse_lambda_body(marker->span);
+    if(not parameters or not r_paren or not body) {
+        return std::nullopt;
+    }
+
+    auto function = arena.add(function_syntax {
+        .full_span = combine_spans(marker->span, arena.span(*body)),
+        .kind = function_syntax_kind::lambda,
+        .name = marker->span,
+        .parameters = std::move(*parameters),
+        .return_type = return_type,
+        .body = *body,
+    });
+    synthetic_functions.emplace_back(function);
+    return arena.add(expr_syntax {
+        lambda_expr_syntax {
+            .full_span = combine_spans(marker->span, arena.span(*body)),
+            .function = function,
+        }
+    });
+}
+
+auto parser::parse_lambda_body(source_span start) -> std::optional<stmt_id>
+{
+    if(check(token_kind::l_brace)) {
+        auto expression = parse_block_expression();
+        if(not expression) {
+            return std::nullopt;
+        }
+        auto const& block = as<block_expr_syntax>(arena.node(*expression));
+        auto statements = block.statements;
+        if(block.tail) {
+            statements.emplace_back(arena.add(statement_syntax {
+                return_statement_syntax {
+                    .full_span = arena.span(*block.tail),
+                    .value = *block.tail,
+                }
+            }));
+        }
+        return arena.add(statement_syntax {
+            block_statement_syntax {
+                .full_span = combine_spans(start, arena.span(*expression)),
+                .statements = std::move(statements),
+            }
+        });
+    }
+
+    auto equal = expect(token_kind::equal);
+    auto greater = expect(token_kind::greater);
+    auto expression = parse_expected_expression();
+    if(not equal or not greater or not expression) {
+        return std::nullopt;
+    }
+
+    auto returned = arena.add(statement_syntax {
+        return_statement_syntax {
+            .full_span = arena.span(*expression),
+            .value = *expression,
+        }
+    });
+    return arena.add(statement_syntax {
+        block_statement_syntax {
+            .full_span = combine_spans(equal->span, arena.span(*expression)),
+            .statements = { returned },
+        }
+    });
+}
+
+auto parser::looks_like_associated_name_expression() const -> bool
+{
+    if(not check(token_kind::identifier)) {
+        return false;
+    }
+
+    auto lookahead = 1uz;
+    if(peek(lookahead).kind == token_kind::less) {
+        auto depth = 0;
+        while(true) {
+            auto kind = peek(lookahead).kind;
+            if(kind == token_kind::eof) {
+                return false;
+            }
+            if(kind == token_kind::less) {
+                ++depth;
+            } else if(kind == token_kind::greater) {
+                --depth;
+            } else if(kind == token_kind::greater_greater) {
+                depth -= 2;
+            } else if(kind == token_kind::greater_greater_equal) {
+                return false;
+            }
+            ++lookahead;
+            if(depth == 0) {
+                break;
+            }
+            if(depth < 0) {
+                return false;
+            }
+        }
+    }
+
+    return peek(lookahead).kind == token_kind::colon_colon;
+}
+
+auto parser::parse_associated_name_expression() -> std::optional<expr_id>
+{
+    auto type = parse_type(false);
+    auto delimiter = expect(token_kind::colon_colon);
+    auto name = expect_identifier("associated function name");
+    if(not type or not delimiter or not name) {
+        return std::nullopt;
+    }
+
+    return arena.add(expr_syntax {
+        associated_name_expr_syntax {
+            .full_span = combine_spans(arena.span(*type), name->span),
+            .type = *type,
+            .name = name->span,
+        }
+    });
+}
+
+auto parser::looks_like_type_initializer() const -> bool
+{
+    if(not check(token_kind::identifier)) {
+        return false;
+    }
+
+    auto lookahead = 1uz;
+    if(peek(lookahead).kind == token_kind::less) {
+        auto depth = 0;
+        while(true) {
+            auto kind = peek(lookahead).kind;
+            if(kind == token_kind::eof) {
+                return false;
+            }
+            if(kind == token_kind::less) {
+                ++depth;
+            } else if(kind == token_kind::greater) {
+                --depth;
+            } else if(kind == token_kind::greater_greater) {
+                depth -= 2;
+            } else if(kind == token_kind::greater_greater_equal) {
+                return false;
+            }
+            ++lookahead;
+            if(depth == 0) {
+                break;
+            }
+            if(depth < 0) {
+                return false;
+            }
+        }
+    }
+
+    if(peek(lookahead).kind == token_kind::kw_const) {
+        ++lookahead;
+    }
+    while(peek(lookahead).kind == token_kind::star) {
+        ++lookahead;
+    }
+    if(peek(lookahead).kind == token_kind::amp) {
+        ++lookahead;
+    }
+    return peek(lookahead).kind == token_kind::l_brace;
+}
+
+auto parser::parse_type_initializer() -> std::optional<expr_id>
+{
+    auto type = parse_type();
+    if(not type) {
+        return std::nullopt;
+    }
+    return parse_struct_initializer_list(*type, arena.span(*type));
+}
+
+auto parser::parse_struct_initializer_list(type_id type, source_span start) -> std::optional<expr_id>
+{
+    auto open = expect(token_kind::l_brace);
+    if(not open) {
+        return std::nullopt;
+    }
+
+    auto initializers = std::vector<struct_initializer_syntax>{};
+    auto named = std::optional<bool>{};
+    if(not check(token_kind::r_brace)) {
+        while(true) {
+            if(check(token_kind::dot)) {
+                if(named == false) {
+                    report_current(
+                        diagnostic_kind::unexpected_token,
+                        "named field initializers cannot follow positional initializers"
+                    );
+                    return std::nullopt;
+                }
+                named = true;
+                auto dot = consume();
+                auto name = expect_identifier("field name");
+                auto equal = expect(token_kind::equal);
+                auto value = parse_expected_expression();
+                if(not name or not equal or not value) {
+                    return std::nullopt;
+                }
+                initializers.emplace_back(
+                    std::in_place_type<named_field_initializer_syntax>,
+                    combine_spans(dot.span, arena.span(*value)),
+                    name->span,
+                    *value
+                );
+            } else {
+                if(named == true) {
+                    report_current(
+                        diagnostic_kind::unexpected_token,
+                        "positional initializers cannot follow named field initializers"
+                    );
+                    return std::nullopt;
+                }
+                named = false;
+                auto value = parse_expected_expression();
+                if(not value) {
+                    return std::nullopt;
+                }
+                initializers.emplace_back(
+                    std::in_place_type<positional_initializer_syntax>,
+                    arena.span(*value),
+                    *value
+                );
+            }
+
+            if(not check(token_kind::comma)) {
+                break;
+            }
+            consume();
+            if(check(token_kind::r_brace)) {
+                break;
+            }
+        }
+    }
+
+    auto close = expect(token_kind::r_brace);
+    if(not close) {
+        return std::nullopt;
+    }
+    return arena.add(expr_syntax {
+        struct_init_expr_syntax {
+            .full_span = combine_spans(start, close->span),
+            .type = type,
+            .initializers = std::move(initializers),
+        }
+    });
+}
+
+auto parser::parse_block_expression() -> std::optional<expr_id>
+{
+    auto open = expect(token_kind::l_brace);
+    if(not open) {
+        return std::nullopt;
+    }
+
+    auto statements = std::vector<stmt_id>{};
+    auto tail = std::optional<expr_id>{};
+    while(not check_any({ token_kind::r_brace, token_kind::eof })) {
+        if (
+            check_contextual("type")
+            and peek(1uz).kind == token_kind::identifier
+            and peek(2uz).kind == token_kind::equal
+        ) {
+            auto statement = parse_statement();
+            if(not statement) {
+                synchronize_statement();
+                continue;
+            }
+            statements.emplace_back(*statement);
+            continue;
+        }
+
+        if(starts_expression(peek().kind)) {
+            auto expression = parse_expression();
+            if(not expression) {
+                return std::nullopt;
+            }
+            if(check(token_kind::semicolon)) {
+                auto semicolon = consume();
+                statements.emplace_back(arena.add(statement_syntax {
+                    expression_statement_syntax {
+                        .full_span = combine_spans(arena.span(*expression), semicolon.span),
+                        .expression = *expression,
+                    }
+                }));
+                continue;
+            }
+            tail = *expression;
+            break;
+        }
+
+        auto statement = parse_statement();
+        if(not statement) {
+            synchronize_statement();
+            continue;
+        }
+        statements.emplace_back(*statement);
+    }
+
+    auto close = expect(token_kind::r_brace);
+    if(not close) {
+        return std::nullopt;
+    }
+    return arena.add(expr_syntax {
+        block_expr_syntax {
+            .full_span = combine_spans(open->span, close->span),
+            .statements = std::move(statements),
+            .tail = tail,
+        }
+    });
+}
+
+auto parser::type_from_name(source_span name) -> type_id
+{
+    return arena.add(type_syntax {
+        .full_span = name,
+        .name = name,
+    });
 }
 
 auto parser::parse_array_literal() -> std::optional<expr_id>

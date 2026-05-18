@@ -8,7 +8,22 @@ auto semantic_analyzer::check_bodies() -> void
         auto const& unit = units[unit_index];
         auto const& syntax = unit.root;
         for(auto function_id : syntax.functions) {
+            if(unit.ast.node(function_id).kind == function_syntax_kind::lambda) {
+                continue;
+            }
             check_function(unit_index, function_id);
+        }
+        for(auto impl_id : syntax.impls) {
+            auto const& impl = unit.ast.node(impl_id);
+            for(auto function_id : impl.functions) {
+                check_function(unit_index, function_id);
+            }
+        }
+        for(auto impl_id : syntax.concept_impls) {
+            auto const& impl = unit.ast.node(impl_id);
+            for(auto function_id : impl.functions) {
+                check_function(unit_index, function_id);
+            }
         }
     }
 }
@@ -21,17 +36,42 @@ auto semantic_analyzer::check_function(std::size_t unit_index, function_id id) -
     active_function = id;
 
     auto const& function = active_ast->node(active_function);
+    if(function.defaulted) {
+        return;
+    }
     auto signature_id = result.signature_of(active_unit_index, active_function);
     if(not signature_id.valid()) {
         return;
     }
 
     enter_function_scope();
+    active_self = {};
 
     auto& signature = result.signatures[signature_id.value];
     auto returns = return_state{};
     if(not is_error(signature.returns)) {
         returns.declared_return = signature.returns;
+    }
+
+    auto const function_symbol = result.function_symbol_of(active_unit_index, active_function);
+    auto implicit_destructor_self = (
+        function_symbol.valid()
+        and result.symbols[function_symbol.value].function_kind == semantic_function_kind::destructor
+    );
+
+    if(implicit_destructor_self and function_symbol.valid()) {
+        auto const& owner = result.structs[result.symbols[function_symbol.value].struct_index];
+        auto self_type = result.types.intern(reference_type{ owner.type });
+        auto symbol = bind_symbol(semantic_symbol {
+            .kind = symbol_kind::parameter,
+            .name = "self",
+            .span = function.name,
+            .type = self_type,
+            .unit_index = active_unit_index,
+            .function = active_function,
+            .struct_index = result.symbols[function_symbol.value].struct_index,
+        });
+        active_self = symbol;
     }
 
     for(auto index = 0uz; index < function.parameters.size(); ++index) {
@@ -50,6 +90,9 @@ auto semantic_analyzer::check_function(std::size_t unit_index, function_id id) -
         );
         if(symbol.valid()) {
             result.parameter_bindings[semantic_parameter_key{active_unit_index, parameter.name.start}] = symbol;
+            if(name == "self") {
+                active_self = symbol;
+            }
         }
     }
 
@@ -59,9 +102,11 @@ auto semantic_analyzer::check_function(std::size_t unit_index, function_id id) -
 auto semantic_analyzer::enter_function_scope() -> void
 {
     scopes.clear();
+    type_scopes.clear();
     loops.clear();
     scopes.emplace_back(active_unit->visible_functions);
     scopes.emplace_back();
+    type_scopes.emplace_back();
 }
 
 auto semantic_analyzer::bind_symbol(semantic_symbol symbol) -> symbol_id
@@ -81,6 +126,22 @@ auto semantic_analyzer::bind_symbol(semantic_symbol symbol) -> symbol_id
     return id;
 }
 
+auto semantic_analyzer::bind_type_alias(source_span name, semantic_type_id type) -> void
+{
+    auto& scope = type_scopes.back();
+    auto key = std::string{ ast_source.slice(name) };
+    if(scope.contains(key)) {
+        report(
+            diagnostic_kind::duplicate_symbol,
+            name,
+            std::format("duplicate type alias '{}'", key)
+        );
+        return;
+    }
+
+    scope.emplace(std::move(key), type);
+}
+
 auto semantic_analyzer::resolve(std::string_view name) const -> symbol_id
 {
     for(auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
@@ -91,14 +152,57 @@ auto semantic_analyzer::resolve(std::string_view name) const -> symbol_id
     return {};
 }
 
+auto semantic_analyzer::resolve_type_alias(std::string_view name) const -> std::optional<semantic_type_id>
+{
+    for(auto scope = type_scopes.rbegin(); scope != type_scopes.rend(); ++scope) {
+        if(auto found = scope->find(std::string{ name }); found != scope->end()) {
+            return found->second;
+        }
+    }
+    return std::nullopt;
+}
+
+auto semantic_analyzer::self_symbol() const -> symbol_id
+{
+    return active_self;
+}
+
+auto semantic_analyzer::self_struct_index() const -> std::optional<std::uint32_t>
+{
+    if(not active_self.valid()) {
+        return std::nullopt;
+    }
+    auto type = result.symbols[active_self.value].type;
+    return struct_index_of(type);
+}
+
+auto semantic_analyzer::self_field(std::string_view name) const -> std::optional<semantic_field_access>
+{
+    auto owner = self_struct_index();
+    if(not owner) {
+        return std::nullopt;
+    }
+    auto field = field_index(*owner, name);
+    if(not field) {
+        return std::nullopt;
+    }
+    return semantic_field_access {
+        .struct_index = *owner,
+        .field_index = *field,
+        .implicit_self = true,
+    };
+}
+
 auto semantic_analyzer::push_scope() -> void
 {
     scopes.emplace_back();
+    type_scopes.emplace_back();
 }
 
 auto semantic_analyzer::pop_scope() -> void
 {
     scopes.pop_back();
+    type_scopes.pop_back();
 }
 
 auto semantic_analyzer::push_loop(loop_label label) -> void
@@ -130,7 +234,74 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                 }
 
                 auto initializer = check_expression(*active_ast, node.initializer, expected);
+                if(not node.binding_names.empty()) {
+                    auto initializer_type = expected.value_or(read_type(initializer.type));
+                    auto const* tuple = std::get_if<tuple_type>(&result.types.get(read_type(initializer_type)));
+                    if(tuple == nullptr) {
+                        report(
+                            diagnostic_kind::type_mismatch,
+                            node.full_span,
+                            "destructuring declaration requires a tuple initializer"
+                        );
+                        return;
+                    }
+                    if(tuple->elements.size() != node.binding_names.size()) {
+                        report(
+                            diagnostic_kind::aggregate_length_mismatch,
+                            node.full_span,
+                            "destructuring binding count does not match tuple element count"
+                        );
+                    }
+                    if(node.is_ref and not initializer.is_lvalue) {
+                        report(
+                            diagnostic_kind::invalid_assignment_target,
+                            node.full_span,
+                            "ref destructuring initializer must be an lvalue"
+                        );
+                    }
+                    auto elements = tuple->elements;
+                    auto count = std::min(elements.size(), node.binding_names.size());
+                    for(auto index = 0uz; index < count; ++index) {
+                        auto binding = node.binding_names[index];
+                        auto element = elements[index];
+                        auto binding_type = node.is_ref
+                            ? result.types.intern(reference_type {
+                                element,
+                                node.is_const or target_const(initializer.type, initializer.is_const),
+                            })
+                            : element;
+                        auto symbol = (
+                        bind_symbol (semantic_symbol {
+                            .kind = symbol_kind::local,
+                            .name = std::string{ ast_source.slice(binding) },
+                            .span = binding,
+                            .type = binding_type,
+                            .is_const = node.is_const,
+                            .unit_index = active_unit_index,
+                            .function = active_function,
+                        })
+                    );
+                        if(symbol.valid()) {
+                            result.local_bindings[semantic_parameter_key{active_unit_index, binding.start}] = symbol;
+                        }
+                    }
+                    return;
+                }
+
                 auto declared_type = expected.value_or(initializer.type);
+                if(node.is_ref) {
+                    if(not initializer.is_lvalue) {
+                        report(
+                            diagnostic_kind::invalid_assignment_target,
+                            node.full_span,
+                            "ref declaration initializer must be an lvalue"
+                        );
+                    }
+                    declared_type = result.types.intern(reference_type {
+                        read_type(declared_type),
+                        node.is_const or target_const(initializer.type, initializer.is_const),
+                    });
+                }
                 if(expected and not can_implicitly_convert(initializer, *expected)) {
                     report(
                         diagnostic_kind::type_mismatch,
@@ -144,14 +315,19 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                         .kind = symbol_kind::local,
                         .name = std::string{ ast_source.slice(node.name) },
                         .span = node.name,
-                        .type = declared_type,
-                        .is_const = node.is_const,
-                        .unit_index = active_unit_index,
-                    })
-                );
+                    .type = declared_type,
+                    .is_const = node.is_const,
+                    .unit_index = active_unit_index,
+                    .function = active_function,
+                })
+            );
                 if(symbol.valid()) {
                     result.statement_bindings[semantic_node_key{active_unit_index, id}] = symbol;
+                    result.local_bindings[semantic_parameter_key{active_unit_index, node.name.start}] = symbol;
                 }
+            },
+            [&](type_alias_statement_syntax const& node) {
+                bind_type_alias(node.name, lower_type(*active_ast, node.type));
             },
             [&](if_statement_syntax const& node) {
                 check_condition(node.condition);
@@ -198,11 +374,12 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                         .kind = symbol_kind::local,
                         .name = std::string{ ast_source.slice(node.name) },
                         .span = node.name,
-                        .type = element,
-                        .is_const = node.is_const,
-                        .unit_index = active_unit_index,
-                    })
-                );
+                    .type = element,
+                    .is_const = node.is_const,
+                    .unit_index = active_unit_index,
+                    .function = active_function,
+                })
+            );
                 if(symbol.valid()) {
                     result.statement_bindings[semantic_node_key{active_unit_index, id}] = symbol;
                 }
