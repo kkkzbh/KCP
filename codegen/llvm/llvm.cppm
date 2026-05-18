@@ -534,7 +534,7 @@ struct llvm_module_lowerer
     {
         auto count = cast_value(value(instruction.operands.front()), semantic_type_ids::builtin(builtin_type_kind::u64));
         auto elem_size = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), type_size(instruction.aggregate_type));
-        auto align = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 8);
+        auto align = llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), type_align(instruction.aggregate_type));
         return builder.CreateCall(cp_alloc_function(), { elem_size, align, count });
     }
 
@@ -547,28 +547,12 @@ struct llvm_module_lowerer
         auto i64 = llvm::Type::getInt64Ty(context);
         auto pointer = llvm::PointerType::get(context, 0);
         auto function_type = llvm::FunctionType::get(pointer, { i64, i64, i64 }, false);
-        auto function = llvm::Function::Create(
+        return llvm::Function::Create(
             function_type,
-            llvm::Function::InternalLinkage,
+            llvm::Function::ExternalLinkage,
             "cp_alloc",
             llvm_module
         );
-        auto argument = function->arg_begin();
-        auto elem_size = &*argument++;
-        elem_size->setName("elem_size");
-        auto align = &*argument++;
-        align->setName("align");
-        auto count = &*argument;
-        count->setName("count");
-        static_cast<void>(align);
-
-        auto guard = llvm::IRBuilderBase::InsertPointGuard{ builder };
-        auto block = llvm::BasicBlock::Create(context, "entry", function);
-        builder.SetInsertPoint(block);
-        auto bytes = builder.CreateMul(elem_size, count);
-        auto allocation = builder.CreateCall(malloc_function(), { bytes });
-        builder.CreateRet(allocation);
-        return function;
     }
 
     auto cp_free_function() -> llvm::Function*
@@ -579,50 +563,10 @@ struct llvm_module_lowerer
 
         auto pointer = llvm::PointerType::get(context, 0);
         auto function_type = llvm::FunctionType::get(llvm::Type::getVoidTy(context), { pointer }, false);
-        auto function = llvm::Function::Create(
+        return llvm::Function::Create(
             function_type,
-            llvm::Function::InternalLinkage,
+            llvm::Function::ExternalLinkage,
             "cp_free",
-            llvm_module
-        );
-        auto argument = function->arg_begin();
-        argument->setName("ptr");
-
-        auto guard = llvm::IRBuilderBase::InsertPointGuard{ builder };
-        auto block = llvm::BasicBlock::Create(context, "entry", function);
-        builder.SetInsertPoint(block);
-        builder.CreateCall(free_function(), { &*argument });
-        builder.CreateRetVoid();
-        return function;
-    }
-
-    auto malloc_function() -> llvm::Function*
-    {
-        if(auto function = llvm_module.getFunction("malloc")) {
-            return function;
-        }
-        auto i64 = llvm::Type::getInt64Ty(context);
-        auto pointer = llvm::PointerType::get(context, 0);
-        auto function_type = llvm::FunctionType::get(pointer, { i64 }, false);
-        return llvm::Function::Create(
-            function_type,
-            llvm::Function::ExternalLinkage,
-            "malloc",
-            llvm_module
-        );
-    }
-
-    auto free_function() -> llvm::Function*
-    {
-        if(auto function = llvm_module.getFunction("free")) {
-            return function;
-        }
-        auto pointer = llvm::PointerType::get(context, 0);
-        auto function_type = llvm::FunctionType::get(llvm::Type::getVoidTy(context), { pointer }, false);
-        return llvm::Function::Create(
-            function_type,
-            llvm::Function::ExternalLinkage,
-            "free",
             llvm_module
         );
     }
@@ -639,10 +583,14 @@ struct llvm_module_lowerer
                 [&](array_type const& type) { return type_size(type.element) * type.length; },
                 [&](tuple_type const& type) -> std::uint64_t {
                     auto total = std::uint64_t{};
+                    auto alignment = 1uz;
                     for(auto element : type.elements) {
+                        auto element_alignment = type_align(element);
+                        alignment = std::max(alignment, element_alignment);
+                        total = align_to(total, element_alignment);
                         total += type_size(element);
                     }
-                    return total;
+                    return align_to(total, alignment);
                 },
                 [](reference_type const&) -> std::uint64_t { return 8; },
                 [](pointer_type const&) -> std::uint64_t { return 8; },
@@ -650,19 +598,26 @@ struct llvm_module_lowerer
                 [](generic_parameter_type const&) -> std::uint64_t { return 0; },
                 [&](struct_type const& type) -> std::uint64_t {
                     auto total = std::uint64_t{};
+                    auto alignment = 1uz;
                     for(auto const& field : ir.structs[type.index].fields) {
+                        auto field_alignment = type_align_substituted(field.type, type.arguments);
+                        alignment = std::max(alignment, field_alignment);
+                        total = align_to(total, field_alignment);
                         total += type_size_substituted(field.type, type.arguments);
                     }
-                    return total;
+                    return align_to(total, alignment);
                 },
                 [&](variant_type const& type) -> std::uint64_t {
                     auto total = std::uint64_t{4};
+                    auto alignment = 4uz;
                     for(auto const& variant_case : ir.variants[type.index].cases) {
-                        for(auto payload : variant_case.payload_types) {
-                            total += type_size_substituted(payload, type.arguments);
-                        }
+                        auto payload_size = variant_case_payload_size(variant_case, type.arguments);
+                        auto payload_alignment = variant_case_payload_align(variant_case, type.arguments);
+                        alignment = std::max(alignment, payload_alignment);
+                        total = align_to(total, payload_alignment);
+                        total += payload_size;
                     }
-                    return total;
+                    return align_to(total, alignment);
                 },
             },
             kind
@@ -682,6 +637,91 @@ struct llvm_module_lowerer
             return 0;
         }
         return type_size(id);
+    }
+
+    auto variant_case_payload_size(
+        semantic_variant_case const& variant_case,
+        std::vector<semantic_type_id> const& arguments
+    ) -> std::uint64_t
+    {
+        auto total = std::uint64_t{};
+        auto alignment = 1uz;
+        for(auto payload : variant_case.payload_types) {
+            auto payload_alignment = type_align_substituted(payload, arguments);
+            alignment = std::max(alignment, payload_alignment);
+            total = align_to(total, payload_alignment);
+            total += type_size_substituted(payload, arguments);
+        }
+        return align_to(total, alignment);
+    }
+
+    auto type_align(semantic_type_id id) -> std::uint64_t
+    {
+        auto const& kind = ir.types.get(id);
+        return std::visit (
+            overloaded {
+                [](unit_type const&) -> std::uint64_t { return 1; },
+                [](error_type const&) -> std::uint64_t { return 1; },
+                [](inferred_type const&) -> std::uint64_t { return 1; },
+                [&](builtin_type const& type) { return builtin_align(type.kind); },
+                [&](array_type const& type) { return type_align(type.element); },
+                [&](tuple_type const& type) -> std::uint64_t {
+                    auto result = 1uz;
+                    for(auto element : type.elements) {
+                        result = std::max(result, type_align(element));
+                    }
+                    return result;
+                },
+                [](reference_type const&) -> std::uint64_t { return 8; },
+                [](pointer_type const&) -> std::uint64_t { return 8; },
+                [](function_type const&) -> std::uint64_t { return 8; },
+                [](generic_parameter_type const&) -> std::uint64_t { return 1; },
+                [&](struct_type const& type) -> std::uint64_t {
+                    auto result = 1uz;
+                    for(auto const& field : ir.structs[type.index].fields) {
+                        result = std::max(result, type_align_substituted(field.type, type.arguments));
+                    }
+                    return result;
+                },
+                [&](variant_type const& type) -> std::uint64_t {
+                    auto result = 4uz;
+                    for(auto const& variant_case : ir.variants[type.index].cases) {
+                        for(auto payload : variant_case.payload_types) {
+                            result = std::max(result, type_align_substituted(payload, type.arguments));
+                        }
+                    }
+                    return result;
+                },
+            },
+            kind
+        );
+    }
+
+    auto type_align_substituted(
+        semantic_type_id id,
+        std::vector<semantic_type_id> const& arguments
+    ) -> std::uint64_t
+    {
+        auto const& kind = ir.types.get(id);
+        if(auto const* parameter = std::get_if<generic_parameter_type>(&kind)) {
+            if(parameter->index < arguments.size()) {
+                return type_align(arguments[parameter->index]);
+            }
+            return 1;
+        }
+        return type_align(id);
+    }
+
+    auto variant_case_payload_align(
+        semantic_variant_case const& variant_case,
+        std::vector<semantic_type_id> const& arguments
+    ) -> std::uint64_t
+    {
+        auto result = 1uz;
+        for(auto payload : variant_case.payload_types) {
+            result = std::max(result, type_align_substituted(payload, arguments));
+        }
+        return result;
     }
 
     auto builtin_size(builtin_type_kind kind) -> std::uint64_t
@@ -709,6 +749,16 @@ struct llvm_module_lowerer
                 return 8uz;
         }
         std::unreachable();
+    }
+
+    auto builtin_align(builtin_type_kind kind) -> std::uint64_t
+    {
+        return std::min<std::uint64_t>(builtin_size(kind), 8);
+    }
+
+    auto align_to(std::uint64_t value, std::uint64_t alignment) -> std::uint64_t
+    {
+        return ((value + alignment - 1uz) / alignment) * alignment;
     }
 
     auto llvm_indices(std::vector<std::uint64_t> const& values) -> std::vector<unsigned>

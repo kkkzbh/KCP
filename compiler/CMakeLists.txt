@@ -15,6 +15,13 @@ target_link_libraries(cp
         stdc++exp
 )
 
+add_dependencies(cp cp_runtime)
+
+target_compile_definitions(cp
+    PRIVATE
+        CP_RUNTIME_LIBRARY_PATH="$<TARGET_FILE:cp_runtime>"
+)
+
 set_target_properties(cp PROPERTIES
     CXX_STANDARD 26
     CXX_EXTENSIONS OFF

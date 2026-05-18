@@ -12,6 +12,13 @@ struct test_tools
     std::filesystem::path fixture_examples{};
 };
 
+struct example_case
+{
+    std::string name{};
+    std::vector<std::filesystem::path> sources{};
+    int expected_exit{};
+};
+
 auto shell_quote(std::string_view value) -> std::string
 {
     auto output = std::string{ "'" };
@@ -363,44 +370,53 @@ auto check_types_example_emit_ll(test_tools const& tools) -> void
 
 auto check_fixture_examples(test_tools const& tools) -> void
 {
-	    auto groups = std::vector<std::pair<std::string, std::vector<std::filesystem::path>>> {
-	        { "basics", { tools.fixture_examples / "basics" / "main.cp" } },
-	        { "modules", { tools.fixture_examples / "modules" / "main.cp" } },
-	        { "types", { tools.fixture_examples / "types" / "main.cp" } },
-	        { "flow", { tools.fixture_examples / "flow" / "main.cp" } },
-	        { "structs", { tools.fixture_examples / "structs" / "main.cp" } },
-	        { "concepts", { tools.fixture_examples / "concepts" / "main.cp" } },
-	    };
+    auto groups = std::vector<example_case> {
+        { "basics", { tools.fixture_examples / "basics" / "main.cp" }, 21 },
+        { "modules", { tools.fixture_examples / "modules" / "main.cp" }, 42 },
+        { "types", { tools.fixture_examples / "types" / "main.cp" }, 96 },
+        { "flow", { tools.fixture_examples / "flow" / "main.cp" }, 0 },
+        { "structs", { tools.fixture_examples / "structs" / "main.cp" }, 42 },
+        { "concepts", { tools.fixture_examples / "concepts" / "main.cp" }, 10 },
+        { "generics", { tools.fixture_examples / "generics" / "main.cp" }, 42 },
+        { "variants", { tools.fixture_examples / "variants" / "main.cp" }, 42 },
+        { "lambdas", { tools.fixture_examples / "lambdas" / "main.cp" }, 42 },
+        { "memory", { tools.fixture_examples / "memory" / "main.cp" }, 42 },
+        { "std", { tools.fixture_examples / "std" / "main.cp" }, 42 },
+    };
 
-    for(auto const& [name, sources] : groups) {
-        auto dir = unique_temp_dir("fixture-" + name);
+    for(auto const& group : groups) {
+        auto dir = unique_temp_dir("fixture-" + group.name);
         auto output = dir / "example.ll";
         auto bitcode = dir / "example.bc";
         auto app = dir / "example";
         auto ll_args = (
-            sources
+            group.sources
             | std::views::transform([](std::filesystem::path const& path) { return path.string(); })
             | std::ranges::to<std::vector<std::string>>()
         );
         ll_args.insert(ll_args.end(), { "--emit", "ll", "-o", output.string() });
 
         auto ll_status = compile(tools, ll_args);
-        test_parser::assert_true(ll_status == 0, std::format("cp should emit LLVM IR for {} example", name));
+        test_parser::assert_true(ll_status == 0, std::format("cp should emit LLVM IR for {} example", group.name));
         test_parser::assert_true(
             run_status({ tools.llvm_as.string(), output.string(), "-o", bitcode.string() }) == 0,
-            std::format("llvm-as should accept {} example LLVM IR", name)
+            std::format("llvm-as should accept {} example LLVM IR", group.name)
         );
 
         auto bin_args = (
-            sources
+            group.sources
             | std::views::transform([](std::filesystem::path const& path) { return path.string(); })
             | std::ranges::to<std::vector<std::string>>()
         );
         bin_args.insert(bin_args.end(), { "-o", app.string() });
 
         auto bin_status = compile(tools, bin_args);
-        test_parser::assert_true(bin_status == 0, std::format("cp should emit binary for {} example", name));
-        test_parser::assert_true(std::filesystem::exists(app), std::format("{} example binary should exist", name));
+        test_parser::assert_true(bin_status == 0, std::format("cp should emit binary for {} example", group.name));
+        test_parser::assert_true(std::filesystem::exists(app), std::format("{} example binary should exist", group.name));
+        test_parser::assert_true(
+            exit_code(run_status({ app.string() })) == group.expected_exit,
+            std::format("{} example binary should return {}", group.name, group.expected_exit)
+        );
     }
 }
 

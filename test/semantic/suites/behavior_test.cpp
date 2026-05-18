@@ -7,14 +7,23 @@ import semantic;
 #include "assert.hpp"
 
 namespace {
-auto read_fixture_example(std::string_view name) -> std::string
+auto read_text_file(std::filesystem::path const& path) -> std::string
 {
-    auto path = std::filesystem::path{ TEST_SEMANTIC_FIXTURE_EXAMPLES_DIR } / name;
     auto input = std::ifstream{ path };
     test_parser::assert_true(input.good(), std::format("{} should be readable", path.string()));
     auto buffer = std::ostringstream{};
     buffer << input.rdbuf();
     return buffer.str();
+}
+
+auto read_fixture_example(std::string_view name) -> std::string
+{
+    return read_text_file(std::filesystem::path{ TEST_SEMANTIC_FIXTURE_EXAMPLES_DIR } / name);
+}
+
+auto read_std_module(std::string_view name) -> std::string
+{
+    return read_text_file(std::filesystem::path{ TEST_SEMANTIC_STD_DIR } / name);
 }
 
 auto parse_source(source_manager& sources, std::string_view name, std::string text) -> parse_result
@@ -68,10 +77,16 @@ auto expect_diagnostic(std::string_view name, std::string text, diagnostic_kind 
         std::format("{} should report {}", name, spec(kind).code));
 }
 
-auto check_fixture_example_group(std::initializer_list<std::string_view> names) -> void
+auto check_fixture_example_group(
+    std::initializer_list<std::string_view> names,
+    std::initializer_list<std::string_view> std_modules = {}
+) -> void
 {
     auto sources = source_manager{};
     auto units = std::vector<parse_result>{};
+    for(auto name : std_modules) {
+        units.emplace_back(parse_source(sources, std::format("std/{}", name), read_std_module(name)));
+    }
     for(auto name : names) {
         units.emplace_back(parse_source(sources, name, read_fixture_example(name)));
     }
@@ -108,6 +123,12 @@ auto check_fixture_examples() -> void
     check_fixture_example_group({ "types/main.cp" });
     check_fixture_example_group({ "flow/main.cp" });
     check_fixture_example_group({ "structs/main.cp" });
+    check_fixture_example_group({ "concepts/main.cp" }, { "option.cp", "iter.cp" });
+    check_fixture_example_group({ "generics/main.cp" });
+    check_fixture_example_group({ "variants/main.cp" }, { "option.cp" });
+    check_fixture_example_group({ "lambdas/main.cp" });
+    check_fixture_example_group({ "memory/main.cp" });
+    check_fixture_example_group({ "std/main.cp" }, { "option.cp", "result.cp" });
 }
 
 auto check_side_tables() -> void

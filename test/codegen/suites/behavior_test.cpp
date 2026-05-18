@@ -290,8 +290,9 @@ answer() -> i32
 
     auto emitted = emit_llvm_ir(ir.module);
     test_parser::assert_true(emitted.verified, emitted.error.empty() ? "LLVM module should verify" : emitted.error);
-    test_parser::assert_true(emitted.ir.contains("@cp_alloc"), "LLVM IR should define/call cp_alloc");
-    test_parser::assert_true(emitted.ir.contains("@cp_free"), "LLVM IR should define/call cp_free");
+    test_parser::assert_true(emitted.ir.contains("declare ptr @cp_alloc"), "LLVM IR should declare runtime cp_alloc");
+    test_parser::assert_true(emitted.ir.contains("declare void @cp_free"), "LLVM IR should declare runtime cp_free");
+    test_parser::assert_true(not emitted.ir.contains("@malloc"), "LLVM IR should not lower allocation directly to malloc");
     test_parser::assert_true(emitted.ir.contains("getelementptr i32"), "LLVM IR should use typed pointer arithmetic");
 }
 

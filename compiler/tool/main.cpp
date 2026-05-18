@@ -6,6 +6,10 @@ import semantic;
 import codegen.ir;
 import codegen.llvm;
 
+#ifndef CP_RUNTIME_LIBRARY_PATH
+#define CP_RUNTIME_LIBRARY_PATH ""
+#endif
+
 namespace {
 
 enum class emit_kind : std::uint8_t
@@ -403,6 +407,9 @@ auto link_binary(
     command.emplace_back("-Wno-override-module");
     append_all(command, options.clang_args);
     command.emplace_back(input_path.string());
+    if constexpr(std::string_view{ CP_RUNTIME_LIBRARY_PATH }.size() != 0uz) {
+        command.emplace_back(CP_RUNTIME_LIBRARY_PATH);
+    }
     command.emplace_back("-o");
     command.emplace_back(output_path.string());
     append_all(command, options.link_args);
@@ -498,7 +505,7 @@ auto main(int argc, char** argv) -> int
     auto loaded_inputs = std::set<std::string>{};
     auto parse_ok = true;
     for(auto input_index = 0uz; input_index < pending_inputs.size(); ++input_index) {
-        auto const& input = pending_inputs[input_index];
+        auto input = pending_inputs[input_index];
         auto normalized = normalized_path(input);
         if(loaded_inputs.contains(normalized)) {
             continue;
