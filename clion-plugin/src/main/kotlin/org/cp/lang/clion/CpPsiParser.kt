@@ -331,6 +331,16 @@ private class CpBuilder(
     private fun parseParameter() {
         val marker = builder.mark()
         consume(CpTypes.KW_CONST)
+        if (at(CpTypes.IDENTIFIER) && builder.tokenText == "self" && lookAhead(1) != CpTypes.COLON) {
+            markIdentifier(CpElements.PARAMETER_NAME, "expected parameter name")
+            if (consume(CpTypes.KW_CONST)) {
+                expect(CpTypes.AMP, "expected '&'")
+            } else {
+                consume(CpTypes.AMP)
+            }
+            marker.done(CpElements.PARAMETER)
+            return
+        }
         markIdentifier(CpElements.PARAMETER_NAME, "expected parameter name")
         expect(CpTypes.COLON, "expected ':'")
         parseType()

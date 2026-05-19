@@ -116,6 +116,31 @@ class CpPsiParserTest : BasePlatformTestCase() {
         assertTrue(file.collectPsiErrors().isEmpty())
     }
 
+    fun testSelfReceiverParametersDoNotRequireColon() {
+        val file = parse(
+            """
+            struct result {
+                value: i32;
+            }
+
+            impl result {
+                is_ok(self const&) -> bool
+                {
+                    return true;
+                }
+
+                set(self&, value: i32)
+                {
+                    self.value = value;
+                }
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(3, file.descendants(CpElements.PARAMETER).size)
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
     fun testIncompleteConceptDoesNotTrapParserRecovery() {
         val file = parse(
             """

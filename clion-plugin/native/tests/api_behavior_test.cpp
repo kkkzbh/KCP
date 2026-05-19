@@ -10,33 +10,21 @@ auto contains(std::string_view haystack, std::string_view needle) -> bool
     return haystack.find(needle) != std::string_view::npos;
 }
 
-auto has_diagnostic(
-    cp_lexer_helper::inspect_result const& result,
-    std::string_view stage,
-    std::string_view code
-) -> bool
+auto has_diagnostic(cp_lexer_helper::inspect_result const& result, std::string_view stage, std::string_view code) -> bool
 {
     return std::ranges::any_of(result.diagnostics, [&](auto const& diagnostic) {
         return diagnostic.stage == stage and diagnostic.code == code;
     });
 }
 
-auto has_highlight(
-    cp_lexer_helper::inspect_result const& result,
-    std::string_view category
-) -> bool
+auto has_highlight(cp_lexer_helper::inspect_result const& result, std::string_view category) -> bool
 {
     return std::ranges::any_of(result.highlights, [&](auto const& highlight) {
         return highlight.category == category;
     });
 }
 
-auto highlight_count(
-    cp_lexer_helper::inspect_result const& result,
-    std::string_view source,
-    std::string_view category,
-    std::string_view text
-) -> std::size_t
+auto highlight_count(cp_lexer_helper::inspect_result const& result, std::string_view source, std::string_view category, std::string_view text) -> std::size_t
 {
     return static_cast<std::size_t>(std::ranges::count_if(result.highlights, [&](auto const& highlight) {
         return highlight.category == category

@@ -82,8 +82,7 @@ auto tokens_to_json(std::span<token_record const> tokens) -> std::string;
 
 auto inspect_to_json(inspect_result const& result) -> std::string;
 
-auto run_cli(std::span<std::string_view const> args, std::istream& input, std::ostream& output,
-             std::ostream& error) -> int;
+auto run_cli(std::span<std::string_view const> args, std::istream& input, std::ostream& output, std::ostream& error) -> int;
 
 } // namespace cp_lexer_helper
 
@@ -127,11 +126,7 @@ auto diagnostic_stage_name(diagnostic_kind kind) -> std::string
     return std::string{ stage_name(spec(kind).stage) };
 }
 
-auto make_diagnostic_record(
-    source_manager const& sources,
-    byte_pos file_start,
-    diagnostic const& value
-) -> diagnostic_record
+auto make_diagnostic_record(source_manager const& sources, byte_pos file_start, diagnostic const& value) -> diagnostic_record
 {
     auto const position = sources.position(value.primary_span.start);
     auto const info = spec(value.kind);
@@ -147,19 +142,12 @@ auto make_diagnostic_record(
     };
 }
 
-auto append_diagnostic_record(
-    std::vector<diagnostic_record>& records,
-    source_manager const& sources,
-    byte_pos file_start,
-    diagnostic const& value) -> void
+auto append_diagnostic_record(std::vector<diagnostic_record>& records, source_manager const& sources, byte_pos file_start, diagnostic const& value) -> void
 {
     records.emplace_back(make_diagnostic_record(sources, file_start, value));
 }
 
-auto append_diagnostics(
-    std::vector<diagnostic>& output,
-    std::vector<diagnostic> const& input
-) -> void
+auto append_diagnostics(std::vector<diagnostic>& output, std::vector<diagnostic> const& input) -> void
 {
     output.insert(output.end(), input.begin(), input.end());
 }
@@ -271,10 +259,7 @@ auto is_literal_token(token_kind kind) -> bool
     );
 }
 
-auto add_token_highlights(
-    highlight_collector& collector,
-    std::span<token const> tokens
-) -> void
+auto add_token_highlights(highlight_collector& collector, std::span<token const> tokens) -> void
 {
     for(auto const& token : tokens) {
         if(token.kind == token_kind::kw_true or token.kind == token_kind::kw_false) {
@@ -299,22 +284,9 @@ auto add_token_highlights(
     }
 }
 
-auto collect_statement_highlights(
-    highlight_collector& collector,
-    ast_arena const& ast,
-    semantic_result const* checked,
-    std::size_t unit_index,
-    stmt_id id
-) -> void;
+auto collect_statement_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, stmt_id id) -> void;
 
-auto collect_expression_highlights(
-    highlight_collector& collector,
-    ast_arena const& ast,
-    semantic_result const* checked,
-    std::size_t unit_index,
-    expr_id id,
-    bool call_callee = false
-) -> void;
+auto collect_expression_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, expr_id id, bool call_callee = false) -> void;
 
 auto source_text(highlight_collector& collector, source_span span) -> std::string_view
 {
@@ -335,13 +307,7 @@ auto collect_literal_highlight(highlight_collector& collector, source_span span)
     }
 }
 
-auto collect_type_highlights(
-    highlight_collector& collector,
-    ast_arena const& ast,
-    semantic_result const* checked,
-    std::size_t unit_index,
-    type_id id
-) -> void
+auto collect_type_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, type_id id) -> void
 {
     auto const& type = ast.node(id);
     auto const name = source_text(collector, type.name);
@@ -377,13 +343,7 @@ auto collect_type_highlights(
     }
 }
 
-auto collect_type_argument_highlights(
-    highlight_collector& collector,
-    ast_arena const& ast,
-    semantic_result const* checked,
-    std::size_t unit_index,
-    std::span<type_argument_syntax const> arguments
-) -> void
+auto collect_type_argument_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, std::span<type_argument_syntax const> arguments) -> void
 {
     for(auto const& argument : arguments) {
         std::visit(overloaded {
@@ -397,12 +357,7 @@ auto collect_type_argument_highlights(
     }
 }
 
-auto function_declaration_category(
-    semantic_result const* checked,
-    std::size_t unit_index,
-    function_id id,
-    function_syntax const& function
-) -> std::string_view
+auto function_declaration_category(semantic_result const* checked, std::size_t unit_index, function_id id, function_syntax const& function) -> std::string_view
 {
     if(checked != nullptr) {
         auto const symbol = checked->function_symbol_of(unit_index, id);
@@ -441,14 +396,7 @@ auto local_category(semantic_result const* checked, symbol_id symbol, std::strin
     return fallback;
 }
 
-auto collect_expression_highlights(
-    highlight_collector& collector,
-    ast_arena const& ast,
-    semantic_result const* checked,
-    std::size_t unit_index,
-    expr_id id,
-    bool call_callee
-) -> void
+auto collect_expression_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, expr_id id, bool call_callee) -> void
 {
     auto const& expression = ast.node(id);
     auto const semantic_symbol = [&]() -> symbol_id {
@@ -640,10 +588,7 @@ auto collect_expression_highlights(
     }, expression);
 }
 
-auto collect_generic_parameter_highlights(
-    highlight_collector& collector,
-    std::span<generic_parameter_syntax const> parameters
-) -> void
+auto collect_generic_parameter_highlights(highlight_collector& collector, std::span<generic_parameter_syntax const> parameters) -> void
 {
     for(auto const& parameter : parameters) {
         collector.add(parameter.is_pack ? "type.parameter.pack" : "type.parameter", parameter.name);
@@ -653,14 +598,7 @@ auto collect_generic_parameter_highlights(
     }
 }
 
-auto collect_function_highlights(
-    highlight_collector& collector,
-    ast_arena const& ast,
-    semantic_result const* checked,
-    std::size_t unit_index,
-    function_id id,
-    function_syntax const& function
-) -> void
+auto collect_function_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, function_id id, function_syntax const& function) -> void
 {
     collector.add(function_declaration_category(checked, unit_index, id, function), function.name);
     collect_generic_parameter_highlights(collector, function.generic_parameters);
@@ -678,13 +616,7 @@ auto collect_function_highlights(
     }
 }
 
-auto collect_statement_highlights(
-    highlight_collector& collector,
-    ast_arena const& ast,
-    semantic_result const* checked,
-    std::size_t unit_index,
-    stmt_id id
-) -> void
+auto collect_statement_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, stmt_id id) -> void
 {
     auto const& statement = ast.node(id);
     std::visit(overloaded {
@@ -767,23 +699,14 @@ auto collect_statement_highlights(
     }, statement);
 }
 
-auto collect_module_name_highlights(
-    highlight_collector& collector,
-    module_name_syntax const& name,
-    std::string_view category
-) -> void
+auto collect_module_name_highlights(highlight_collector& collector, module_name_syntax const& name, std::string_view category) -> void
 {
     for(auto component : name.components) {
         collector.add(category, component);
     }
 }
 
-auto collect_ast_highlights(
-    highlight_collector& collector,
-    parse_result const& parsed,
-    semantic_result const* checked,
-    std::size_t unit_index
-) -> void
+auto collect_ast_highlights(highlight_collector& collector, parse_result const& parsed, semantic_result const* checked, std::size_t unit_index) -> void
 {
     if(not parsed.root) {
         return;
@@ -1238,8 +1161,7 @@ auto inspect_to_json(inspect_result const& result) -> std::string
     return payload.dump();
 }
 
-auto run_cli(std::span<std::string_view const> args, std::istream& input, std::ostream& output,
-             std::ostream& error) -> int
+auto run_cli(std::span<std::string_view const> args, std::istream& input, std::ostream& output, std::ostream& error) -> int
 {
     auto const request = parse_cli(args, error);
     if(not request) {
