@@ -1,5 +1,5 @@
 <idea-plugin package="org.cp.lang.clion">
-    <id>org.cp.lang.clion</id>
+    <id>org.cp.lang.cp</id>
     <name>cp Language Support</name>
     <vendor>kkkzbh</vendor>
     <description><![CDATA[
@@ -21,6 +21,10 @@
         <lang.psiStructureViewFactory language="cp" implementationClass="org.cp.lang.clion.CpStructureViewFactory" />
         <lang.commenter language="cp" implementationClass="org.cp.lang.clion.CpCommenter" />
         <lang.braceMatcher language="cp" implementationClass="org.cp.lang.clion.CpBraceMatcher" />
+        <langCodeStyleSettingsProvider implementation="org.cp.lang.clion.CpCodeStyleSettingsProvider" />
+        <lang.formatter language="cp" implementationClass="org.cp.lang.clion.CpFormattingModelBuilder" />
+        <backspaceHandlerDelegate implementation="org.cp.lang.clion.CpBackspaceHandler" />
+        <enterHandlerDelegate implementation="org.cp.lang.clion.CpEnterHandler" />
         <externalAnnotator language="cp" implementationClass="org.cp.lang.clion.CpExternalAnnotator" />
         <highlightErrorFilter implementation="org.cp.lang.clion.CpMarkdownErrorFilter" />
         <daemon.externalAnnotatorsFilter implementation="org.cp.lang.clion.CpExternalAnnotatorsFilter" />

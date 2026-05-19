@@ -14,6 +14,7 @@ class CpLexerContractTest {
         val cases = listOf(
             repoRoot.resolve("design/examples/basics/main.cp"),
             repoRoot.resolve("design/examples/flow/main.cp"),
+            repoRoot.resolve("design/examples/operators/main.cp"),
             repoRoot.resolve("design/examples/types/main.cp"),
             repoRoot.resolve("test/lexer/cases/valid/trivia/block_comment.lex"),
             repoRoot.resolve("test/lexer/cases/valid/trivia/line_comment.lex"),

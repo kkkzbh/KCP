@@ -141,6 +141,37 @@ class CpPsiParserTest : BasePlatformTestCase() {
         assertTrue(file.collectPsiErrors().isEmpty())
     }
 
+    fun testOperatorOverloadsBuildStructuredPsi() {
+        val file = parse(
+            """
+            export operator +(left: vec2 const&, right: vec2 const&) -> vec2
+            {
+                return vec2{ left.x + right.x, left.y + right.y };
+            }
+
+            impl vec2 {
+                operator [](self&, index: i32) -> i32&
+                {
+                    return x;
+                }
+
+                operator +=(self&, rhs: this const&)
+                {
+                    x += rhs.x;
+                    y += rhs.y;
+                }
+            }
+            """.trimIndent(),
+        )
+
+        val names = file.descendants(CpElements.FUNCTION_NAME).map { it.text }
+        assertTrue("top-level operator should be parsed as a function", "operator +" in names)
+        assertTrue("operator [] should parse both bracket tokens as the function name", "operator []" in names)
+        assertTrue("operator += should be parsed as an impl function", "operator +=" in names)
+        assertEquals(3, file.descendants(CpElements.FUNCTION).size)
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
     fun testIncompleteConceptDoesNotTrapParserRecovery() {
         val file = parse(
             """

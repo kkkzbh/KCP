@@ -13,6 +13,10 @@ class CpSyntaxHighlighterTest {
             highlighter.getTokenHighlights(CpTypes.KW_LET),
         )
         assertArrayEquals(
+            arrayOf(CpSyntaxHighlighter.DECLARATION_KEYWORD),
+            highlighter.getTokenHighlights(CpTypes.KW_OPERATOR),
+        )
+        assertArrayEquals(
             arrayOf(CpSyntaxHighlighter.CONTROL_KEYWORD),
             highlighter.getTokenHighlights(CpTypes.KW_RETURN),
         )

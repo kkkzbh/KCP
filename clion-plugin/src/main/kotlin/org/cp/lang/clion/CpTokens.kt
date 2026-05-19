@@ -34,6 +34,7 @@ object CpTypes {
     @JvmField val KW_STRUCT = token("kw_struct")
     @JvmField val KW_IMPL = token("kw_impl")
     @JvmField val KW_CONCEPT = token("kw_concept")
+    @JvmField val KW_OPERATOR = token("kw_operator")
     @JvmField val KW_TRAIT = token("kw_trait")
     @JvmField val KW_AS = token("kw_as")
     @JvmField val KW_TRUE = token("kw_true")
@@ -89,8 +90,8 @@ object CpTypes {
     @JvmField
     val KEYWORD_TOKENS: TokenSet = TokenSet.create(
         KW_LET, KW_CONST, KW_IF, KW_ELSE, KW_WHILE, KW_DO, KW_FOR, KW_BREAK, KW_CONTINUE, KW_RETURN,
-        KW_IMPORT, KW_EXPORT, KW_MODULE, KW_STRUCT, KW_IMPL, KW_CONCEPT, KW_TRAIT, KW_AS, KW_TRUE, KW_FALSE,
-        KW_AND, KW_OR, KW_NOT,
+        KW_IMPORT, KW_EXPORT, KW_MODULE, KW_STRUCT, KW_IMPL, KW_CONCEPT, KW_OPERATOR, KW_TRAIT,
+        KW_AS, KW_TRUE, KW_FALSE, KW_AND, KW_OR, KW_NOT,
     )
 
     @JvmField
@@ -100,7 +101,7 @@ object CpTypes {
 
     @JvmField
     val DECLARATION_KEYWORD_TOKENS: TokenSet = TokenSet.create(
-        KW_LET, KW_CONST, KW_STRUCT, KW_IMPL, KW_CONCEPT, KW_TRAIT,
+        KW_LET, KW_CONST, KW_STRUCT, KW_IMPL, KW_CONCEPT, KW_OPERATOR, KW_TRAIT,
     )
 
     @JvmField
@@ -157,6 +158,7 @@ object CpTypes {
         "struct" to KW_STRUCT,
         "impl" to KW_IMPL,
         "concept" to KW_CONCEPT,
+        "operator" to KW_OPERATOR,
         "trait" to KW_TRAIT,
         "as" to KW_AS,
         "true" to KW_TRUE,

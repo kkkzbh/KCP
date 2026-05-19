@@ -59,6 +59,10 @@ private class CpBuilder(
                 parseImplBlock()
                 true
             }
+            at(CpTypes.KW_OPERATOR) -> {
+                parseOperatorFunction(CpElements.FUNCTION)
+                true
+            }
             at(CpTypes.IDENTIFIER) -> {
                 parseFunction(CpElements.FUNCTION)
                 true
@@ -219,6 +223,7 @@ private class CpBuilder(
             when {
                 contextual("type") -> parseTypeAlias(CpElements.TYPE_ALIAS)
                 at(CpTypes.TILDE) -> parseDestructor()
+                at(CpTypes.KW_OPERATOR) -> parseOperatorFunction(CpElements.FUNCTION)
                 at(CpTypes.IDENTIFIER) -> parseFunction(CpElements.FUNCTION)
                 else -> {
                     builder.error("expected impl item")
@@ -244,6 +249,39 @@ private class CpBuilder(
     private fun parseFunction(type: IElementType) {
         val marker = builder.mark()
         markIdentifier(CpElements.FUNCTION_NAME, "expected function name")
+        parseFunctionTail(marker, type)
+    }
+
+    private fun parseOperatorFunction(type: IElementType) {
+        val marker = builder.mark()
+        parseOperatorFunctionName()
+        parseFunctionTail(marker, type)
+    }
+
+    private fun parseOperatorFunctionName() {
+        val marker = builder.mark()
+        expect(CpTypes.KW_OPERATOR, "expected 'operator'")
+        parseOverloadOperatorName()
+        marker.done(CpElements.FUNCTION_NAME)
+    }
+
+    private fun parseOverloadOperatorName() {
+        if (consume(CpTypes.L_BRACKET)) {
+            expect(CpTypes.R_BRACKET, "expected ']'")
+            return
+        }
+        val current = token()
+        if (current != null && current in OVERLOAD_OPERATOR_TOKENS) {
+            advance()
+            return
+        }
+        builder.error("expected overloadable operator")
+        if (!at(CpTypes.L_PAREN) && !builder.eof()) {
+            advance()
+        }
+    }
+
+    private fun parseFunctionTail(marker: PsiBuilder.Marker, type: IElementType) {
         if (at(CpTypes.LESS)) {
             parseGenericParameterList()
         }
@@ -1190,6 +1228,7 @@ private class CpBuilder(
             contextual("variant") ||
             at(CpTypes.KW_CONCEPT) ||
             at(CpTypes.KW_IMPL) ||
+            at(CpTypes.KW_OPERATOR) ||
             at(CpTypes.KW_EXPORT)
 
     private fun synchronizeStatement() {
@@ -1269,6 +1308,37 @@ private class CpBuilder(
             CpTypes.STRING_LITERAL,
             CpTypes.KW_TRUE,
             CpTypes.KW_FALSE,
+        )
+
+        private val OVERLOAD_OPERATOR_TOKENS = setOf(
+            CpTypes.PLUS,
+            CpTypes.MINUS,
+            CpTypes.STAR,
+            CpTypes.SLASH,
+            CpTypes.PERCENT,
+            CpTypes.AMP,
+            CpTypes.PIPE,
+            CpTypes.CARET,
+            CpTypes.LESS_LESS,
+            CpTypes.GREATER_GREATER,
+            CpTypes.TILDE,
+            CpTypes.EQUAL_EQUAL,
+            CpTypes.BANG_EQUAL,
+            CpTypes.LESS,
+            CpTypes.LESS_EQUAL,
+            CpTypes.GREATER,
+            CpTypes.GREATER_EQUAL,
+            CpTypes.EQUAL,
+            CpTypes.PLUS_EQUAL,
+            CpTypes.MINUS_EQUAL,
+            CpTypes.STAR_EQUAL,
+            CpTypes.SLASH_EQUAL,
+            CpTypes.PERCENT_EQUAL,
+            CpTypes.AMP_EQUAL,
+            CpTypes.PIPE_EQUAL,
+            CpTypes.CARET_EQUAL,
+            CpTypes.LESS_LESS_EQUAL,
+            CpTypes.GREATER_GREATER_EQUAL,
         )
 
         private fun binaryOperator(type: IElementType?): BinaryOperator? =
