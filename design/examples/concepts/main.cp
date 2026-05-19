@@ -1,3 +1,4 @@
+import std.option;
 import std.iter;
 
 concept sized_iterator {

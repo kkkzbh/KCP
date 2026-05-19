@@ -31,7 +31,7 @@ let item = optional<i32>::some(1);
 ```cp
 export module std.iter;
 
-export import std.option;
+import std.option;
 
 export concept iterator {
     type iter_item;

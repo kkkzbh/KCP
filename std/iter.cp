@@ -1,6 +1,6 @@
 export module std.iter;
 
-export import std.option;
+import std.option;
 
 export concept iterator {
     type iter_item;

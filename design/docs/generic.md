@@ -429,9 +429,9 @@ variant optional<T> {
     some(T);
 }
 
-variant result<T, E> {
-    ok(T);
-    error(E);
+variant expected<T, E> {
+    value(T);
+    unexpected(E);
 }
 ```
 
@@ -444,7 +444,7 @@ case 构造器挂在具体实例的类型命名空间下。不做 case 构造器
 ```cp
 let a = optional<i32>::none;
 let b = optional<i32>::some(1);
-let c = result<i32, str>::error("bad input");
+let c = expected<i32, str>::unexpected("bad input");
 ```
 
 下面这些形式不支持：
@@ -452,7 +452,7 @@ let c = result<i32, str>::error("bad input");
 ```cp
 optional::some(1)
 optional<_>::some(1)
-result<i32>::error("bad input")
+expected<i32>::unexpected("bad input")
 ```
 
 `match` 面对泛型 `variant` 的具体实例时，先把类型参数替换为具体类型，再检查 case payload 绑定和分支类型统一：
@@ -467,7 +467,7 @@ value_or<T>(value: optional<T>, fallback: T) -> T
 }
 ```
 
-泛型 `variant` 的运行时布局按具体实例计算。`optional<i32>`、`optional<str>`、`result<i32,str>` 分别拥有自己的 `tag + payload storage` 布局；tag 编号仍是编译器内部细节，不进入源语言语义。
+泛型 `variant` 的运行时布局按具体实例计算。`optional<i32>`、`optional<str>`、`expected<i32,str>` 分别拥有自己的 `tag + payload storage` 布局；tag 编号仍是编译器内部细节，不进入源语言语义。
 
 ## 泛型 impl
 

@@ -120,7 +120,7 @@ auto check_fixture_examples() -> void
     check_fixture_example_group({ "variants/main.cp" }, { "option.cp" });
     check_fixture_example_group({ "lambdas/main.cp" });
     check_fixture_example_group({ "memory/main.cp" });
-    check_fixture_example_group({ "std/main.cp" }, { "std.cp", "option.cp", "result.cp", "iter.cp" });
+    check_fixture_example_group({ "std/main.cp" }, { "std.cp", "option.cp", "expected.cp", "iter.cp" });
 }
 
 auto check_side_tables() -> void

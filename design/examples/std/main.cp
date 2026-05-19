@@ -4,11 +4,11 @@ main() -> i32
 {
     let some = optional<i32>::some(20);
     let none = optional<i32>::none;
-    let ok = result<i32,str>::ok(12);
-    let err = result<i32,str>::error("bad");
+    let value = expected<i32,str>::value(12);
+    let error = expected<i32,str>::unexpected("bad");
 
-    if(some.is_some() and none.is_none() and ok.is_ok() and err.is_error()) {
-        return some.value_or(0) + none.value_or(10) + ok.value_or(0);
+    if(some.has_value() and not none.has_value() and value.has_value() and not error.has_value()) {
+        return some.value_or(0) + none.value_or(10) + value.value_or(0);
     }
     return 1;
 }
