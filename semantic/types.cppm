@@ -201,11 +201,7 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
     return lowered;
 }
 
-auto semantic_analyzer::lower_parameter_type(
-    ast_arena const& ast,
-    parameter_syntax const& parameter,
-    std::optional<semantic_type_id> self_type
-) -> semantic_type_id
+auto semantic_analyzer::lower_parameter_type(ast_arena const& ast, parameter_syntax const& parameter, std::optional<semantic_type_id> self_type) -> semantic_type_id
 {
     if(parameter.is_self_receiver) {
         if(not self_type) {
@@ -257,11 +253,7 @@ auto semantic_analyzer::associated_type(semantic_type_id owner, std::string_view
     return std::nullopt;
 }
 
-auto semantic_analyzer::lower_type_with_substitutions(
-    ast_arena const& ast,
-    type_id id,
-    std::map<std::string, semantic_type_id> const& substitutions
-) -> semantic_type_id
+auto semantic_analyzer::lower_type_with_substitutions(ast_arena const& ast, type_id id, std::map<std::string, semantic_type_id> const& substitutions) -> semantic_type_id
 {
     auto old_substitutions = active_type_substitutions;
     active_type_substitutions = &substitutions;
@@ -312,11 +304,7 @@ auto semantic_analyzer::resolve_concept_symbol(std::size_t unit_index, std::stri
     return std::nullopt;
 }
 
-auto semantic_analyzer::resolve_exported_type_symbol(
-    std::string_view module_name,
-    std::string_view name,
-    std::set<std::string>& visiting
-) const -> std::optional<symbol_id>
+auto semantic_analyzer::resolve_exported_type_symbol(std::string_view module_name, std::string_view name, std::set<std::string>& visiting) const -> std::optional<symbol_id>
 {
     auto module_key = std::string{ module_name };
     if(not visiting.emplace(module_key).second) {
@@ -347,11 +335,7 @@ auto semantic_analyzer::resolve_exported_type_symbol(
     return std::nullopt;
 }
 
-auto semantic_analyzer::resolve_exported_concept_symbol(
-    std::string_view module_name,
-    std::string_view name,
-    std::set<std::string>& visiting
-) const -> std::optional<symbol_id>
+auto semantic_analyzer::resolve_exported_concept_symbol(std::string_view module_name, std::string_view name, std::set<std::string>& visiting) const -> std::optional<symbol_id>
 {
     auto module_key = std::string{ module_name };
     if(not visiting.emplace(module_key).second) {
@@ -527,12 +511,7 @@ auto semantic_analyzer::method_symbol(semantic_type_id owner, std::string_view n
     return std::nullopt;
 }
 
-auto semantic_analyzer::concrete_method_symbol(
-    symbol_id symbol,
-    semantic_type_id receiver_type,
-    std::vector<expression_info> const& arguments,
-    source_span span
-) -> std::optional<symbol_id>
+auto semantic_analyzer::concrete_method_symbol(symbol_id symbol, semantic_type_id receiver_type, std::vector<expression_info> const& arguments, source_span span) -> std::optional<symbol_id>
 {
     auto const& value = result.symbols[symbol.value];
     if(not function_is_generic(value.unit_index, value.function)) {

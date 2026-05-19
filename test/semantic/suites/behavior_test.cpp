@@ -77,10 +77,7 @@ auto expect_diagnostic(std::string_view name, std::string text, diagnostic_kind 
         std::format("{} should report {}", name, spec(kind).code));
 }
 
-auto check_fixture_example_group(
-    std::initializer_list<std::string_view> names,
-    std::initializer_list<std::string_view> std_modules = {}
-) -> void
+auto check_fixture_example_group(std::initializer_list<std::string_view> names, std::initializer_list<std::string_view> std_modules = {}) -> void
 {
     auto sources = source_manager{};
     auto units = std::vector<parse_result>{};
@@ -95,12 +92,7 @@ auto check_fixture_example_group(
     test_parser::assert_true(checked.accepted(), "fixture example group should pass semantic analysis");
 }
 
-auto function_return_type(
-    source_manager const& sources,
-    parse_result const& parsed,
-    semantic_result const& checked,
-    std::string_view name
-) -> semantic_type_id
+auto function_return_type(source_manager const& sources, parse_result const& parsed, semantic_result const& checked, std::string_view name) -> semantic_type_id
 {
     auto source = ast_source_view{ sources };
     auto const& unit = *parsed.root;

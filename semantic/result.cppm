@@ -156,13 +156,7 @@ export struct semantic_lambda_capture
 {
     semantic_lambda_capture() = default;
 
-    semantic_lambda_capture(
-        symbol_id captured_symbol,
-        std::string captured_name,
-        source_span captured_span,
-        semantic_type_id captured_type,
-        bool captured_const
-    ) :
+    semantic_lambda_capture(symbol_id captured_symbol, std::string captured_name, source_span captured_span, semantic_type_id captured_type, bool captured_const) :
         symbol(captured_symbol),
         name(std::move(captured_name)),
         span(captured_span),
@@ -258,11 +252,7 @@ export struct semantic_function_instance_key
 {
     constexpr semantic_function_instance_key() = default;
 
-    semantic_function_instance_key(
-        std::size_t source_unit,
-        function_id source_function,
-        std::vector<semantic_type_id> instance_type_arguments
-    ) :
+    semantic_function_instance_key(std::size_t source_unit, function_id source_function, std::vector<semantic_type_id> instance_type_arguments) :
         unit_index(source_unit),
         function_id_value(source_function.value),
         type_arguments(std::move(instance_type_arguments)) {}
@@ -279,14 +269,7 @@ export struct semantic_function_instance
 {
     semantic_function_instance() = default;
 
-    semantic_function_instance(
-        semantic_function_instance_key instance_key,
-        std::size_t instance_context,
-        symbol_id instance_symbol,
-        function_signature_id instance_signature,
-        std::map<std::string, semantic_type_id> instance_substitutions,
-        std::map<std::string, std::vector<semantic_type_id>> instance_pack_substitutions
-    ) :
+    semantic_function_instance(semantic_function_instance_key instance_key, std::size_t instance_context, symbol_id instance_symbol, function_signature_id instance_signature, std::map<std::string, semantic_type_id> instance_substitutions, std::map<std::string, std::vector<semantic_type_id>> instance_pack_substitutions) :
         key(std::move(instance_key)),
         context_index(instance_context),
         symbol(instance_symbol),

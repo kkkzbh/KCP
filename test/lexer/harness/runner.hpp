@@ -4,10 +4,7 @@
 
 namespace test_lexer {
 
-auto inline compare_tokens(
-    std::filesystem::path const& case_path,
-    std::vector<expected_token> const& expected,
-    std::vector<expected_token> const& actual) -> void
+auto inline compare_tokens(std::filesystem::path const& case_path, std::vector<expected_token> const& expected, std::vector<expected_token> const& actual) -> void
 {
     if (expected == actual) {
         return;
@@ -32,10 +29,7 @@ auto inline compare_tokens(
         join_lines(actual_lines)));
 }
 
-auto inline compare_diagnostics(
-    std::filesystem::path const& case_path,
-    std::vector<expected_diagnostic> const& expected,
-    std::vector<expected_diagnostic> const& actual) -> void
+auto inline compare_diagnostics(std::filesystem::path const& case_path, std::vector<expected_diagnostic> const& expected, std::vector<expected_diagnostic> const& actual) -> void
 {
     if (expected == actual) {
         return;
@@ -60,9 +54,7 @@ auto inline compare_diagnostics(
         join_lines(actual_lines)));
 }
 
-auto inline assert_invalid_tokens_match_diagnostics(
-    std::vector<token> const& tokens,
-    std::vector<diagnostic> const& diagnostics) -> void
+auto inline assert_invalid_tokens_match_diagnostics(std::vector<token> const& tokens, std::vector<diagnostic> const& diagnostics) -> void
 {
     auto invalid_tokens = std::vector<token const*>{};
     for(auto const& value : tokens) {

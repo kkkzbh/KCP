@@ -54,15 +54,7 @@ auto semantic_analyzer::check_function_instance(std::size_t instance_index) -> v
     );
 }
 
-auto semantic_analyzer::check_function_body(
-    std::size_t unit_index,
-    function_id id,
-    std::size_t context_index,
-    function_signature_id signature_id,
-    symbol_id function_symbol,
-    std::map<std::string, semantic_type_id> const* substitutions,
-    std::map<std::string, std::vector<semantic_type_id>> const* pack_substitutions
-) -> void
+auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id id, std::size_t context_index, function_signature_id signature_id, symbol_id function_symbol, std::map<std::string, semantic_type_id> const* substitutions, std::map<std::string, std::vector<semantic_type_id>> const* pack_substitutions) -> void
 {
     auto old_context = active_context_index;
     auto old_unit_index = active_unit_index;
@@ -526,11 +518,7 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
     );
 }
 
-auto semantic_analyzer::check_template_for_statement(
-    template_for_statement_syntax const& node,
-    stmt_id id,
-    return_state& returns
-) -> void
+auto semantic_analyzer::check_template_for_statement(template_for_statement_syntax const& node, stmt_id id, return_state& returns) -> void
 {
     auto pack_name = std::string{ ast_source.slice(node.pack_name) };
     auto expansions = std::vector<semantic_template_for_expansion>{};

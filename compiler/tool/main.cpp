@@ -127,11 +127,7 @@ auto import_roots(std::string_view executable) -> std::vector<std::filesystem::p
     return roots;
 }
 
-auto resolve_import_path(
-    std::filesystem::path const& importer,
-    std::string_view name,
-    std::span<std::filesystem::path const> roots
-)
+auto resolve_import_path(std::filesystem::path const& importer, std::string_view name, std::span<std::filesystem::path const> roots)
     -> std::optional<std::filesystem::path>
 {
     auto const base = importer.parent_path();
@@ -388,11 +384,7 @@ auto resolve_tool_path(std::string const& tool) -> std::string
     return tool;
 }
 
-auto compile_object(
-    cli_options const& options,
-    std::filesystem::path const& ll_path,
-    std::filesystem::path const& obj_path
-) -> bool
+auto compile_object(cli_options const& options, std::filesystem::path const& ll_path, std::filesystem::path const& obj_path) -> bool
 {
     auto command = std::vector<std::string>{ resolve_tool_path(options.clang) };
     command.emplace_back("-Wno-override-module");
@@ -404,11 +396,7 @@ auto compile_object(
     return run_command(command, options.verbose);
 }
 
-auto link_binary(
-    cli_options const& options,
-    std::filesystem::path const& input_path,
-    std::filesystem::path const& output_path
-) -> bool
+auto link_binary(cli_options const& options, std::filesystem::path const& input_path, std::filesystem::path const& output_path) -> bool
 {
     auto command = std::vector<std::string>{ resolve_tool_path(options.clang) };
     command.emplace_back("-Wno-override-module");

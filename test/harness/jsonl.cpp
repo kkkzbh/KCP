@@ -94,10 +94,7 @@ auto read_jsonl(std::filesystem::path const& path, bool required) -> std::vector
     return result;
 }
 
-auto required_string(
-    jsonl_object const& object,
-    std::filesystem::path const& path,
-    std::string_view key) -> std::string
+auto required_string(jsonl_object const& object, std::filesystem::path const& path, std::string_view key) -> std::string
 {
     auto const* value = find_field(object, key);
     if (value == nullptr) {
@@ -111,10 +108,7 @@ auto required_string(
     fail_jsonl(path, object.line, std::format("field '{}' must be a string", key));
 }
 
-auto required_size(
-    jsonl_object const& object,
-    std::filesystem::path const& path,
-    std::string_view key) -> std::size_t
+auto required_size(jsonl_object const& object, std::filesystem::path const& path, std::string_view key) -> std::size_t
 {
     auto const* value = find_field(object, key);
     if (value == nullptr) {

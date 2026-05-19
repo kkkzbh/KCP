@@ -13,11 +13,7 @@ struct binary_operator_entry
     int right_bp;
 };
 
-auto constexpr make_binary_operator_entry(
-    token_kind kind,
-    int left_bp,
-    int right_bp
-) -> binary_operator_entry
+auto constexpr make_binary_operator_entry(token_kind kind, int left_bp, int right_bp) -> binary_operator_entry
 {
     return {
         .kind = kind,

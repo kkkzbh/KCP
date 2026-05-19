@@ -185,54 +185,21 @@ private:
     auto collect_variant_cases(std::size_t unit_index, ast_arena const& ast, variant_id id) -> void;
     auto resolve_imports() -> void;
     auto collect_function_declaration(std::size_t unit_index, ast_arena const& ast, function_id id) -> void;
-    auto validate_extern_c_function(
-        function_syntax const& function,
-        std::span<semantic_type_id const> parameter_types,
-        semantic_type_id return_type
-    ) -> void;
+    auto validate_extern_c_function(function_syntax const& function, std::span<semantic_type_id const> parameter_types, semantic_type_id return_type) -> void;
     auto is_extern_c_compatible_type(semantic_type_id type, bool allow_unit) const -> bool;
     auto collect_impl_declarations(std::size_t unit_index, ast_arena const& ast, impl_id id) -> void;
-    auto collect_impl_function(
-        std::size_t unit_index,
-        ast_arena const& ast,
-        impl_syntax const& impl,
-        semantic_type_id impl_type,
-        std::vector<std::string> const& impl_generic_parameters,
-        function_id id
-    ) -> void;
+    auto collect_impl_function(std::size_t unit_index, ast_arena const& ast, impl_syntax const& impl, semantic_type_id impl_type, std::vector<std::string> const& impl_generic_parameters, function_id id) -> void;
     auto collect_concept_impl_declarations(std::size_t unit_index, ast_arena const& ast, concept_impl_id id) -> void;
-    auto collect_concept_impl_function(
-        std::size_t unit_index,
-        ast_arena const& ast,
-        concept_impl_syntax const& impl,
-        semantic_type_id target_type,
-        function_id id
-    ) -> std::optional<symbol_id>;
+    auto collect_concept_impl_function(std::size_t unit_index, ast_arena const& ast, concept_impl_syntax const& impl, semantic_type_id target_type, function_id id) -> std::optional<symbol_id>;
     auto validate_concept_impl(semantic_concept_impl const& impl, source_span span) -> void;
     auto validate_parent_concepts(semantic_concept_impl const& impl, semantic_concept const& concept_value, source_span span)
         -> void;
-    auto validate_requires_clause(
-        std::size_t unit_index,
-        ast_arena const& ast,
-        concept_requires_syntax const& clause,
-        std::optional<semantic_type_id> self_type = std::nullopt
-    ) -> void;
+    auto validate_requires_clause(std::size_t unit_index, ast_arena const& ast, concept_requires_syntax const& clause, std::optional<semantic_type_id> self_type = std::nullopt) -> void;
     auto target_implements(symbol_id concept_symbol, semantic_type_id target_type) -> bool;
     auto concept_impl_applies(semantic_concept_impl const& impl, semantic_type_id target_type)
         -> std::optional<std::vector<semantic_type_id>>;
-    auto requires_clause_satisfied(
-        std::size_t unit_index,
-        ast_arena const& ast,
-        concept_requires_syntax const& clause,
-        std::map<std::string, semantic_type_id> const& substitutions,
-        std::optional<semantic_type_id> self_type = std::nullopt
-    ) -> bool;
-    auto requirement_type(
-        std::size_t unit_index,
-        ast_arena const& ast,
-        type_id id,
-        semantic_type_id self_type
-    ) -> semantic_type_id;
+    auto requires_clause_satisfied(std::size_t unit_index, ast_arena const& ast, concept_requires_syntax const& clause, std::map<std::string, semantic_type_id> const& substitutions, std::optional<semantic_type_id> self_type = std::nullopt) -> bool;
+    auto requirement_type(std::size_t unit_index, ast_arena const& ast, type_id id, semantic_type_id self_type) -> semantic_type_id;
     auto signatures_match(function_signature const& actual, semantic_concept_function_requirement const& expected, semantic_type_id self_type)
         -> bool;
     auto collect_type_pattern_parameters(ast_arena const& ast, type_id id) -> std::vector<std::string>;
@@ -248,54 +215,21 @@ private:
     auto function_explicit_generic_count(std::size_t unit_index, function_id id) const -> std::size_t;
     auto function_substitution_map(std::size_t unit_index, function_id id, std::vector<semantic_type_id> const& type_arguments)
         -> std::map<std::string, semantic_type_id>;
-    auto function_type_pack_substitution_map(
-        std::size_t unit_index,
-        function_id id,
-        std::vector<semantic_type_id> const& type_arguments
-    ) -> std::map<std::string, std::vector<semantic_type_id>>;
+    auto function_type_pack_substitution_map(std::size_t unit_index, function_id id, std::vector<semantic_type_id> const& type_arguments) -> std::map<std::string, std::vector<semantic_type_id>>;
     auto function_pack_generic_index(std::size_t unit_index, function_id id) const -> std::optional<std::size_t>;
     auto function_value_pack_parameter_index(std::size_t unit_index, function_id id) const -> std::optional<std::size_t>;
     auto validate_function_pack_shape(std::size_t unit_index, function_id id) -> void;
-    auto validate_function_type_arguments(
-        std::size_t unit_index,
-        function_id id,
-        std::vector<semantic_type_id> const& type_arguments,
-        source_span span
-    ) -> bool;
-    auto infer_function_type_arguments_for_call(
-        symbol_id symbol,
-        std::optional<semantic_type_id> receiver_type,
-        std::vector<expression_info> const& arguments,
-        std::vector<semantic_type_id> const& explicit_arguments,
-        source_span span
-    ) -> std::optional<std::vector<semantic_type_id>>;
-    auto instantiate_function_symbol(
-        symbol_id symbol,
-        std::optional<semantic_type_id> receiver_type,
-        std::vector<expression_info> const& arguments,
-        std::vector<semantic_type_id> explicit_arguments,
-        source_span span
-    ) -> semantic_function_instance const*;
+    auto validate_function_type_arguments(std::size_t unit_index, function_id id, std::vector<semantic_type_id> const& type_arguments, source_span span) -> bool;
+    auto infer_function_type_arguments_for_call(symbol_id symbol, std::optional<semantic_type_id> receiver_type, std::vector<expression_info> const& arguments, std::vector<semantic_type_id> const& explicit_arguments, source_span span) -> std::optional<std::vector<semantic_type_id>>;
+    auto instantiate_function_symbol(symbol_id symbol, std::optional<semantic_type_id> receiver_type, std::vector<expression_info> const& arguments, std::vector<semantic_type_id> explicit_arguments, source_span span) -> semantic_function_instance const*;
 
     auto lower_type(ast_arena const& ast, type_id id) -> semantic_type_id;
-    auto lower_type_with_substitutions(
-        ast_arena const& ast,
-        type_id id,
-        std::map<std::string, semantic_type_id> const& substitutions
-    ) -> semantic_type_id;
+    auto lower_type_with_substitutions(ast_arena const& ast, type_id id, std::map<std::string, semantic_type_id> const& substitutions) -> semantic_type_id;
     auto substitute_type(semantic_type_id type, std::vector<semantic_type_id> const& arguments) -> semantic_type_id;
     auto resolve_type_symbol(std::size_t unit_index, std::string_view name) const -> std::optional<symbol_id>;
     auto resolve_concept_symbol(std::size_t unit_index, std::string_view name) const -> std::optional<symbol_id>;
-    auto resolve_exported_type_symbol(
-        std::string_view module_name,
-        std::string_view name,
-        std::set<std::string>& visiting
-    ) const -> std::optional<symbol_id>;
-    auto resolve_exported_concept_symbol(
-        std::string_view module_name,
-        std::string_view name,
-        std::set<std::string>& visiting
-    ) const -> std::optional<symbol_id>;
+    auto resolve_exported_type_symbol(std::string_view module_name, std::string_view name, std::set<std::string>& visiting) const -> std::optional<symbol_id>;
+    auto resolve_exported_concept_symbol(std::string_view module_name, std::string_view name, std::set<std::string>& visiting) const -> std::optional<symbol_id>;
     auto associated_type(semantic_type_id owner, std::string_view name) -> std::optional<semantic_type_id>;
     auto struct_index_of(semantic_type_id type) const -> std::optional<std::uint32_t>;
     auto variant_index_of(semantic_type_id type) const -> std::optional<std::uint32_t>;
@@ -308,19 +242,10 @@ private:
     auto range_element_type(semantic_type_id type) -> semantic_type_id;
     auto range_info(expression_info range, source_span span) -> semantic_for_range_info;
     auto method_symbol(semantic_type_id owner, std::string_view name) const -> std::optional<symbol_id>;
-    auto concrete_method_symbol(
-        symbol_id symbol,
-        semantic_type_id receiver_type,
-        std::vector<expression_info> const& arguments,
-        source_span span
-    ) -> std::optional<symbol_id>;
+    auto concrete_method_symbol(symbol_id symbol, semantic_type_id receiver_type, std::vector<expression_info> const& arguments, source_span span) -> std::optional<symbol_id>;
     auto pointer_pointee(semantic_type_id type) -> std::optional<expression_info>;
     auto target_const(semantic_type_id type, bool lvalue_const) -> bool;
-    auto lower_parameter_type(
-        ast_arena const& ast,
-        parameter_syntax const& parameter,
-        std::optional<semantic_type_id> self_type = std::nullopt
-    ) -> semantic_type_id;
+    auto lower_parameter_type(ast_arena const& ast, parameter_syntax const& parameter, std::optional<semantic_type_id> self_type = std::nullopt) -> semantic_type_id;
     auto read_type(semantic_type_id type) const -> semantic_type_id;
     auto can_implicitly_convert(expression_info const& from, semantic_type_id to) -> bool;
     auto can_implicitly_convert(semantic_type_id from, semantic_type_id to) -> bool;
@@ -347,64 +272,21 @@ private:
     auto generic_function_symbol(name_expr_syntax const& callee) const -> std::optional<symbol_id>;
     auto explicit_type_arguments(ast_arena const& ast, call_expr_syntax const& node)
         -> std::optional<std::vector<semantic_type_id>>;
-    auto infer_generic_type_arguments(
-        function_signature const& signature,
-        std::vector<expression_info> const& arguments,
-        std::size_t parameter_count
-    ) -> std::optional<std::vector<semantic_type_id>>;
-    auto infer_type_argument(
-        semantic_type_id pattern,
-        semantic_type_id argument,
-        std::map<std::uint32_t, semantic_type_id>& inferred
-    ) -> bool;
+    auto infer_generic_type_arguments(function_signature const& signature, std::vector<expression_info> const& arguments, std::size_t parameter_count) -> std::optional<std::vector<semantic_type_id>>;
+    auto infer_type_argument(semantic_type_id pattern, semantic_type_id argument, std::map<std::uint32_t, semantic_type_id>& inferred) -> bool;
     auto generic_substitution_map(function_syntax const& function, std::vector<semantic_type_id> const& type_arguments)
         -> std::map<std::string, semantic_type_id>;
-    auto instantiate_function(
-        std::size_t unit_index,
-        function_id id,
-        std::vector<semantic_type_id> type_arguments,
-        source_span span
-    ) -> semantic_function_instance const*;
-    auto instantiate_lambda(
-        semantic_lambda_info const& lambda,
-        std::vector<expression_info> const& arguments,
-        std::vector<semantic_type_id> explicit_arguments,
-        source_span span
-    ) -> semantic_lambda_info;
-    auto substitute_signature(
-        function_signature const& signature,
-        std::vector<semantic_type_id> const& type_arguments
-    ) -> function_signature;
-    auto substitute_signature_for_instance(
-        std::size_t unit_index,
-        function_id id,
-        function_signature const& signature,
-        std::vector<semantic_type_id> const& type_arguments,
-        source_span span
-    ) -> function_signature;
-    auto substitute_type_for_instance(
-        semantic_type_id type,
-        std::optional<std::size_t> pack_index,
-        std::vector<semantic_type_id> const& type_arguments,
-        std::optional<semantic_type_id> pack_element,
-        source_span span
-    ) -> semantic_type_id;
-    auto infer_type_argument_with_pack(
-        semantic_type_id pattern,
-        semantic_type_id argument,
-        std::optional<std::size_t> pack_index,
-        std::map<std::uint32_t, semantic_type_id>& inferred,
-        std::optional<semantic_type_id>& pack_element
-    ) -> bool;
+    auto instantiate_function(std::size_t unit_index, function_id id, std::vector<semantic_type_id> type_arguments, source_span span) -> semantic_function_instance const*;
+    auto instantiate_lambda(semantic_lambda_info const& lambda, std::vector<expression_info> const& arguments, std::vector<semantic_type_id> explicit_arguments, source_span span) -> semantic_lambda_info;
+    auto substitute_signature(function_signature const& signature, std::vector<semantic_type_id> const& type_arguments) -> function_signature;
+    auto substitute_signature_for_instance(std::size_t unit_index, function_id id, function_signature const& signature, std::vector<semantic_type_id> const& type_arguments, source_span span) -> function_signature;
+    auto substitute_type_for_instance(semantic_type_id type, std::optional<std::size_t> pack_index, std::vector<semantic_type_id> const& type_arguments, std::optional<semantic_type_id> pack_element, source_span span) -> semantic_type_id;
+    auto infer_type_argument_with_pack(semantic_type_id pattern, semantic_type_id argument, std::optional<std::size_t> pack_index, std::map<std::uint32_t, semantic_type_id>& inferred, std::optional<semantic_type_id>& pack_element) -> bool;
     auto callable_type(semantic_type_id type) const -> function_type const*;
     auto pointer_value_pointee(semantic_type_id type) const -> std::optional<semantic_type_id>;
     auto aggregate_context_for(std::optional<semantic_type_id> expected) -> std::optional<aggregate_context>;
     auto struct_context_for(std::optional<semantic_type_id> expected) -> std::optional<std::uint32_t>;
-    auto choose_constructor(
-        std::uint32_t struct_index,
-        std::vector<expression_info> const& arguments,
-        source_span span
-    ) -> std::optional<symbol_id>;
+    auto choose_constructor(std::uint32_t struct_index, std::vector<expression_info> const& arguments, source_span span) -> std::optional<symbol_id>;
     auto constructor_score(function_signature const& signature, std::vector<expression_info> const& arguments)
         -> std::optional<int>;
     auto join_return_types(std::vector<semantic_type_id> const& values) -> semantic_type_id;
@@ -418,25 +300,12 @@ private:
         -> expression_info;
     auto infer_lambda_return_from_current_return_scope(std::size_t unit_index, function_id id) -> void;
     auto infer_lambda_return_from_current_value_scope(std::size_t unit_index, function_id id) -> void;
-    auto infer_lambda_return_with_base_scopes(
-        std::size_t unit_index,
-        function_id id,
-        std::vector<std::map<std::string, return_inference_binding>> base_scopes,
-        std::vector<std::map<std::string, semantic_type_id>> base_type_scopes
-    ) -> void;
+    auto infer_lambda_return_with_base_scopes(std::size_t unit_index, function_id id, std::vector<std::map<std::string, return_inference_binding>> base_scopes, std::vector<std::map<std::string, semantic_type_id>> base_type_scopes) -> void;
     auto infer_name_expression(name_expr_syntax const& node) -> expression_info;
     auto infer_call_expression(ast_arena const& ast, call_expr_syntax const& node) -> expression_info;
     auto infer_index_expression(ast_arena const& ast, index_expr_syntax const& node) -> expression_info;
-    auto infer_array_literal(
-        ast_arena const& ast,
-        std::vector<expr_id> const& elements,
-        std::optional<semantic_type_id> expected
-    ) -> expression_info;
-    auto infer_tuple_literal(
-        ast_arena const& ast,
-        std::vector<expr_id> const& elements,
-        std::optional<semantic_type_id> expected
-    ) -> expression_info;
+    auto infer_array_literal(ast_arena const& ast, std::vector<expr_id> const& elements, std::optional<semantic_type_id> expected) -> expression_info;
+    auto infer_tuple_literal(ast_arena const& ast, std::vector<expr_id> const& elements, std::optional<semantic_type_id> expected) -> expression_info;
     auto infer_lambda_expression(lambda_expr_syntax const& node, std::optional<semantic_type_id> expected)
         -> expression_info;
     auto infer_callable_return(symbol_id symbol) -> semantic_type_id;
@@ -449,15 +318,7 @@ private:
     auto check_bodies() -> void;
     auto check_function(std::size_t unit_index, function_id id) -> void;
     auto check_function_instance(std::size_t instance_index) -> void;
-    auto check_function_body(
-        std::size_t unit_index,
-        function_id id,
-        std::size_t context_index,
-        function_signature_id signature_id,
-        symbol_id function_symbol,
-        std::map<std::string, semantic_type_id> const* substitutions,
-        std::map<std::string, std::vector<semantic_type_id>> const* pack_substitutions
-    ) -> void;
+    auto check_function_body(std::size_t unit_index, function_id id, std::size_t context_index, function_signature_id signature_id, symbol_id function_symbol, std::map<std::string, semantic_type_id> const* substitutions, std::map<std::string, std::vector<semantic_type_id>> const* pack_substitutions) -> void;
     auto enter_function_scope() -> void;
     auto bind_symbol(semantic_symbol symbol) -> symbol_id;
     auto bind_type_alias(source_span name, semantic_type_id type) -> void;
@@ -481,12 +342,7 @@ private:
     auto check_literal_expression(literal_expr_syntax const& node, expr_id id) -> expression_info;
     auto check_unary_expression(ast_arena const& ast, unary_expr_syntax const& node) -> expression_info;
     auto check_binary_expression(ast_arena const& ast, binary_expr_syntax const& node) -> expression_info;
-    auto check_binary_operator(
-        token_kind operator_kind,
-        semantic_type_id left_type,
-        semantic_type_id right_type,
-        source_span span
-    ) -> expression_info;
+    auto check_binary_operator(token_kind operator_kind, semantic_type_id left_type, semantic_type_id right_type, source_span span) -> expression_info;
     auto check_assignment_expression(ast_arena const& ast, assignment_expr_syntax const& node) -> expression_info;
     auto compound_assignment_operator(token_kind operator_kind) -> std::optional<token_kind>;
     auto check_call_expression(ast_arena const& ast, call_expr_syntax const& node, expr_id id) -> expression_info;
@@ -498,40 +354,18 @@ private:
     auto check_index_expression(ast_arena const& ast, index_expr_syntax const& node) -> expression_info;
     auto check_associated_name_expression(associated_name_expr_syntax const& node, expr_id id) -> expression_info;
     auto check_cast_expression(ast_arena const& ast, cast_expr_syntax const& node) -> expression_info;
-    auto check_array_literal(
-        ast_arena const& ast,
-        source_span span,
-        std::vector<expr_id> const& elements,
-        std::optional<semantic_type_id> expected
-    ) -> expression_info;
-    auto check_tuple_literal(
-        ast_arena const& ast,
-        tuple_literal_expr_syntax const& node,
-        std::optional<semantic_type_id> expected
-    ) -> expression_info;
-    auto check_struct_initializer(
-        ast_arena const& ast,
-        struct_init_expr_syntax const& node,
-        expr_id id,
-        std::optional<semantic_type_id> expected
-    ) -> expression_info;
+    auto check_array_literal(ast_arena const& ast, source_span span, std::vector<expr_id> const& elements, std::optional<semantic_type_id> expected) -> expression_info;
+    auto check_tuple_literal(ast_arena const& ast, tuple_literal_expr_syntax const& node, std::optional<semantic_type_id> expected) -> expression_info;
+    auto check_struct_initializer(ast_arena const& ast, struct_init_expr_syntax const& node, expr_id id, std::optional<semantic_type_id> expected) -> expression_info;
     auto check_block_expression(ast_arena const& ast, block_expr_syntax const& node) -> expression_info;
     auto check_match_expression(ast_arena const& ast, match_expr_syntax const& node) -> expression_info;
     auto check_lambda_expression(lambda_expr_syntax const& node, expr_id id, std::optional<semantic_type_id> expected)
         -> expression_info;
-    auto apply_lambda_parameter_context(
-        lambda_expr_syntax const& node,
-        std::optional<semantic_type_id> expected
-    ) -> void;
+    auto apply_lambda_parameter_context(lambda_expr_syntax const& node, std::optional<semantic_type_id> expected) -> void;
     auto check_lambda_body(lambda_expr_syntax const& node) -> semantic_lambda_info;
     auto build_generic_lambda_info(lambda_expr_syntax const& node) -> semantic_lambda_info;
     auto collect_generic_lambda_captures(function_id id) -> std::vector<semantic_lambda_capture>;
-    auto build_lambda_info(
-        lambda_expr_syntax const& node,
-        std::vector<semantic_lambda_capture> captures,
-        function_type callable,
-        bool force_closure
-    ) -> semantic_lambda_info;
+    auto build_lambda_info(lambda_expr_syntax const& node, std::vector<semantic_lambda_capture> captures, function_type callable, bool force_closure) -> semantic_lambda_info;
     auto record_lambda_capture(symbol_id symbol, expr_id id) -> void;
     auto constant_integer_index(ast_arena const& ast, expr_id id) -> std::optional<std::int64_t>;
     auto parse_integer_literal(std::string_view text) -> std::int64_t;

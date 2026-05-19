@@ -144,11 +144,7 @@ auto semantic_analyzer::infer_function_body_return(std::size_t unit_index, funct
     return join_return_types(observed);
 }
 
-auto semantic_analyzer::infer_statement_returns(
-    ast_arena const& ast,
-    stmt_id id,
-    std::vector<semantic_type_id>& observed
-) -> void
+auto semantic_analyzer::infer_statement_returns(ast_arena const& ast, stmt_id id, std::vector<semantic_type_id>& observed) -> void
 {
     auto const& statement = ast.node(id);
     std::visit (
@@ -266,11 +262,7 @@ auto semantic_analyzer::infer_statement_returns(
     );
 }
 
-auto semantic_analyzer::infer_expression_type(
-    ast_arena const& ast,
-    expr_id id,
-    std::optional<semantic_type_id> expected
-) -> expression_info
+auto semantic_analyzer::infer_expression_type(ast_arena const& ast, expr_id id, std::optional<semantic_type_id> expected) -> expression_info
 {
     auto const& expression = ast.node(id);
     return std::visit (
@@ -385,10 +377,7 @@ auto semantic_analyzer::infer_expression_type(
     );
 }
 
-auto semantic_analyzer::infer_lambda_expression(
-    lambda_expr_syntax const& node,
-    std::optional<semantic_type_id> expected
-) -> expression_info
+auto semantic_analyzer::infer_lambda_expression(lambda_expr_syntax const& node, std::optional<semantic_type_id> expected) -> expression_info
 {
     auto symbol = result.function_symbol_of(return_unit, node.function);
     if(not symbol.valid()) {
@@ -405,18 +394,12 @@ auto semantic_analyzer::infer_lambda_expression(
     return expression_info{ .type = result.symbols[symbol.value].type };
 }
 
-auto semantic_analyzer::infer_lambda_return_from_current_return_scope(
-    std::size_t unit_index,
-    function_id id
-) -> void
+auto semantic_analyzer::infer_lambda_return_from_current_return_scope(std::size_t unit_index, function_id id) -> void
 {
     infer_lambda_return_with_base_scopes(unit_index, id, return_scopes, type_scopes);
 }
 
-auto semantic_analyzer::infer_lambda_return_from_current_value_scope(
-    std::size_t unit_index,
-    function_id id
-) -> void
+auto semantic_analyzer::infer_lambda_return_from_current_value_scope(std::size_t unit_index, function_id id) -> void
 {
     auto base_scopes = std::vector<std::map<std::string, return_inference_binding>>{};
     base_scopes.reserve(scopes.size());
@@ -441,12 +424,7 @@ auto semantic_analyzer::infer_lambda_return_from_current_value_scope(
     infer_lambda_return_with_base_scopes(unit_index, id, std::move(base_scopes), type_scopes);
 }
 
-auto semantic_analyzer::infer_lambda_return_with_base_scopes(
-    std::size_t unit_index,
-    function_id id,
-    std::vector<std::map<std::string, return_inference_binding>> base_scopes,
-    std::vector<std::map<std::string, semantic_type_id>> base_type_scopes
-) -> void
+auto semantic_analyzer::infer_lambda_return_with_base_scopes(std::size_t unit_index, function_id id, std::vector<std::map<std::string, return_inference_binding>> base_scopes, std::vector<std::map<std::string, semantic_type_id>> base_type_scopes) -> void
 {
     auto signature_id = result.signature_of(unit_index, id);
     if(not signature_id.valid()) {
@@ -640,11 +618,7 @@ auto semantic_analyzer::infer_call_expression(ast_arena const& ast, call_expr_sy
     return expression_info{ .type = semantic_type_ids::error };
 }
 
-auto semantic_analyzer::infer_array_literal(
-    ast_arena const& ast,
-    std::vector<expr_id> const& elements,
-    std::optional<semantic_type_id> expected
-) -> expression_info
+auto semantic_analyzer::infer_array_literal(ast_arena const& ast, std::vector<expr_id> const& elements, std::optional<semantic_type_id> expected) -> expression_info
 {
     if(expected) {
         for(auto element : elements) {
@@ -672,11 +646,7 @@ auto semantic_analyzer::infer_array_literal(
     };
 }
 
-auto semantic_analyzer::infer_tuple_literal(
-    ast_arena const& ast,
-    std::vector<expr_id> const& elements,
-    std::optional<semantic_type_id> expected
-) -> expression_info
+auto semantic_analyzer::infer_tuple_literal(ast_arena const& ast, std::vector<expr_id> const& elements, std::optional<semantic_type_id> expected) -> expression_info
 {
     if(expected) {
         for(auto element : elements) {

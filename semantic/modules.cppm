@@ -198,11 +198,7 @@ auto semantic_analyzer::resolve_imports() -> void
     }
 }
 
-auto semantic_analyzer::collect_concept_declaration(
-    std::size_t unit_index,
-    ast_arena const& ast,
-    concept_id id
-) -> void
+auto semantic_analyzer::collect_concept_declaration(std::size_t unit_index, ast_arena const& ast, concept_id id) -> void
 {
     active_unit_index = unit_index;
     auto const& syntax = ast.node(id);
@@ -247,11 +243,7 @@ auto semantic_analyzer::collect_concept_declaration(
     local_concepts.emplace(std::move(name), symbol);
 }
 
-auto semantic_analyzer::collect_concept_items(
-    std::size_t unit_index,
-    ast_arena const& ast,
-    concept_id id
-) -> void
+auto semantic_analyzer::collect_concept_items(std::size_t unit_index, ast_arena const& ast, concept_id id) -> void
 {
     active_unit_index = unit_index;
     auto const& syntax = ast.node(id);
@@ -377,11 +369,7 @@ auto semantic_analyzer::collect_concept_items(
     }
 }
 
-auto semantic_analyzer::collect_struct_declaration(
-    std::size_t unit_index,
-    ast_arena const& ast,
-    struct_id id
-) -> void
+auto semantic_analyzer::collect_struct_declaration(std::size_t unit_index, ast_arena const& ast, struct_id id) -> void
 {
     active_unit_index = unit_index;
     auto const& syntax = ast.node(id);
@@ -432,11 +420,7 @@ auto semantic_analyzer::collect_struct_declaration(
     local_types.emplace(std::move(name), symbol);
 }
 
-auto semantic_analyzer::collect_struct_fields(
-    std::size_t unit_index,
-    ast_arena const& ast,
-    struct_id id
-) -> void
+auto semantic_analyzer::collect_struct_fields(std::size_t unit_index, ast_arena const& ast, struct_id id) -> void
 {
     active_unit_index = unit_index;
     auto const& syntax = ast.node(id);
@@ -476,11 +460,7 @@ auto semantic_analyzer::collect_struct_fields(
     active_generic_parameter_packs = std::move(old_packs);
 }
 
-auto semantic_analyzer::collect_function_declaration(
-    std::size_t unit_index,
-    ast_arena const& ast,
-    function_id id
-) -> void
+auto semantic_analyzer::collect_function_declaration(std::size_t unit_index, ast_arena const& ast, function_id id) -> void
 {
     active_unit_index = unit_index;
     auto const& function = ast.node(id);
@@ -578,11 +558,7 @@ auto semantic_analyzer::collect_function_declaration(
     }
 }
 
-auto semantic_analyzer::validate_extern_c_function(
-    function_syntax const& function,
-    std::span<semantic_type_id const> parameter_types,
-    semantic_type_id return_type
-) -> void
+auto semantic_analyzer::validate_extern_c_function(function_syntax const& function, std::span<semantic_type_id const> parameter_types, semantic_type_id return_type) -> void
 {
     if(not function.extern_abi) {
         return;
@@ -629,11 +605,7 @@ auto semantic_analyzer::is_extern_c_compatible_type(semantic_type_id type, bool 
     }, kind);
 }
 
-auto semantic_analyzer::collect_impl_declarations(
-    std::size_t unit_index,
-    ast_arena const& ast,
-    impl_id id
-) -> void
+auto semantic_analyzer::collect_impl_declarations(std::size_t unit_index, ast_arena const& ast, impl_id id) -> void
 {
     active_unit_index = unit_index;
     auto const& impl = ast.node(id);
@@ -682,14 +654,7 @@ auto semantic_analyzer::collect_impl_declarations(
     }
 }
 
-auto semantic_analyzer::collect_impl_function(
-    std::size_t unit_index,
-    ast_arena const& ast,
-    impl_syntax const& impl,
-    semantic_type_id impl_type,
-    std::vector<std::string> const& impl_generic_parameters,
-    function_id id
-) -> void
+auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena const& ast, impl_syntax const& impl, semantic_type_id impl_type, std::vector<std::string> const& impl_generic_parameters, function_id id) -> void
 {
     active_unit_index = unit_index;
     auto const& function = ast.node(id);
@@ -870,11 +835,7 @@ auto semantic_analyzer::collect_impl_function(
     }
 }
 
-auto semantic_analyzer::collect_concept_impl_declarations(
-    std::size_t unit_index,
-    ast_arena const& ast,
-    concept_impl_id id
-) -> void
+auto semantic_analyzer::collect_concept_impl_declarations(std::size_t unit_index, ast_arena const& ast, concept_impl_id id) -> void
 {
     active_unit_index = unit_index;
     auto const& impl = ast.node(id);
@@ -969,13 +930,7 @@ auto semantic_analyzer::collect_concept_impl_declarations(
     validate_concept_impl(result.concept_impls.back(), impl.full_span);
 }
 
-auto semantic_analyzer::collect_concept_impl_function(
-    std::size_t unit_index,
-    ast_arena const& ast,
-    concept_impl_syntax const& impl,
-    semantic_type_id target_type,
-    function_id id
-) -> std::optional<symbol_id>
+auto semantic_analyzer::collect_concept_impl_function(std::size_t unit_index, ast_arena const& ast, concept_impl_syntax const& impl, semantic_type_id target_type, function_id id) -> std::optional<symbol_id>
 {
     active_unit_index = unit_index;
     auto const& function = ast.node(id);
@@ -1186,11 +1141,7 @@ auto semantic_analyzer::validate_concept_impl(semantic_concept_impl const& impl,
     }
 }
 
-auto semantic_analyzer::validate_parent_concepts(
-    semantic_concept_impl const& impl,
-    semantic_concept const& concept_value,
-    source_span span
-) -> void
+auto semantic_analyzer::validate_parent_concepts(semantic_concept_impl const& impl, semantic_concept const& concept_value, source_span span) -> void
 {
     for(auto parent : concept_value.parents) {
         if(target_implements(parent, impl.target_type)) {
@@ -1255,13 +1206,7 @@ auto semantic_analyzer::target_implements(symbol_id concept_symbol, semantic_typ
     return false;
 }
 
-auto semantic_analyzer::requires_clause_satisfied(
-    std::size_t unit_index,
-    ast_arena const& ast,
-    concept_requires_syntax const& clause,
-    std::map<std::string, semantic_type_id> const& substitutions,
-    std::optional<semantic_type_id> self_type
-) -> bool
+auto semantic_analyzer::requires_clause_satisfied(std::size_t unit_index, ast_arena const& ast, concept_requires_syntax const& clause, std::map<std::string, semantic_type_id> const& substitutions, std::optional<semantic_type_id> self_type) -> bool
 {
     auto old_unit_index = active_unit_index;
     auto old_substitutions = active_type_substitutions;
@@ -1383,12 +1328,7 @@ auto semantic_analyzer::validate_requires_clauses() -> void
     }
 }
 
-auto semantic_analyzer::validate_requires_clause(
-    std::size_t unit_index,
-    ast_arena const& ast,
-    concept_requires_syntax const& clause,
-    std::optional<semantic_type_id> self_type
-) -> void
+auto semantic_analyzer::validate_requires_clause(std::size_t unit_index, ast_arena const& ast, concept_requires_syntax const& clause, std::optional<semantic_type_id> self_type) -> void
 {
     active_unit_index = unit_index;
     for(auto const& constraint : clause.constraints) {
@@ -1489,12 +1429,7 @@ auto semantic_analyzer::validate_requires_clause(
     }
 }
 
-auto semantic_analyzer::requirement_type(
-    std::size_t unit_index,
-    ast_arena const& ast,
-    type_id id,
-    semantic_type_id self_type
-) -> semantic_type_id
+auto semantic_analyzer::requirement_type(std::size_t unit_index, ast_arena const& ast, type_id id, semantic_type_id self_type) -> semantic_type_id
 {
     auto old_unit = active_unit_index;
     auto old_self = active_self_type;
@@ -1509,11 +1444,7 @@ auto semantic_analyzer::requirement_type(
     return result_type;
 }
 
-auto semantic_analyzer::signatures_match(
-    function_signature const& actual,
-    semantic_concept_function_requirement const& expected,
-    semantic_type_id self_type
-) -> bool
+auto semantic_analyzer::signatures_match(function_signature const& actual, semantic_concept_function_requirement const& expected, semantic_type_id self_type) -> bool
 {
     if(actual.parameters.size() != expected.parameters.size()) {
         return false;

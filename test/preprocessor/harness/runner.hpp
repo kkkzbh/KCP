@@ -4,10 +4,7 @@
 
 namespace test_preprocessor {
 
-auto inline compare_normalized_text(
-    std::filesystem::path const& case_path,
-    std::string const& expected,
-    std::string const& actual) -> void
+auto inline compare_normalized_text(std::filesystem::path const& case_path, std::string const& expected, std::string const& actual) -> void
 {
     if (expected == actual) {
         return;
@@ -20,10 +17,7 @@ auto inline compare_normalized_text(
         actual));
 }
 
-auto inline compare_diagnostics(
-    std::filesystem::path const& case_path,
-    std::vector<expected_diagnostic> const& expected,
-    std::vector<expected_diagnostic> const& actual) -> void
+auto inline compare_diagnostics(std::filesystem::path const& case_path, std::vector<expected_diagnostic> const& expected, std::vector<expected_diagnostic> const& actual) -> void
 {
     if (expected == actual) {
         return;

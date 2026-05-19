@@ -172,9 +172,7 @@ auto inline to_expected_token(source_manager const& sources, token const& value)
     };
 }
 
-auto inline to_expected_diagnostic(
-    source_manager const& sources,
-    diagnostic const& value) -> expected_diagnostic
+auto inline to_expected_diagnostic(source_manager const& sources, diagnostic const& value) -> expected_diagnostic
 {
     auto const position = sources.position(value.primary_span.start);
     auto const [file, local_start] = sources.locate(value.primary_span.start);

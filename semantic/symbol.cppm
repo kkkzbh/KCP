@@ -110,15 +110,7 @@ export struct semantic_struct
 {
     semantic_struct() = default;
 
-    semantic_struct(
-        std::string struct_name,
-        source_span struct_span,
-        semantic_type_id struct_type_id,
-        bool is_exported,
-        std::size_t source_unit,
-        struct_id struct_syntax,
-        symbol_id struct_symbol
-    ) :
+    semantic_struct(std::string struct_name, source_span struct_span, semantic_type_id struct_type_id, bool is_exported, std::size_t source_unit, struct_id struct_syntax, symbol_id struct_symbol) :
         name(std::move(struct_name)),
         span(struct_span),
         type(struct_type_id),
@@ -148,11 +140,7 @@ export struct semantic_variant_case
 {
     semantic_variant_case() = default;
 
-    semantic_variant_case(
-        std::string case_name,
-        source_span case_span,
-        std::vector<semantic_type_id> case_payload_types
-    ) :
+    semantic_variant_case(std::string case_name, source_span case_span, std::vector<semantic_type_id> case_payload_types) :
         name(std::move(case_name)),
         span(case_span),
         payload_types(std::move(case_payload_types)) {}
@@ -168,15 +156,7 @@ export struct semantic_variant
 {
     semantic_variant() = default;
 
-    semantic_variant(
-        std::string variant_name,
-        source_span variant_span,
-        semantic_type_id variant_type_id,
-        bool is_exported,
-        std::size_t source_unit,
-        variant_id variant_syntax,
-        symbol_id variant_symbol
-    ) :
+    semantic_variant(std::string variant_name, source_span variant_span, semantic_type_id variant_type_id, bool is_exported, std::size_t source_unit, variant_id variant_syntax, symbol_id variant_symbol) :
         name(std::move(variant_name)),
         span(variant_span),
         type(variant_type_id),
@@ -227,12 +207,7 @@ export struct semantic_concept_type_bound
 {
     semantic_concept_type_bound() = default;
 
-    semantic_concept_type_bound(
-        std::size_t source_unit,
-        type_id bound_type,
-        std::vector<symbol_id> bound_concepts,
-        source_span bound_span
-    ) :
+    semantic_concept_type_bound(std::size_t source_unit, type_id bound_type, std::vector<symbol_id> bound_concepts, source_span bound_span) :
         unit_index(source_unit),
         type(bound_type),
         concepts(std::move(bound_concepts)),
@@ -250,12 +225,7 @@ export struct semantic_concept_type_equality
 {
     semantic_concept_type_equality() = default;
 
-    semantic_concept_type_equality(
-        std::size_t source_unit,
-        type_id left_type,
-        type_id right_type,
-        source_span equality_span
-    ) :
+    semantic_concept_type_equality(std::size_t source_unit, type_id left_type, type_id right_type, source_span equality_span) :
         unit_index(source_unit),
         left(left_type),
         right(right_type),
@@ -273,14 +243,7 @@ export struct semantic_concept
 {
     semantic_concept() = default;
 
-    semantic_concept(
-        std::string concept_name,
-        source_span concept_span,
-        bool is_exported,
-        std::size_t source_unit,
-        concept_id concept_syntax,
-        symbol_id concept_symbol
-    ) :
+    semantic_concept(std::string concept_name, source_span concept_span, bool is_exported, std::size_t source_unit, concept_id concept_syntax, symbol_id concept_symbol) :
         name(std::move(concept_name)),
         span(concept_span),
         exported(is_exported),

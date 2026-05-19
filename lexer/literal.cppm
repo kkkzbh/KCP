@@ -14,14 +14,7 @@ enum class escape_result
     unterminated,
 };
 
-auto consume_escape_sequence(
-    std::string_view source,
-    std::size_t& offset,
-    diagnostic_collector& diagnostics,
-    lexer_cursor const& cursor,
-    std::size_t literal_start,
-    diagnostic_kind unterminated_kind,
-    std::string_view unterminated_message) -> escape_result
+auto consume_escape_sequence(std::string_view source, std::size_t& offset, diagnostic_collector& diagnostics, lexer_cursor const& cursor, std::size_t literal_start, diagnostic_kind unterminated_kind, std::string_view unterminated_message) -> escape_result
 {
     using namespace std::literals;
 
@@ -88,11 +81,7 @@ auto lexer::lex_number_literal(token_flags flags) -> token
 {
     auto const source = cursor_.source();
     auto const start = cursor_.offset();
-    auto invalid_number = [&](
-        diagnostic_kind kind,
-        std::size_t diagnostic_start,
-        std::size_t diagnostic_end,
-        std::size_t token_end) -> token {
+    auto invalid_number = [&](diagnostic_kind kind, std::size_t diagnostic_start, std::size_t diagnostic_end, std::size_t token_end) -> token {
         cursor_.set_offset(token_end);
         diagnostics_.report(kind, cursor_.make_span(diagnostic_start, diagnostic_end));
         return cursor_.make_token(token_kind::invalid, start, cursor_.offset(), flags | token_flags::recovered);

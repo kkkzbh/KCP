@@ -4,10 +4,7 @@
 
 namespace test_parser {
 
-auto inline compare_diagnostics(
-    std::filesystem::path const& case_path,
-    std::vector<expected_diagnostic> const& expected,
-    std::vector<expected_diagnostic> const& actual) -> void
+auto inline compare_diagnostics(std::filesystem::path const& case_path, std::vector<expected_diagnostic> const& expected, std::vector<expected_diagnostic> const& actual) -> void
 {
     if(expected == actual) {
         return;

@@ -167,15 +167,7 @@ export struct ir_emit_result
 
 struct function_lowerer
 {
-    function_lowerer(
-        source_manager const& sources,
-        parse_result const& parsed,
-        semantic_result const& semantics,
-        ir_module& module,
-        std::size_t unit_index,
-        function_id id,
-        std::size_t context_index = 0uz
-    ) :
+    function_lowerer(source_manager const& sources, parse_result const& parsed, semantic_result const& semantics, ir_module& module, std::size_t unit_index, function_id id, std::size_t context_index = 0uz) :
         ast_source(sources),
         parsed(parsed),
         semantics(semantics),
@@ -502,12 +494,7 @@ struct function_lowerer
         return emit(std::move(instruction));
     }
 
-    auto emit_field_address(
-        ir_value_id base,
-        semantic_type_id aggregate_type,
-        semantic_type_id field_type,
-        std::uint64_t index
-    ) -> ir_value_id
+    auto emit_field_address(ir_value_id base, semantic_type_id aggregate_type, semantic_type_id field_type, std::uint64_t index) -> ir_value_id
     {
         auto instruction = emit_value_instruction(ir_opcode::field_address, field_type);
         instruction.operands = { base };
@@ -516,12 +503,7 @@ struct function_lowerer
         return emit(std::move(instruction));
     }
 
-    auto emit_element_address(
-        ir_value_id base,
-        ir_value_id index,
-        semantic_type_id aggregate_type,
-        semantic_type_id element_type
-    ) -> ir_value_id
+    auto emit_element_address(ir_value_id base, ir_value_id index, semantic_type_id aggregate_type, semantic_type_id element_type) -> ir_value_id
     {
         auto instruction = emit_value_instruction(ir_opcode::element_address, element_type);
         instruction.operands = { base, index };
@@ -541,22 +523,12 @@ struct function_lowerer
         return emit(emit_value_instruction(ir_opcode::aggregate_undef, type));
     }
 
-    auto emit_insert_value(
-        ir_value_id aggregate,
-        ir_value_id value,
-        semantic_type_id type,
-        std::uint64_t index
-    ) -> ir_value_id
+    auto emit_insert_value(ir_value_id aggregate, ir_value_id value, semantic_type_id type, std::uint64_t index) -> ir_value_id
     {
         return emit_insert_value(aggregate, value, type, std::vector<std::uint64_t>{ index });
     }
 
-    auto emit_insert_value(
-        ir_value_id aggregate,
-        ir_value_id value,
-        semantic_type_id type,
-        std::vector<std::uint64_t> indices
-    ) -> ir_value_id
+    auto emit_insert_value(ir_value_id aggregate, ir_value_id value, semantic_type_id type, std::vector<std::uint64_t> indices) -> ir_value_id
     {
         auto instruction = emit_value_instruction(ir_opcode::insert_value, type);
         instruction.operands = { aggregate, value };
@@ -589,12 +561,7 @@ struct function_lowerer
     {
         cleanup_entry() = default;
 
-        cleanup_entry(
-            symbol_id cleanup_symbol,
-            ir_value_id cleanup_address,
-            semantic_type_id cleanup_type,
-            symbol_id cleanup_destructor
-        ) :
+        cleanup_entry(symbol_id cleanup_symbol, ir_value_id cleanup_address, semantic_type_id cleanup_type, symbol_id cleanup_destructor) :
             symbol(cleanup_symbol),
             address(cleanup_address),
             type(cleanup_type),
@@ -1004,11 +971,7 @@ struct function_lowerer
         return true;
     }
 
-    auto emit_protocol_for_statement(
-        for_statement_syntax const& node,
-        stmt_id id,
-        semantic_for_range_info const& metadata
-    ) -> bool
+    auto emit_protocol_for_statement(for_statement_syntax const& node, stmt_id id, semantic_for_range_info const& metadata) -> bool
     {
         auto const* next_function = callable_type(semantics.symbols[metadata.next_symbol.value].type);
         if(next_function == nullptr or next_function->parameters.empty()) {
@@ -1373,11 +1336,7 @@ struct function_lowerer
         return value;
     }
 
-    auto emit_variant_case_value(
-        expr_id id,
-        semantic_variant_case_access access,
-        std::vector<expr_id> const& arguments
-    ) -> ir_value_id
+    auto emit_variant_case_value(expr_id id, semantic_variant_case_access access, std::vector<expr_id> const& arguments) -> ir_value_id
     {
         auto type = info_of(id).read_type;
         auto aggregate = emit_aggregate_undef(type);
@@ -1479,11 +1438,7 @@ struct function_lowerer
         return emit_default_value(result_type);
     }
 
-    auto bind_match_pattern(
-        match_pattern_syntax const& pattern,
-        ir_value_id matched,
-        semantic_type_id matched_type
-    ) -> void
+    auto bind_match_pattern(match_pattern_syntax const& pattern, ir_value_id matched, semantic_type_id matched_type) -> void
     {
         auto const* case_pattern = std::get_if<match_case_pattern_syntax>(&pattern);
         if(case_pattern == nullptr) {
@@ -1822,11 +1777,7 @@ struct function_lowerer
         return emit(std::move(instruction));
     }
 
-    auto emit_closure_call_expression(
-        call_expr_syntax const& node,
-        expr_id id,
-        semantic_lambda_info const& lambda
-    ) -> ir_value_id
+    auto emit_closure_call_expression(call_expr_syntax const& node, expr_id id, semantic_lambda_info const& lambda) -> ir_value_id
     {
         auto environment = ir_value_id{};
         auto callee_info = info_of(node.callee);
@@ -2190,10 +2141,7 @@ struct function_lowerer
         return std::nullopt;
     }
 
-    auto substitute_type(
-        semantic_type_id type,
-        std::vector<semantic_type_id> const& arguments
-    ) -> semantic_type_id
+    auto substitute_type(semantic_type_id type, std::vector<semantic_type_id> const& arguments) -> semantic_type_id
     {
         auto const& kind = module.types.get(type);
         return std::visit (
@@ -2276,10 +2224,7 @@ struct function_lowerer
         );
     }
 
-    auto variant_case_payload_types(
-        semantic_type_id type,
-        semantic_variant_case const& variant_case
-    ) -> std::vector<semantic_type_id>
+    auto variant_case_payload_types(semantic_type_id type, semantic_variant_case const& variant_case) -> std::vector<semantic_type_id>
     {
         auto const* variant = std::get_if<variant_type>(&module.types.get(read_type(type)));
         if(variant == nullptr) {
@@ -2390,12 +2335,7 @@ struct function_lowerer
     {
         loop_target() = default;
 
-        loop_target(
-            ir_block_id target_break,
-            ir_block_id target_continue,
-            std::size_t target_cleanup_depth,
-            std::optional<std::string> target_label = std::nullopt
-        ) :
+        loop_target(ir_block_id target_break, ir_block_id target_continue, std::size_t target_cleanup_depth, std::optional<std::string> target_label = std::nullopt) :
             break_target(target_break),
             continue_target(target_continue),
             cleanup_depth(target_cleanup_depth),
@@ -2461,11 +2401,7 @@ struct function_lowerer
     std::string error{};
 };
 
-export auto emit_ir(
-    source_manager const& sources,
-    std::span<parse_result const> units,
-    semantic_result const& semantics
-) -> ir_emit_result
+export auto emit_ir(source_manager const& sources, std::span<parse_result const> units, semantic_result const& semantics) -> ir_emit_result
 {
     auto result = ir_emit_result {
         .accepted = false,
@@ -2546,11 +2482,7 @@ export auto emit_ir(
     return result;
 }
 
-export auto emit_ir(
-    source_manager const& sources,
-    parse_result const& parsed,
-    semantic_result const& semantics
-) -> ir_emit_result
+export auto emit_ir(source_manager const& sources, parse_result const& parsed, semantic_result const& semantics) -> ir_emit_result
 {
     return emit_ir(sources, std::span<parse_result const>{ &parsed, 1uz }, semantics);
 }

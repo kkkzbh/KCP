@@ -2,11 +2,7 @@ module semantic:variants;
 
 import semantic;
 
-auto semantic_analyzer::collect_variant_declaration(
-    std::size_t unit_index,
-    ast_arena const& ast,
-    variant_id id
-) -> void
+auto semantic_analyzer::collect_variant_declaration(std::size_t unit_index, ast_arena const& ast, variant_id id) -> void
 {
     active_unit_index = unit_index;
     auto const& syntax = ast.node(id);
@@ -57,11 +53,7 @@ auto semantic_analyzer::collect_variant_declaration(
     local_types.emplace(std::move(name), symbol);
 }
 
-auto semantic_analyzer::collect_variant_cases(
-    std::size_t unit_index,
-    ast_arena const& ast,
-    variant_id id
-) -> void
+auto semantic_analyzer::collect_variant_cases(std::size_t unit_index, ast_arena const& ast, variant_id id) -> void
 {
     active_unit_index = unit_index;
     auto const& syntax = ast.node(id);
@@ -119,10 +111,7 @@ auto semantic_analyzer::variant_index_of(semantic_type_id type) const -> std::op
     return std::nullopt;
 }
 
-auto semantic_analyzer::substitute_type(
-    semantic_type_id type,
-    std::vector<semantic_type_id> const& arguments
-) -> semantic_type_id
+auto semantic_analyzer::substitute_type(semantic_type_id type, std::vector<semantic_type_id> const& arguments) -> semantic_type_id
 {
     auto const& kind = result.types.get(type);
     return std::visit (
@@ -205,10 +194,7 @@ auto semantic_analyzer::substitute_type(
     );
 }
 
-auto semantic_analyzer::variant_case_payload_types(
-    semantic_type_id type,
-    semantic_variant_case const& variant_case
-) -> std::vector<semantic_type_id>
+auto semantic_analyzer::variant_case_payload_types(semantic_type_id type, semantic_variant_case const& variant_case) -> std::vector<semantic_type_id>
 {
     auto const* variant = std::get_if<variant_type>(&result.types.get(read_type(type)));
     if(variant == nullptr) {

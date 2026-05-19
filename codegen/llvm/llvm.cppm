@@ -92,10 +92,7 @@ struct llvm_type_lowerer
         }, kind);
     }
 
-    auto lower_substituted(
-        semantic_type_id id,
-        std::vector<semantic_type_id> const& arguments
-    ) -> llvm::Type*
+    auto lower_substituted(semantic_type_id id, std::vector<semantic_type_id> const& arguments) -> llvm::Type*
     {
         auto const& kind = module.types.get(id);
         return std::visit(overloaded {
@@ -378,11 +375,7 @@ struct llvm_module_lowerer
         }
     }
 
-    auto lower_literal(
-        semantic_type_id type,
-        semantic_literal_value const& literal,
-        symbol_id symbol
-    ) -> llvm::Value*
+    auto lower_literal(semantic_type_id type, semantic_literal_value const& literal, symbol_id symbol) -> llvm::Value*
     {
         if(symbol.valid()) {
             return functions[symbol];
@@ -624,10 +617,7 @@ struct llvm_module_lowerer
         );
     }
 
-    auto type_size_substituted(
-        semantic_type_id id,
-        std::vector<semantic_type_id> const& arguments
-    ) -> std::uint64_t
+    auto type_size_substituted(semantic_type_id id, std::vector<semantic_type_id> const& arguments) -> std::uint64_t
     {
         auto const& kind = ir.types.get(id);
         if(auto const* parameter = std::get_if<generic_parameter_type>(&kind)) {
@@ -639,10 +629,7 @@ struct llvm_module_lowerer
         return type_size(id);
     }
 
-    auto variant_case_payload_size(
-        semantic_variant_case const& variant_case,
-        std::vector<semantic_type_id> const& arguments
-    ) -> std::uint64_t
+    auto variant_case_payload_size(semantic_variant_case const& variant_case, std::vector<semantic_type_id> const& arguments) -> std::uint64_t
     {
         auto total = std::uint64_t{};
         auto alignment = 1uz;
@@ -697,10 +684,7 @@ struct llvm_module_lowerer
         );
     }
 
-    auto type_align_substituted(
-        semantic_type_id id,
-        std::vector<semantic_type_id> const& arguments
-    ) -> std::uint64_t
+    auto type_align_substituted(semantic_type_id id, std::vector<semantic_type_id> const& arguments) -> std::uint64_t
     {
         auto const& kind = ir.types.get(id);
         if(auto const* parameter = std::get_if<generic_parameter_type>(&kind)) {
@@ -712,10 +696,7 @@ struct llvm_module_lowerer
         return type_align(id);
     }
 
-    auto variant_case_payload_align(
-        semantic_variant_case const& variant_case,
-        std::vector<semantic_type_id> const& arguments
-    ) -> std::uint64_t
+    auto variant_case_payload_align(semantic_variant_case const& variant_case, std::vector<semantic_type_id> const& arguments) -> std::uint64_t
     {
         auto result = 1uz;
         for(auto payload : variant_case.payload_types) {
@@ -771,12 +752,7 @@ struct llvm_module_lowerer
         return result;
     }
 
-    auto compare(
-        llvm::Value* left,
-        llvm::Value* right,
-        llvm::CmpInst::Predicate int_predicate,
-        llvm::CmpInst::Predicate float_predicate
-    ) -> llvm::Value*
+    auto compare(llvm::Value* left, llvm::Value* right, llvm::CmpInst::Predicate int_predicate, llvm::CmpInst::Predicate float_predicate) -> llvm::Value*
     {
         if(left->getType()->isFloatingPointTy()) {
             return builder.CreateFCmp(float_predicate, left, right);

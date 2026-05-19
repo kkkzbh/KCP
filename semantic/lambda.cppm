@@ -2,10 +2,7 @@ module semantic:lambda;
 
 import semantic;
 
-auto semantic_analyzer::apply_lambda_parameter_context(
-    lambda_expr_syntax const& node,
-    std::optional<semantic_type_id> expected
-) -> void
+auto semantic_analyzer::apply_lambda_parameter_context(lambda_expr_syntax const& node, std::optional<semantic_type_id> expected) -> void
 {
     auto signature_id = result.signature_of(active_context_index, active_unit_index, node.function);
     auto symbol = result.function_symbol_of(active_context_index, active_unit_index, node.function);
@@ -331,12 +328,7 @@ auto semantic_analyzer::collect_generic_lambda_captures(function_id id) -> std::
     return captures;
 }
 
-auto semantic_analyzer::instantiate_lambda(
-    semantic_lambda_info const& lambda,
-    std::vector<expression_info> const& arguments,
-    std::vector<semantic_type_id> explicit_arguments,
-    source_span span
-) -> semantic_lambda_info
+auto semantic_analyzer::instantiate_lambda(semantic_lambda_info const& lambda, std::vector<expression_info> const& arguments, std::vector<semantic_type_id> explicit_arguments, source_span span) -> semantic_lambda_info
 {
     if(not lambda.valid()) {
         return {};
@@ -500,12 +492,7 @@ auto semantic_analyzer::instantiate_lambda(
     return info;
 }
 
-auto semantic_analyzer::build_lambda_info(
-    lambda_expr_syntax const& node,
-    std::vector<semantic_lambda_capture> captures,
-    function_type callable,
-    bool force_closure
-) -> semantic_lambda_info
+auto semantic_analyzer::build_lambda_info(lambda_expr_syntax const& node, std::vector<semantic_lambda_capture> captures, function_type callable, bool force_closure) -> semantic_lambda_info
 {
     auto function_symbol = result.function_symbol_of(active_context_index, active_unit_index, node.function);
     auto info = semantic_lambda_info {

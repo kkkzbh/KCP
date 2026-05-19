@@ -14,11 +14,7 @@ auto semantic_analyzer::collect_type_pattern_parameters(ast_arena const& ast, ty
     return names;
 }
 
-auto semantic_analyzer::collect_type_pattern_parameters(
-    ast_arena const& ast,
-    type_syntax const& syntax,
-    std::vector<std::string>& names
-) -> void
+auto semantic_analyzer::collect_type_pattern_parameters(ast_arena const& ast, type_syntax const& syntax, std::vector<std::string>& names) -> void
 {
     for(auto const& argument : syntax.arguments) {
         if(not std::holds_alternative<type_argument_type_syntax>(argument)) {
@@ -196,11 +192,7 @@ auto semantic_analyzer::explicit_type_arguments(ast_arena const& ast, call_expr_
     return arguments;
 }
 
-auto semantic_analyzer::infer_type_argument(
-    semantic_type_id pattern,
-    semantic_type_id argument,
-    std::map<std::uint32_t, semantic_type_id>& inferred
-) -> bool
+auto semantic_analyzer::infer_type_argument(semantic_type_id pattern, semantic_type_id argument, std::map<std::uint32_t, semantic_type_id>& inferred) -> bool
 {
     auto const& pattern_kind = result.types.get(pattern);
     if(auto const* generic = std::get_if<generic_parameter_type>(&pattern_kind)) {
@@ -291,13 +283,7 @@ auto semantic_analyzer::infer_type_argument(
     return pattern == argument_value;
 }
 
-auto semantic_analyzer::infer_type_argument_with_pack(
-    semantic_type_id pattern,
-    semantic_type_id argument,
-    std::optional<std::size_t> pack_index,
-    std::map<std::uint32_t, semantic_type_id>& inferred,
-    std::optional<semantic_type_id>& pack_element
-) -> bool
+auto semantic_analyzer::infer_type_argument_with_pack(semantic_type_id pattern, semantic_type_id argument, std::optional<std::size_t> pack_index, std::map<std::uint32_t, semantic_type_id>& inferred, std::optional<semantic_type_id>& pack_element) -> bool
 {
     auto const& pattern_kind = result.types.get(pattern);
     if(auto const* generic = std::get_if<generic_parameter_type>(&pattern_kind)) {
@@ -414,11 +400,7 @@ auto semantic_analyzer::infer_type_argument_with_pack(
     return pattern == argument_value;
 }
 
-auto semantic_analyzer::infer_generic_type_arguments(
-    function_signature const& signature,
-    std::vector<expression_info> const& arguments,
-    std::size_t parameter_count
-) -> std::optional<std::vector<semantic_type_id>>
+auto semantic_analyzer::infer_generic_type_arguments(function_signature const& signature, std::vector<expression_info> const& arguments, std::size_t parameter_count) -> std::optional<std::vector<semantic_type_id>>
 {
     auto inferred = std::map<std::uint32_t, semantic_type_id>{};
     auto count = std::min(signature.parameters.size(), arguments.size());
@@ -439,10 +421,7 @@ auto semantic_analyzer::infer_generic_type_arguments(
     return type_arguments;
 }
 
-auto semantic_analyzer::generic_substitution_map(
-    function_syntax const& function,
-    std::vector<semantic_type_id> const& type_arguments
-) -> std::map<std::string, semantic_type_id>
+auto semantic_analyzer::generic_substitution_map(function_syntax const& function, std::vector<semantic_type_id> const& type_arguments) -> std::map<std::string, semantic_type_id>
 {
     auto substitutions = std::map<std::string, semantic_type_id>{};
     auto count = std::min(function.generic_parameters.size(), type_arguments.size());
@@ -455,11 +434,7 @@ auto semantic_analyzer::generic_substitution_map(
     return substitutions;
 }
 
-auto semantic_analyzer::function_substitution_map(
-    std::size_t unit_index,
-    function_id id,
-    std::vector<semantic_type_id> const& type_arguments
-) -> std::map<std::string, semantic_type_id>
+auto semantic_analyzer::function_substitution_map(std::size_t unit_index, function_id id, std::vector<semantic_type_id> const& type_arguments) -> std::map<std::string, semantic_type_id>
 {
     auto substitutions = std::map<std::string, semantic_type_id>{};
     auto names = function_generic_parameter_names(unit_index, id);
@@ -474,11 +449,7 @@ auto semantic_analyzer::function_substitution_map(
     return substitutions;
 }
 
-auto semantic_analyzer::function_type_pack_substitution_map(
-    std::size_t unit_index,
-    function_id id,
-    std::vector<semantic_type_id> const& type_arguments
-) -> std::map<std::string, std::vector<semantic_type_id>>
+auto semantic_analyzer::function_type_pack_substitution_map(std::size_t unit_index, function_id id, std::vector<semantic_type_id> const& type_arguments) -> std::map<std::string, std::vector<semantic_type_id>>
 {
     auto substitutions = std::map<std::string, std::vector<semantic_type_id>>{};
     auto pack_index = function_pack_generic_index(unit_index, id);
@@ -541,12 +512,7 @@ auto semantic_analyzer::validate_function_pack_shape(std::size_t unit_index, fun
     }
 }
 
-auto semantic_analyzer::validate_function_type_arguments(
-    std::size_t unit_index,
-    function_id id,
-    std::vector<semantic_type_id> const& type_arguments,
-    source_span span
-) -> bool
+auto semantic_analyzer::validate_function_type_arguments(std::size_t unit_index, function_id id, std::vector<semantic_type_id> const& type_arguments, source_span span) -> bool
 {
     auto const& function = units[unit_index].ast.node(id);
     auto names = function_generic_parameter_names(unit_index, id);
@@ -626,10 +592,7 @@ auto semantic_analyzer::validate_function_type_arguments(
     return diagnostics.size() == diagnostic_count;
 }
 
-auto semantic_analyzer::substitute_signature(
-    function_signature const& signature,
-    std::vector<semantic_type_id> const& type_arguments
-) -> function_signature
+auto semantic_analyzer::substitute_signature(function_signature const& signature, std::vector<semantic_type_id> const& type_arguments) -> function_signature
 {
     auto parameters = (
         signature.parameters
@@ -644,13 +607,7 @@ auto semantic_analyzer::substitute_signature(
     };
 }
 
-auto semantic_analyzer::substitute_type_for_instance(
-    semantic_type_id type,
-    std::optional<std::size_t> pack_index,
-    std::vector<semantic_type_id> const& type_arguments,
-    std::optional<semantic_type_id> pack_element,
-    source_span span
-) -> semantic_type_id
+auto semantic_analyzer::substitute_type_for_instance(semantic_type_id type, std::optional<std::size_t> pack_index, std::vector<semantic_type_id> const& type_arguments, std::optional<semantic_type_id> pack_element, source_span span) -> semantic_type_id
 {
     auto const& kind = result.types.get(type);
     return std::visit (
@@ -740,13 +697,7 @@ auto semantic_analyzer::substitute_type_for_instance(
     );
 }
 
-auto semantic_analyzer::substitute_signature_for_instance(
-    std::size_t unit_index,
-    function_id id,
-    function_signature const& signature,
-    std::vector<semantic_type_id> const& type_arguments,
-    source_span span
-) -> function_signature
+auto semantic_analyzer::substitute_signature_for_instance(std::size_t unit_index, function_id id, function_signature const& signature, std::vector<semantic_type_id> const& type_arguments, source_span span) -> function_signature
 {
     auto pack_index = function_pack_generic_index(unit_index, id);
     if(not pack_index) {
@@ -784,12 +735,7 @@ auto semantic_analyzer::substitute_signature_for_instance(
     };
 }
 
-auto semantic_analyzer::instantiate_function(
-    std::size_t unit_index,
-    function_id id,
-    std::vector<semantic_type_id> type_arguments,
-    source_span span
-) -> semantic_function_instance const*
+auto semantic_analyzer::instantiate_function(std::size_t unit_index, function_id id, std::vector<semantic_type_id> type_arguments, source_span span) -> semantic_function_instance const*
 {
     auto key = semantic_function_instance_key{ unit_index, id, type_arguments };
     if(auto found = result.function_instance_indices.find(key); found != result.function_instance_indices.end()) {
@@ -858,13 +804,7 @@ auto semantic_analyzer::instantiate_function(
     return &result.function_instances[instance_index];
 }
 
-auto semantic_analyzer::infer_function_type_arguments_for_call(
-    symbol_id symbol,
-    std::optional<semantic_type_id> receiver_type,
-    std::vector<expression_info> const& arguments,
-    std::vector<semantic_type_id> const& explicit_arguments,
-    source_span span
-) -> std::optional<std::vector<semantic_type_id>>
+auto semantic_analyzer::infer_function_type_arguments_for_call(symbol_id symbol, std::optional<semantic_type_id> receiver_type, std::vector<expression_info> const& arguments, std::vector<semantic_type_id> const& explicit_arguments, source_span span) -> std::optional<std::vector<semantic_type_id>>
 {
     auto const& value = result.symbols[symbol.value];
     auto names = function_generic_parameter_names(value.unit_index, value.function);
@@ -972,13 +912,7 @@ auto semantic_analyzer::infer_function_type_arguments_for_call(
     return type_arguments;
 }
 
-auto semantic_analyzer::instantiate_function_symbol(
-    symbol_id symbol,
-    std::optional<semantic_type_id> receiver_type,
-    std::vector<expression_info> const& arguments,
-    std::vector<semantic_type_id> explicit_arguments,
-    source_span span
-) -> semantic_function_instance const*
+auto semantic_analyzer::instantiate_function_symbol(symbol_id symbol, std::optional<semantic_type_id> receiver_type, std::vector<expression_info> const& arguments, std::vector<semantic_type_id> explicit_arguments, source_span span) -> semantic_function_instance const*
 {
     if(not symbol.valid()) {
         return nullptr;

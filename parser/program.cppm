@@ -272,11 +272,7 @@ auto parser::parse_extern_function() -> std::optional<function_id>
     return parse_function(function_syntax_kind::free_function, extern_token.span, abi->span);
 }
 
-auto parser::parse_function(
-    function_syntax_kind kind,
-    std::optional<source_span> extern_span,
-    std::optional<source_span> extern_abi
-) -> std::optional<function_id>
+auto parser::parse_function(function_syntax_kind kind, std::optional<source_span> extern_span, std::optional<source_span> extern_abi) -> std::optional<function_id>
 {
     auto name = expect_identifier("function name");
     auto generic_parameters = std::vector<generic_parameter_syntax>{};
@@ -1004,11 +1000,7 @@ auto parser::parse_impl_item(type_syntax const& impl_type) -> std::optional<func
     });
 }
 
-auto parser::parse_default_constructor(
-    source_span start,
-    source_span name,
-    std::vector<parameter_syntax> parameters
-) -> std::optional<function_id>
+auto parser::parse_default_constructor(source_span start, source_span name, std::vector<parameter_syntax> parameters) -> std::optional<function_id>
 {
     auto equal = expect(token_kind::equal);
     auto default_name = expect_identifier("default");

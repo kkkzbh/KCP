@@ -26,9 +26,7 @@ auto inline read_text(std::filesystem::path const& path) -> std::string
 }
 
 [[nodiscard]]
-auto inline normalize_source_text(
-    std::filesystem::path const& path,
-    std::string text) -> std::string
+auto inline normalize_source_text(std::filesystem::path const& path, std::string text) -> std::string
 {
     auto const stem = path.stem().string();
     auto const should_trim_final_newline = stem != "unterminated_newline";

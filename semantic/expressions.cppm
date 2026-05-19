@@ -2,11 +2,7 @@ module semantic:expressions;
 
 import semantic;
 
-auto semantic_analyzer::check_expression(
-    ast_arena const& ast,
-    expr_id id,
-    std::optional<semantic_type_id> expected
-) -> expression_info
+auto semantic_analyzer::check_expression(ast_arena const& ast, expr_id id, std::optional<semantic_type_id> expected) -> expression_info
 {
     auto const& expression = ast.node(id);
     auto info = (
@@ -260,12 +256,7 @@ auto semantic_analyzer::check_binary_expression(ast_arena const& ast, binary_exp
     );
 }
 
-auto semantic_analyzer::check_binary_operator(
-    token_kind operator_kind,
-    semantic_type_id left_type,
-    semantic_type_id right_type,
-    source_span span
-) -> expression_info
+auto semantic_analyzer::check_binary_operator(token_kind operator_kind, semantic_type_id left_type, semantic_type_id right_type, source_span span) -> expression_info
 {
     using enum token_kind;
     switch(operator_kind) {
@@ -437,12 +428,7 @@ auto semantic_analyzer::compound_assignment_operator(token_kind operator_kind) -
     }
 }
 
-auto semantic_analyzer::check_builtin_call(
-    ast_arena const& ast,
-    call_expr_syntax const& node,
-    name_expr_syntax const& callee,
-    expr_id id
-) -> std::optional<expression_info>
+auto semantic_analyzer::check_builtin_call(ast_arena const& ast, call_expr_syntax const& node, name_expr_syntax const& callee, expr_id id) -> std::optional<expression_info>
 {
     auto name = ast_source.identifier(callee.name);
     if(name != "alloc" and name != "free" and name != "construct_at" and name != "destroy_at") {
@@ -708,11 +694,7 @@ auto semantic_analyzer::check_call_expression(ast_arena const& ast, call_expr_sy
     return expression_info{ .type = callable->returns };
 }
 
-auto semantic_analyzer::check_member_call(
-    ast_arena const& ast,
-    call_expr_syntax const& node,
-    member_expr_syntax const& callee
-) -> expression_info
+auto semantic_analyzer::check_member_call(ast_arena const& ast, call_expr_syntax const& node, member_expr_syntax const& callee) -> expression_info
 {
     auto object = check_expression(ast, callee.object, std::nullopt);
     auto struct_index = struct_index_of(object.type);
@@ -811,11 +793,7 @@ auto semantic_analyzer::check_member_call(
     return expression_info{ .type = callable->returns };
 }
 
-auto semantic_analyzer::check_associated_call(
-    ast_arena const& ast,
-    call_expr_syntax const& node,
-    associated_name_expr_syntax const& callee
-) -> expression_info
+auto semantic_analyzer::check_associated_call(ast_arena const& ast, call_expr_syntax const& node, associated_name_expr_syntax const& callee) -> expression_info
 {
     auto type = lower_type(ast, callee.type);
     auto name = std::string{ ast_source.identifier(callee.name) };
@@ -1093,12 +1071,7 @@ auto semantic_analyzer::check_cast_expression(ast_arena const& ast, cast_expr_sy
     return expression_info{ .type = target };
 }
 
-auto semantic_analyzer::check_array_literal(
-    ast_arena const& ast,
-    source_span span,
-    std::vector<expr_id> const& elements,
-    std::optional<semantic_type_id> expected
-) -> expression_info
+auto semantic_analyzer::check_array_literal(ast_arena const& ast, source_span span, std::vector<expr_id> const& elements, std::optional<semantic_type_id> expected) -> expression_info
 {
     if(auto aggregate = aggregate_context_for(expected)) {
         if(aggregate->length != elements.size()) {
@@ -1145,11 +1118,7 @@ auto semantic_analyzer::check_array_literal(
     };
 }
 
-auto semantic_analyzer::check_tuple_literal(
-    ast_arena const& ast,
-    tuple_literal_expr_syntax const& node,
-    std::optional<semantic_type_id> expected
-) -> expression_info
+auto semantic_analyzer::check_tuple_literal(ast_arena const& ast, tuple_literal_expr_syntax const& node, std::optional<semantic_type_id> expected) -> expression_info
 {
     if(expected) {
         if(auto const* tuple = std::get_if<tuple_type>(&result.types.get(*expected))) {
@@ -1181,11 +1150,7 @@ auto semantic_analyzer::check_tuple_literal(
     };
 }
 
-auto semantic_analyzer::choose_constructor(
-    std::uint32_t struct_index,
-    std::vector<expression_info> const& arguments,
-    source_span span
-) -> std::optional<symbol_id>
+auto semantic_analyzer::choose_constructor(std::uint32_t struct_index, std::vector<expression_info> const& arguments, source_span span) -> std::optional<symbol_id>
 {
     auto matches = std::vector<constructor_match>{};
     for(auto symbol : result.structs[struct_index].constructors) {
@@ -1217,10 +1182,7 @@ auto semantic_analyzer::choose_constructor(
     return matches.front().symbol;
 }
 
-auto semantic_analyzer::constructor_score(
-    function_signature const& signature,
-    std::vector<expression_info> const& arguments
-) -> std::optional<int>
+auto semantic_analyzer::constructor_score(function_signature const& signature, std::vector<expression_info> const& arguments) -> std::optional<int>
 {
     if(signature.parameters.size() != arguments.size()) {
         return std::nullopt;
@@ -1239,12 +1201,7 @@ auto semantic_analyzer::constructor_score(
     return score;
 }
 
-auto semantic_analyzer::check_struct_initializer(
-    ast_arena const& ast,
-    struct_init_expr_syntax const& node,
-    expr_id id,
-    std::optional<semantic_type_id> expected
-) -> expression_info
+auto semantic_analyzer::check_struct_initializer(ast_arena const& ast, struct_init_expr_syntax const& node, expr_id id, std::optional<semantic_type_id> expected) -> expression_info
 {
     auto type = lower_type(ast, node.type);
     if(expected and read_type(*expected) != read_type(type)) {
@@ -1451,11 +1408,7 @@ auto semantic_analyzer::check_match_expression(ast_arena const& ast, match_expr_
     return expression_info{ .type = result_type.value_or(semantic_type_ids::unit) };
 }
 
-auto semantic_analyzer::check_lambda_expression(
-    lambda_expr_syntax const& node,
-    expr_id id,
-    std::optional<semantic_type_id> expected
-) -> expression_info
+auto semantic_analyzer::check_lambda_expression(lambda_expr_syntax const& node, expr_id id, std::optional<semantic_type_id> expected) -> expression_info
 {
     auto symbol = result.function_symbol_of(active_unit_index, node.function);
     if(not symbol.valid()) {
