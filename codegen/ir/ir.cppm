@@ -304,9 +304,21 @@ struct function_lowerer
             symbol
         );
         function = &module.functions.back();
-        current = add_block("entry");
 
         auto const& signature = semantics.signatures[signature_id.value];
+        if(not syntax.has_body) {
+            for(auto index = 0uz; index < syntax.parameters.size() and index < signature.parameters.size(); ++index) {
+                function->parameters.emplace_back(
+                    make_value(),
+                    signature.parameters[index],
+                    symbol_id{},
+                    std::string{ ast_source.slice(syntax.parameters[index].name) }
+                );
+            }
+            return true;
+        }
+
+        current = add_block("entry");
         auto parameter_index = 0uz;
         if(lambda.valid() and lambda.env_symbol.valid()) {
             bind_parameter(lambda.env_symbol, semantics.symbols[lambda.env_symbol.value].type, "closure.env");
@@ -393,6 +405,9 @@ struct function_lowerer
         if(module_name.empty() and value.name == "main") {
             return "main";
         }
+        if(parsed.ast.node(function_id_value).extern_abi) {
+            return value.name;
+        }
         if(module_name.empty()) {
             return value.name;
         }
@@ -407,6 +422,9 @@ struct function_lowerer
         }
         if(symbol.valid() and semantics.symbols[symbol.value].function_kind != semantic_function_kind::free_function) {
             return ir_linkage::internal;
+        }
+        if(syntax.extern_abi) {
+            return ir_linkage::external;
         }
         auto name = ast_source.slice(syntax.name);
         if(parsed_module_name().empty() and name == "main") {

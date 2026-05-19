@@ -14,17 +14,6 @@ enum class escape_result
     unterminated,
 };
 
-auto report_literal_diagnostic(
-    diagnostic_collector& diagnostics,
-    lexer_cursor const& cursor,
-    diagnostic_kind kind,
-    std::string_view message,
-    std::size_t start,
-    std::size_t end) -> void
-{
-    diagnostics.report(kind, std::string{ message }, cursor.make_span(start, end));
-}
-
 auto consume_escape_sequence(
     std::string_view source,
     std::size_t& offset,
@@ -40,12 +29,20 @@ auto consume_escape_sequence(
     ++offset;
 
     if(offset >= source.size()) {
-        report_literal_diagnostic(diagnostics, cursor, unterminated_kind, unterminated_message, literal_start, offset);
+        diagnostics.report(
+            unterminated_kind,
+            unterminated_message,
+            cursor.make_span(literal_start, offset)
+        );
         return escape_result::unterminated;
     }
 
     if(source[offset] == '\n') {
-        report_literal_diagnostic(diagnostics, cursor, unterminated_kind, unterminated_message, literal_start, offset);
+        diagnostics.report(
+            unterminated_kind,
+            unterminated_message,
+            cursor.make_span(literal_start, offset)
+        );
         return escape_result::unterminated;
     }
 
@@ -65,13 +62,10 @@ auto consume_escape_sequence(
     if(source[offset] == 'x') {
         ++offset;
         if(offset >= source.size() or not is_hex_digit(source[offset])) {
-            report_literal_diagnostic(
-                diagnostics,
-                cursor,
+            diagnostics.report(
                 diagnostic_kind::invalid_escape_sequence,
                 "invalid escape sequence"sv,
-                escape_start,
-                offset
+                cursor.make_span(escape_start, offset)
             );
             return escape_result::invalid;
         }
@@ -82,33 +76,25 @@ auto consume_escape_sequence(
     }
 
     ++offset;
-    report_literal_diagnostic(
-        diagnostics,
-        cursor,
+    diagnostics.report(
         diagnostic_kind::invalid_escape_sequence,
         "invalid escape sequence"sv,
-        escape_start,
-        offset
+        cursor.make_span(escape_start, offset)
     );
     return escape_result::invalid;
 }
 
 auto lexer::lex_number_literal(token_flags flags) -> token
 {
-    using namespace std::literals;
-
     auto const source = cursor_.source();
     auto const start = cursor_.offset();
-    auto invalid_number = [&](std::size_t end) -> token {
-        cursor_.set_offset(end);
-        report_literal_diagnostic(
-            diagnostics_,
-            cursor_,
-            diagnostic_kind::invalid_number_suffix,
-            "invalid numeric suffix"sv,
-            start,
-            end
-        );
+    auto invalid_number = [&](
+        diagnostic_kind kind,
+        std::size_t diagnostic_start,
+        std::size_t diagnostic_end,
+        std::size_t token_end) -> token {
+        cursor_.set_offset(token_end);
+        diagnostics_.report(kind, cursor_.make_span(diagnostic_start, diagnostic_end));
         return cursor_.make_token(token_kind::invalid, start, cursor_.offset(), flags | token_flags::recovered);
     };
 
@@ -135,7 +121,7 @@ auto lexer::lex_number_literal(token_flags flags) -> token
             ++probe;
         }
         if(probe >= source.size() or not is_decimal_digit(source[probe])) {
-            return invalid_number(probe);
+            return invalid_number(diagnostic_kind::missing_exponent_digits, offset, probe, probe);
         }
 
         is_float = true;
@@ -146,14 +132,15 @@ auto lexer::lex_number_literal(token_flags flags) -> token
     }
 
     if(offset < source.size() and is_identifier_start(source[offset])) {
+        auto const suffix_start = offset;
         while(offset < source.size() and not is_recovery_delimiter(source[offset])) {
             ++offset;
         }
-        return invalid_number(offset);
+        return invalid_number(diagnostic_kind::invalid_number_suffix, suffix_start, offset, offset);
     }
 
     if(not is_float and source[start] == '0' and digit_end > start + 1) {
-        return invalid_number(digit_end);
+        return invalid_number(diagnostic_kind::leading_zero_integer, start, digit_end, digit_end);
     }
 
     cursor_.set_offset(offset);
@@ -186,13 +173,10 @@ auto lexer::lex_string_literal(token_flags flags) -> token
             return finish(token_kind::string_literal, offset, flags);
         }
         if(ch == '\n') {
-            report_literal_diagnostic(
-                diagnostics_,
-                cursor_,
+            diagnostics_.report(
                 diagnostic_kind::unterminated_string_literal,
                 unterminated_message,
-                start,
-                offset
+                cursor_.make_span(start, offset)
             );
             return finish(token_kind::invalid, offset, flags | token_flags::unterminated | token_flags::recovered);
         }
@@ -217,13 +201,10 @@ auto lexer::lex_string_literal(token_flags flags) -> token
         ++offset;
     }
 
-    report_literal_diagnostic(
-        diagnostics_,
-        cursor_,
+    diagnostics_.report(
         diagnostic_kind::unterminated_string_literal,
         unterminated_message,
-        start,
-        offset
+        cursor_.make_span(start, offset)
     );
     return finish(token_kind::invalid, offset, flags | token_flags::unterminated | token_flags::recovered);
 }
@@ -254,24 +235,18 @@ auto lexer::lex_char_literal(token_flags flags) -> token
             if(content_count == 1) {
                 return finish(token_kind::char_literal, offset, flags);
             }
-            report_literal_diagnostic(
-                diagnostics_,
-                cursor_,
+            diagnostics_.report(
                 diagnostic_kind::invalid_char_literal,
                 "invalid char literal"sv,
-                start,
-                offset
+                cursor_.make_span(start, offset)
             );
             return finish(token_kind::invalid, offset, flags | token_flags::recovered);
         }
         if(ch == '\n') {
-            report_literal_diagnostic(
-                diagnostics_,
-                cursor_,
+            diagnostics_.report(
                 diagnostic_kind::unterminated_char_literal,
                 unterminated_message,
-                start,
-                offset
+                cursor_.make_span(start, offset)
             );
             return finish(token_kind::invalid, offset, flags | token_flags::unterminated | token_flags::recovered);
         }
@@ -298,13 +273,10 @@ auto lexer::lex_char_literal(token_flags flags) -> token
         ++offset;
     }
 
-    report_literal_diagnostic(
-        diagnostics_,
-        cursor_,
+    diagnostics_.report(
         diagnostic_kind::unterminated_char_literal,
         unterminated_message,
-        start,
-        offset
+        cursor_.make_span(start, offset)
     );
     return finish(token_kind::invalid, offset, flags | token_flags::unterminated | token_flags::recovered);
 }

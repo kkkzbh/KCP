@@ -15,7 +15,7 @@ impl vec2 {
     {
     }
 
-    sum(self: vec2 const&) -> i32
+    sum(self const&) -> i32
     {
         return x + self.y;
     }

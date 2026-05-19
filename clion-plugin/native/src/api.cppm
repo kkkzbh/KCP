@@ -357,7 +357,7 @@ auto collect_type_highlights(
     } else if(type.is_decltype) {
         collector.add("decltype", type.name);
         collect_expression_highlights(collector, ast, checked, unit_index, type.decltype_expression);
-    } else if(name == "Self") {
+    } else if(name == "this") {
         collector.add("self.type", type.name);
     } else {
         collector.add("type", type.name);

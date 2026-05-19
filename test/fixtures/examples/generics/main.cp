@@ -1,5 +1,5 @@
 concept measurable {
-    size(self: Self const&) -> i32;
+    size(self const&) -> i32;
 }
 
 struct box<T> {
@@ -7,19 +7,19 @@ struct box<T> {
 }
 
 impl box<T> {
-    get(self: box<T> const&) -> T
+    get(self const&) -> T
     {
         return value;
     }
 
-    replace<U>(self: box<T> const&, next: U) -> box<U>
+    replace<U>(self const&, next: U) -> box<U>
     {
         return box<U>{ .value = next };
     }
 }
 
 impl measurable for box<T> {
-    size(self: box<T> const&) -> i32
+    size(self const&) -> i32
     {
         return 1;
     }

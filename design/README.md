@@ -25,6 +25,7 @@
 
 - `docs/cast.md`: 类型转换
 - `docs/concept.md`: `concept`、关联类型、默认实现、父 concept 和 `type` 类型别名语句
+- `docs/extern_c.md`: `extern "C"` 外部 C 函数声明、C 符号名导出和第一版 ABI 边界
 - `docs/flow.md`: 流程控制
 - `docs/generic.md`: 泛型函数、泛型 `struct`、泛型 `variant`、泛型 `impl`、参数包、`template for`、强无约束模板语义、`concept` 约束和 `requires` 子句
 - `docs/initial.md`: 变量、常量与初始化

@@ -33,13 +33,13 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
 
     auto name = ast_source.identifier(syntax.name);
     auto lowered = semantic_type_id{};
-    if(name == "Self" and active_self_type.valid()) {
+    if(name == "this" and active_self_type.valid()) {
         lowered = active_self_type;
         if(not syntax.arguments.empty()) {
             report (
                 diagnostic_kind::invalid_type_argument,
                 syntax.full_span,
-                "Self does not take arguments"
+                "this does not take arguments"
             );
             lowered = semantic_type_ids::error;
         }
@@ -199,6 +199,31 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
         }
     }
     return lowered;
+}
+
+auto semantic_analyzer::lower_parameter_type(
+    ast_arena const& ast,
+    parameter_syntax const& parameter,
+    std::optional<semantic_type_id> self_type
+) -> semantic_type_id
+{
+    if(parameter.is_self_receiver) {
+        if(not self_type) {
+            report(
+                diagnostic_kind::invalid_self_parameter,
+                parameter.full_span,
+                "self receiver is only valid when a current type is available"
+            );
+            return semantic_type_ids::error;
+        }
+        if(parameter.self_is_reference) {
+            return result.types.intern(reference_type{ *self_type, parameter.is_const });
+        }
+        return *self_type;
+    }
+    return parameter.type
+        ? lower_type(ast, *parameter.type)
+        : semantic_type_ids::inferred;
 }
 
 auto semantic_analyzer::associated_type(semantic_type_id owner, std::string_view name)

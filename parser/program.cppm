@@ -114,6 +114,21 @@ auto parser::parse_translation_unit_node() -> std::optional<translation_unit_syn
             continue;
         }
 
+        if(looks_like_extern_function()) {
+            auto function = parse_extern_function();
+            if(not function) {
+                synchronize_function_list();
+                continue;
+            }
+
+            if(exported) {
+                arena.node(*function).exported = true;
+                arena.node(*function).full_span = combine_spans(*export_span, arena.node(*function).full_span);
+            }
+            unit.functions.emplace_back(*function);
+            continue;
+        }
+
         if(not starts_function_definition()) {
             report_current(
                 diagnostic_kind::unexpected_token,
@@ -217,6 +232,11 @@ auto parser::starts_top_level_item() const -> bool
     );
 }
 
+auto parser::looks_like_extern_function(std::size_t lookahead) const -> bool
+{
+    return check_contextual("extern", lookahead) and peek(lookahead + 1uz).kind == token_kind::string_literal;
+}
+
 auto parser::check_contextual(std::string_view text, std::size_t lookahead) const -> bool
 {
     auto token = peek(lookahead);
@@ -241,7 +261,22 @@ auto parser::expect_parameter_start() -> bool
     return false;
 }
 
-auto parser::parse_function(function_syntax_kind kind) -> std::optional<function_id>
+auto parser::parse_extern_function() -> std::optional<function_id>
+{
+    auto extern_token = consume();
+    auto abi = expect(token_kind::string_literal);
+    if(not abi) {
+        return std::nullopt;
+    }
+
+    return parse_function(function_syntax_kind::free_function, extern_token.span, abi->span);
+}
+
+auto parser::parse_function(
+    function_syntax_kind kind,
+    std::optional<source_span> extern_span,
+    std::optional<source_span> extern_abi
+) -> std::optional<function_id>
 {
     auto name = expect_identifier("function name");
     auto generic_parameters = std::vector<generic_parameter_syntax>{};
@@ -288,20 +323,33 @@ auto parser::parse_function(function_syntax_kind kind) -> std::optional<function
         }
     }
 
-    auto body = parse_block_statement();
-    if(not body) {
-        return std::nullopt;
+    auto body = stmt_id{};
+    auto has_body = true;
+    auto end_span = source_span{};
+    if(extern_abi and check(token_kind::semicolon)) {
+        auto semicolon = consume();
+        has_body = false;
+        end_span = semicolon.span;
+    } else {
+        auto parsed_body = parse_block_statement();
+        if(not parsed_body) {
+            return std::nullopt;
+        }
+        body = *parsed_body;
+        end_span = arena.span(body);
     }
 
     auto function = function_syntax {
-        .full_span = combine_spans(name->span, arena.span(*body)),
+        .full_span = combine_spans(extern_span.value_or(name->span), end_span),
         .kind = kind,
+        .has_body = has_body,
+        .extern_abi = extern_abi,
         .name = name->span,
         .generic_parameters = std::move(generic_parameters),
         .parameters = std::move(*parameters),
         .return_type = return_type,
         .requires_clause = std::move(requires_clause),
-        .body = *body,
+        .body = body,
     };
     return arena.add(std::move(function));
 }
@@ -1019,8 +1067,37 @@ auto parser::parse_parameter() -> std::optional<parameter_syntax>
     }
 
     auto name = expect_identifier("parameter name");
+    if(not name) {
+        return std::nullopt;
+    }
+
+    if(name->text == "self" and not check(token_kind::colon)) {
+        auto is_reference = false;
+        auto end = name->span;
+        if(check(token_kind::kw_const)) {
+            is_const = true;
+            end = consume().span;
+            auto amp = expect(token_kind::amp);
+            if(not amp) {
+                return std::nullopt;
+            }
+            is_reference = true;
+            end = amp->span;
+        } else if(check(token_kind::amp)) {
+            is_reference = true;
+            end = consume().span;
+        }
+        return parameter_syntax {
+            .full_span = combine_spans(const_span.value_or(name->span), end),
+            .is_const = is_const,
+            .is_self_receiver = true,
+            .self_is_reference = is_reference,
+            .name = name->span,
+        };
+    }
+
     auto colon = expect(token_kind::colon);
-    if(not name or not colon) {
+    if(not colon) {
         return std::nullopt;
     }
 

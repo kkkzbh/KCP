@@ -14,6 +14,8 @@ export enum class diagnostic_kind : std::uint16_t
     invalid_char_literal,
     invalid_escape_sequence,
     invalid_number_suffix,
+    missing_exponent_digits,
+    leading_zero_integer,
 
     // Parser diagnostics.
     unexpected_token,

@@ -185,6 +185,12 @@ private:
     auto collect_variant_cases(std::size_t unit_index, ast_arena const& ast, variant_id id) -> void;
     auto resolve_imports() -> void;
     auto collect_function_declaration(std::size_t unit_index, ast_arena const& ast, function_id id) -> void;
+    auto validate_extern_c_function(
+        function_syntax const& function,
+        std::span<semantic_type_id const> parameter_types,
+        semantic_type_id return_type
+    ) -> void;
+    auto is_extern_c_compatible_type(semantic_type_id type, bool allow_unit) const -> bool;
     auto collect_impl_declarations(std::size_t unit_index, ast_arena const& ast, impl_id id) -> void;
     auto collect_impl_function(
         std::size_t unit_index,
@@ -310,6 +316,11 @@ private:
     ) -> std::optional<symbol_id>;
     auto pointer_pointee(semantic_type_id type) -> std::optional<expression_info>;
     auto target_const(semantic_type_id type, bool lvalue_const) -> bool;
+    auto lower_parameter_type(
+        ast_arena const& ast,
+        parameter_syntax const& parameter,
+        std::optional<semantic_type_id> self_type = std::nullopt
+    ) -> semantic_type_id;
     auto read_type(semantic_type_id type) const -> semantic_type_id;
     auto can_implicitly_convert(expression_info const& from, semantic_type_id to) -> bool;
     auto can_implicitly_convert(semantic_type_id from, semantic_type_id to) -> bool;
@@ -550,7 +561,7 @@ private:
     std::set<std::string> active_generic_parameter_packs{}; ///< 当前声明中可见的类型参数包名。
     std::map<std::string, semantic_type_id> const* active_type_substitutions{}; ///< lowering 时的泛型类型替换。
     std::map<std::string, std::vector<semantic_type_id>> const* active_type_pack_substitutions{}; ///< lowering 时的类型参数包替换。
-    semantic_type_id active_self_type{}; ///< concept 相关类型 lowering 中的 Self 替换目标。
+    semantic_type_id active_self_type{}; ///< concept / impl 相关类型 lowering 中的 this 替换目标。
     std::map<std::string, semantic_type_id> const* active_type_aliases{}; ///< concept impl 当前可见关联类型。
     std::size_t active_context_index{}; ///< 当前语义 side table 写入的实例上下文；0 表示源程序根上下文。
     std::size_t next_context_index{ 1uz }; ///< 泛型实例和 template for 展开使用的唯一上下文编号源。

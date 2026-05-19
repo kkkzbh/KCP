@@ -102,6 +102,26 @@ auto check_binary_exit(test_tools const& tools) -> void
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "binary should return 42");
 }
 
+auto check_extern_c_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("extern-c");
+    auto source = dir / "extern_c.cp";
+    auto app = dir / "extern_c";
+    write_source(
+        source,
+R"(extern "C" abs(value: i32) -> i32;
+
+main() -> i32
+{
+    return abs(-42);
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile extern C binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "extern C binary should call libc abs");
+}
+
 auto check_emit_ll(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("ll");
@@ -798,6 +818,31 @@ auto check_nested_inferred_lambda_binary(test_tools const& tools) -> void
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 3, "nested inferred lambda should return 3");
 }
 
+auto check_generic_lambda_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("generic-lambda");
+    auto source = dir / "generic_lambda.cp";
+    auto app = dir / "generic_lambda";
+    write_source(
+        source,
+        R"(main() -> i32
+{
+    let bias = 10;
+    let add_bias = f<T>(x: T) -> T {
+        x + bias
+    };
+    let identity = f<T>(x: T) -> T {
+        x
+    };
+    return add_bias<i32>(2) + identity<i32>(30);
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile generic lambda binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "generic lambda binary should return 42");
+}
+
 auto check_generic_struct_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("generic-struct");
@@ -949,7 +994,7 @@ auto check_direct_iterator_consumes_original_binary(test_tools const& tools) -> 
 
 concept iterator {
     type iter_item;
-    next(self: Self&) -> optional<iter_item>;
+    next(self&) -> optional<iter_item>;
 }
 
 struct count_iter {
@@ -960,7 +1005,7 @@ struct count_iter {
 impl iterator for count_iter {
     type iter_item = i32;
 
-    next(self: count_iter&) -> optional<i32>
+    next(self&) -> optional<i32>
     {
         if(current < end) {
             let value = current;
@@ -1021,6 +1066,7 @@ auto main(int argc, char** argv) -> int
     };
 
     check_binary_exit(tools);
+    check_extern_c_binary(tools);
     check_emit_ll(tools);
     check_emit_obj(tools);
     check_multi_input(tools);
@@ -1046,6 +1092,7 @@ auto main(int argc, char** argv) -> int
     check_decltype_ref_destructure_binary(tools);
     check_lambda_binary(tools);
     check_nested_inferred_lambda_binary(tools);
+    check_generic_lambda_binary(tools);
     check_generic_struct_binary(tools);
     check_generic_function_binary(tools);
     check_imported_generic_function_binary(tools);

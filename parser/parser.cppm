@@ -18,10 +18,16 @@ struct parser
     auto parse_module_name() -> std::optional<module_name_syntax>;
     auto starts_function_definition() const -> bool;
     auto starts_top_level_item() const -> bool;
+    auto looks_like_extern_function(std::size_t lookahead = 0uz) const -> bool;
     auto check_contextual(std::string_view text, std::size_t lookahead = 0uz) const -> bool;
     auto starts_parameter() const -> bool;
     auto expect_parameter_start() -> bool;
-    auto parse_function(function_syntax_kind kind = function_syntax_kind::free_function) -> std::optional<function_id>;
+    auto parse_extern_function() -> std::optional<function_id>;
+    auto parse_function(
+        function_syntax_kind kind = function_syntax_kind::free_function,
+        std::optional<source_span> extern_span = std::nullopt,
+        std::optional<source_span> extern_abi = std::nullopt
+    ) -> std::optional<function_id>;
     auto parse_struct_declaration(bool exported, std::optional<source_span> export_span) -> std::optional<struct_id>;
     auto parse_struct_field() -> std::optional<struct_field_syntax>;
     auto parse_variant_declaration(bool exported, std::optional<source_span> export_span) -> std::optional<variant_id>;

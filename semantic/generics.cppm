@@ -34,7 +34,7 @@ auto semantic_analyzer::collect_type_pattern_parameters(
             and not type.is_const
             and not type.is_function_type
             and not type.is_decltype
-            and name != "Self"
+            and name != "this"
             and name != "array"
             and name != "tuple"
             and not is_builtin_name(name)
@@ -520,6 +520,13 @@ auto semantic_analyzer::validate_function_pack_shape(std::size_t unit_index, fun
     auto seen_value_pack = false;
     for(auto index = 0uz; index < function.parameters.size(); ++index) {
         auto const& parameter = function.parameters[index];
+        if(parameter.is_self_receiver and index != 0uz) {
+            report(
+                diagnostic_kind::invalid_self_parameter,
+                parameter.full_span,
+                "self receiver must be the first function parameter"
+            );
+        }
         if(not parameter.is_pack) {
             continue;
         }

@@ -135,7 +135,7 @@ export struct vec2 {
 }
 
 export concept measurable {
-    size(self: Self const&) -> u64;
+    size(self const&) -> u64;
 }
 ```
 

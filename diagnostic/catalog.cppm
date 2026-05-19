@@ -24,7 +24,26 @@ export auto spec(diagnostic_kind kind) -> diagnostic_spec
         case invalid_escape_sequence:
             return { lexer, error, "invalid_escape_sequence"sv, "invalid escape sequence"sv };
         case invalid_number_suffix:
-            return { lexer, error, "invalid_number_suffix"sv, "invalid number suffix"sv };
+            return {
+                lexer,
+                error,
+                "invalid_number_suffix"sv,
+                "numeric literal cannot be followed by identifier characters"sv
+            };
+        case missing_exponent_digits:
+            return {
+                lexer,
+                error,
+                "missing_exponent_digits"sv,
+                "exponent marker must be followed by digits"sv
+            };
+        case leading_zero_integer:
+            return {
+                lexer,
+                error,
+                "leading_zero_integer"sv,
+                "integer literal cannot have leading zeroes"sv
+            };
         case unexpected_token:
             return { parser, error, "unexpected_token"sv, "unexpected token"sv };
         case expected_token:

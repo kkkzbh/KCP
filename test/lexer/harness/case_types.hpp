@@ -120,6 +120,8 @@ auto constexpr inline all_diagnostic_kinds = std::array {
     diagnostic_kind::invalid_char_literal,
     diagnostic_kind::invalid_escape_sequence,
     diagnostic_kind::invalid_number_suffix,
+    diagnostic_kind::missing_exponent_digits,
+    diagnostic_kind::leading_zero_integer,
 };
 
 auto inline format_flags(token_flags flags) -> std::string

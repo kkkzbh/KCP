@@ -6,7 +6,7 @@ export variant optional<T> {
 }
 
 impl optional<T> {
-    is_some(self: optional<T> const&) -> bool
+    is_some(self const&) -> bool
     {
         return match self {
             .some(value) => true,
@@ -14,12 +14,12 @@ impl optional<T> {
         };
     }
 
-    is_none(self: optional<T> const&) -> bool
+    is_none(self const&) -> bool
     {
         return not self.is_some();
     }
 
-    value_or(self: optional<T> const&, fallback: T) -> T
+    value_or(self const&, fallback: T) -> T
     {
         return match self {
             .some(value) => value,

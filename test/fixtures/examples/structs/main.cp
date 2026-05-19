@@ -11,13 +11,13 @@ impl vec2 {
         return vec2{ .x = x, .y = y };
     }
 
-    move_by(self: vec2&, dx: i32, dy: i32)
+    move_by(self&, dx: i32, dy: i32)
     {
         x += dx;
         self.y += dy;
     }
 
-    sum(self: vec2 const&) -> i32
+    sum(self const&) -> i32
     {
         return x + self.y;
     }

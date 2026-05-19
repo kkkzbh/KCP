@@ -1,6 +1,6 @@
 export concept iterator {
     type item;
-    next(self: Self&) -> item;
+    next(self&) -> item;
 }
 
 struct range_iter {
@@ -10,7 +10,7 @@ struct range_iter {
 impl iterator for range_iter {
     type item = i32;
 
-    next(self: range_iter&) -> i32
+    next(self&) -> i32
     {
         return value;
     }

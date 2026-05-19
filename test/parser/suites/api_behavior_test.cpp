@@ -85,6 +85,28 @@ main()
         ast_source.module_name(module_parsed.root->imports.front().name) == "std.io",
         "ast_source_view should normalize import names");
 
+    auto const extern_source = sources.add_source (
+        "api_extern.cp",
+        R"(extern "C" putchar(ch: i32) -> i32;
+
+export extern "C" answer() -> i32
+{
+    return 42;
+})");
+    auto extern_parsed = parse_source(sources, extern_source);
+    test_parser::assert_true(extern_parsed.accepted, "extern source should parse");
+    test_parser::assert_true(extern_parsed.root->functions.size() == 2, "extern source should keep both functions");
+    auto const& extern_decl = extern_parsed.ast.node(extern_parsed.root->functions.front());
+    test_parser::assert_true(extern_decl.extern_abi != std::nullopt, "extern declaration should keep ABI marker");
+    test_parser::assert_true(not extern_decl.has_body, "extern declaration should not require a body");
+    test_parser::assert_true(
+        ast_source.identifier(extern_decl.name) == "putchar",
+        "extern declaration should preserve its function name");
+    auto const& extern_def = extern_parsed.ast.node(extern_parsed.root->functions.back());
+    test_parser::assert_true(extern_def.extern_abi != std::nullopt, "extern definition should keep ABI marker");
+    test_parser::assert_true(extern_def.exported, "export extern definition should keep export marker");
+    test_parser::assert_true(extern_def.has_body, "extern definition should keep its body");
+
 	    auto const concept_source = sources.add_source (
 	        "api_concept.cp",
 	        R"(variant optional<T> {
@@ -94,7 +116,7 @@ main()
 
 	concept iterator {
 	    type item;
-	    next(self: Self&) -> item;
+	    next(self&) -> item;
 	}
 
 struct range_iter {
@@ -104,7 +126,7 @@ struct range_iter {
 impl iterator for range_iter {
     type item = i32;
 
-    next(self: range_iter&) -> i32
+    next(self&) -> i32
     {
         return value;
     }
@@ -316,10 +338,13 @@ main()
     type alias_type = decltype(alias);
     let inc: f(i32) -> i32 =
         f(x: i32) => x + 1;
+    let identity = f<T>(value: T) -> T {
+        value
+    };
 })");
     auto function_type_parsed = parse_source(sources, function_type_source);
     test_parser::assert_true(function_type_parsed.accepted, "function type source should parse");
-    test_parser::assert_true(function_type_parsed.root->functions.size() == 3, "lambda should add one synthetic function");
+    test_parser::assert_true(function_type_parsed.root->functions.size() == 4, "lambdas should add synthetic functions");
     auto const& function_type_main = function_type_parsed.ast.node(function_type_parsed.root->functions[1]);
     auto const& function_type_body = function_body(function_type_parsed, function_type_main);
     auto const& callback_decl = declaration(function_type_parsed, function_type_body.statements.front());
@@ -351,6 +376,12 @@ main()
     test_parser::assert_true(
         is<lambda_expr_syntax>(function_type_parsed.ast.node(lambda_decl.initializer)),
         "lambda expression should be preserved in AST");
+    auto const& generic_lambda_decl = declaration(function_type_parsed, function_type_body.statements[8]);
+    auto const& generic_lambda = as<lambda_expr_syntax>(function_type_parsed.ast.node(generic_lambda_decl.initializer));
+    auto const& generic_lambda_function = function_type_parsed.ast.node(generic_lambda.function);
+    test_parser::assert_true(
+        generic_lambda_function.generic_parameters.size() == 1,
+        "generic lambda should preserve generic parameters");
 
     auto const recovered_source = sources.add_source (
         "api_recovery.cp",

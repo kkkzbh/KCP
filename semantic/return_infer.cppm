@@ -9,7 +9,7 @@ auto semantic_analyzer::infer_return_types() -> void
         auto const& syntax = unit.root;
         for(auto function_id : syntax.functions) {
             auto const& function = unit.ast.node(function_id);
-            if(function.kind == function_syntax_kind::lambda or function_is_generic(unit_index, function_id)) {
+            if(not function.has_body or function.kind == function_syntax_kind::lambda or function_is_generic(unit_index, function_id)) {
                 continue;
             }
             auto signature_id = result.signature_of(unit_index, function_id);

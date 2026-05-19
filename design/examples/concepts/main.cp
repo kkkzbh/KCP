@@ -3,7 +3,7 @@ import std.iter;
 concept sized_iterator {
     requires iterator;
 
-    remaining(self: Self const&) -> i32;
+    remaining(self const&) -> i32;
 }
 
 struct range {
@@ -19,7 +19,7 @@ struct range_iter {
 impl iterator for range_iter {
     type iter_item = i32;
 
-    next(self: range_iter&) -> optional<i32>
+    next(self&) -> optional<i32>
     {
         if(current_value >= end_value) {
             return optional<i32>::none;
@@ -32,14 +32,14 @@ impl iterator for range_iter {
 }
 
 impl sized_iterator for range_iter {
-    remaining(self: range_iter const&) -> i32
+    remaining(self const&) -> i32
     {
         return end_value - current_value;
     }
 }
 
 impl range {
-    iter(self: range&) -> range_iter
+    iter(self&) -> range_iter
     {
         return range_iter{ .current_value = begin, .end_value = end };
     }

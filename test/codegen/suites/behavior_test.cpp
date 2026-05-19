@@ -78,6 +78,33 @@ answer() -> i32
     test_parser::assert_true(emitted.ir.contains("ret i32"), "LLVM IR should return i32");
 }
 
+auto check_extern_c_codegen() -> void
+{
+    auto sources = source_manager{};
+    auto parsed = parse_source(
+        sources,
+        "extern_c.cp",
+        R"(extern "C" abs(value: i32) -> i32;
+
+answer() -> i32
+{
+    return abs(-42);
+})");
+    auto checked = analyze_single(sources, parsed);
+    test_parser::assert_true(checked.accepted(), "extern C source should pass semantic analysis");
+
+    auto ir = emit_ir(sources, parsed, checked);
+    test_parser::assert_true(ir.accepted, ir.error.empty() ? "IR emission should pass" : ir.error);
+    auto text = dump_ir(ir.module);
+    test_parser::assert_true(text.contains("func abs("), "MIR dump should contain extern C declaration");
+    test_parser::assert_true(text.contains("func answer("), "MIR dump should contain caller");
+
+    auto emitted = emit_llvm_ir(ir.module);
+    test_parser::assert_true(emitted.verified, emitted.error.empty() ? "LLVM module should verify" : emitted.error);
+    test_parser::assert_true(emitted.ir.contains("declare i32 @abs(i32)"), "LLVM IR should declare the C symbol");
+    test_parser::assert_true(emitted.ir.contains("call i32 @abs"), "LLVM IR should call the C symbol");
+}
+
 auto check_if_control_flow() -> void
 {
     auto sources = source_manager{};
@@ -393,6 +420,7 @@ auto main() -> int
 {
     check_return_literal();
     check_locals_assignment_and_call();
+    check_extern_c_codegen();
     check_if_control_flow();
     check_aggregate_literals();
     check_array_index_operations();

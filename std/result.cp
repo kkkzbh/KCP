@@ -6,7 +6,7 @@ export variant result<T,E> {
 }
 
 impl result<T,E> {
-    is_ok(self: result<T,E> const&) -> bool
+    is_ok(self const&) -> bool
     {
         return match self {
             .ok(value) => true,
@@ -14,12 +14,12 @@ impl result<T,E> {
         };
     }
 
-    is_error(self: result<T,E> const&) -> bool
+    is_error(self const&) -> bool
     {
         return not self.is_ok();
     }
 
-    value_or(self: result<T,E> const&, fallback: T) -> T
+    value_or(self const&, fallback: T) -> T
     {
         return match self {
             .ok(value) => value,

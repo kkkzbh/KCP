@@ -19,7 +19,7 @@ class CpColorSettingsPage : ColorSettingsPage {
         import <module>std.io</module>;
 
         concept <concept>measurable</concept> {
-            <conceptFunction>size</conceptFunction>(<parameter>self</parameter>: <selfType>Self</selfType> const&) -> <type>i32</type>;
+            <conceptFunction>size</conceptFunction>(<parameter>self</parameter> const&) -> <type>i32</type>;
         }
 
         struct <type>box</type><<typeParameter>T</typeParameter>> {
@@ -32,7 +32,7 @@ class CpColorSettingsPage : ColorSettingsPage {
                 return <type>box</type>{ .<field>value</field> = <parameter>value</parameter> };
             }
 
-            <memberFunction>get</memberFunction>(<parameter>self</parameter>: <type>box</type><<typeParameter>T</typeParameter>> const&) -> <typeParameter>T</typeParameter>
+            <memberFunction>get</memberFunction>(<parameter>self</parameter> const&) -> <typeParameter>T</typeParameter>
             {
                 return <field>value</field>;
             }
@@ -41,7 +41,7 @@ class CpColorSettingsPage : ColorSettingsPage {
         }
 
         impl <concept>measurable</concept> for <type>box</type><<type>i32</type>> {
-            <memberFunction>size</memberFunction>(<parameter>self</parameter>: <type>box</type><<type>i32</type>> const&) -> <type>i32</type>
+            <memberFunction>size</memberFunction>(<parameter>self</parameter> const&) -> <type>i32</type>
             {
                 return 1;
             }

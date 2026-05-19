@@ -71,6 +71,8 @@ auto main() -> int
         std::pair{ "invalid_char_literal", "'ab'"sv },
         std::pair{ "invalid_escape_sequence", "\"\\q\""sv },
         std::pair{ "invalid_number_suffix", "123suffix"sv },
+        std::pair{ "missing_exponent_digits", "1e+"sv },
+        std::pair{ "leading_zero_integer", "012"sv },
     };
 
     for(auto const& [expected_kind, source] : invalid_diagnostics) {
@@ -157,7 +159,7 @@ impl vec2 {
         return vec2{ .x = 0, .y = 0 };
     }
 
-    sum(self: vec2 const&) -> i32
+    sum(self const&) -> i32
     {
         return self.x + self.y;
     }
@@ -202,7 +204,7 @@ main() -> i32
 
     auto constexpr global_source = R"(concept measurable {
     type item;
-    size(self: Self const&) -> i32;
+    size(self const&) -> i32;
 }
 
 struct box {
@@ -221,7 +223,7 @@ impl box {
     {
     }
 
-    get(self: box const&) -> i32
+    get(self const&) -> i32
     {
         return value;
     }
@@ -235,7 +237,7 @@ impl box {
 impl measurable for box {
     type item = i32;
 
-    size(self: box const&) -> i32
+    size(self const&) -> i32
     {
         return value;
     }

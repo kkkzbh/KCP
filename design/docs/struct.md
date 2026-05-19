@@ -70,7 +70,7 @@ impl vec2 {
     ~vec2() {
     }
 
-    length(self: vec2 const&) -> f64 {
+    length(self const&) -> f64 {
         return sqrt(x * x + y * y);
     }
 
@@ -159,7 +159,7 @@ impl buffer {
 - 析构函数没有返回类型，返回内部 `unit`。
 - 析构函数不能使用 `return value;`。
 - 析构函数体是普通语句块。
-- 析构函数中存在一个隐式 `self: type_name&`。
+- 析构函数中存在一个隐式 `self&`。
 - 析构函数中可以直接访问字段，也可以写 `self.field`。
 - 一个结构体最多声明一个析构函数。
 
@@ -171,11 +171,11 @@ impl buffer {
 
 ```cp
 impl vec2 {
-    length(self: vec2 const&) -> f64 {
+    length(self const&) -> f64 {
         return sqrt(x * x + y * y);
     }
 
-    move(self: vec2&, dx: f64, dy: f64) {
+    move(self&, dx: f64, dy: f64) {
         x = x + dx;
         self.y = self.y + dy;
     }
@@ -184,11 +184,12 @@ impl vec2 {
 
 `self` 参数规则：
 
-- `self` 必须是第一个参数。
-- `self` 的类型必须是当前结构体类型、当前结构体引用，或当前结构体 const 引用。
-- `self: type_name const&` 只能读字段，不能写字段。
-- `self: type_name&` 可以读写字段。
+- 接收者参数必须是第一个参数。
+- 接收者参数写作 `self`、`self&` 或 `self const&`，分别表示当前类型、当前类型可写引用和当前类型 const 引用。
+- `self const&` 只能读字段，不能写字段。
+- `self&` 可以读写字段。
 - 不设计 `mut self`，直接使用现有引用和 `const` 类型语法表达可变性。
+- 其他类型位置需要当前类型时写 `this`，例如 `clone(self const&) -> this`。
 
 成员函数调用使用点号：
 
@@ -352,7 +353,7 @@ point.x
 在成员函数和析构函数中，普通名字也可以查找 `self` 的字段：
 
 ```cp
-length(self: vec2 const&) -> f64 {
+length(self const&) -> f64 {
     return sqrt(x * x + y * y);
 }
 ```
@@ -366,12 +367,12 @@ length(self: vec2 const&) -> f64 {
 如果局部名字和字段同名，局部名字优先。此时必须写 `self.x` 才能访问字段：
 
 ```cp
-set_x(self: vec2&, x: f64) {
+set_x(self&, x: f64) {
     self.x = x;
 }
 ```
 
-字段赋值必须满足现有赋值规则。`self: type_name const&` 下字段视为 const，不能赋值。
+字段赋值必须满足现有赋值规则。`self const&` 下字段视为 const，不能赋值。
 
 ## 块表达式
 

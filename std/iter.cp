@@ -5,7 +5,7 @@ export import std.option;
 export concept iterator {
     type iter_item;
 
-    next(self: Self&) -> optional<iter_item>;
+    next(self&) -> optional<iter_item>;
 }
 
 export concept iterable {
@@ -17,5 +17,5 @@ export concept iterable {
         and iter_type::iter_item == iter_item
     );
 
-    iter(self: Self&) -> iter_type;
+    iter(self&) -> iter_type;
 }

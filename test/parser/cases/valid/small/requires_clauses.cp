@@ -8,7 +8,7 @@ struct value {
 impl value
 requires value: marker
 {
-    get(self: value const&) -> i32
+    get(self const&) -> i32
     requires value: marker
     {
         return item;

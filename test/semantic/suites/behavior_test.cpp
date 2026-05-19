@@ -128,7 +128,7 @@ auto check_fixture_examples() -> void
     check_fixture_example_group({ "variants/main.cp" }, { "option.cp" });
     check_fixture_example_group({ "lambdas/main.cp" });
     check_fixture_example_group({ "memory/main.cp" });
-    check_fixture_example_group({ "std/main.cp" }, { "option.cp", "result.cp" });
+    check_fixture_example_group({ "std/main.cp" }, { "std.cp", "option.cp", "result.cp", "iter.cp" });
 }
 
 auto check_side_tables() -> void
@@ -471,7 +471,7 @@ impl vec2 {
         return vec2{ .x = x, .y = y };
     }
 
-    sum(self: vec2 const&) -> i32
+    sum(self const&) -> i32
     {
         return x + self.y;
     }
@@ -719,12 +719,12 @@ auto check_concept_semantics() -> void
         "concept_impl.cp",
         R"(concept iterator {
     type item;
-    next(self: Self&) -> item;
+    next(self&) -> item;
 }
 
 concept sized_iterator {
     requires iterator;
-    remaining(self: Self const&) -> i32;
+    remaining(self const&) -> i32;
 }
 
 struct range_iter {
@@ -735,14 +735,14 @@ struct range_iter {
 impl iterator for range_iter {
     type item = i32;
 
-    next(self: range_iter&) -> i32
+    next(self&) -> i32
     {
         return value;
     }
 }
 
 impl sized_iterator for range_iter {
-    remaining(self: range_iter const&) -> i32
+    remaining(self const&) -> i32
     {
         return remaining_value;
     }
@@ -758,6 +758,31 @@ main() -> i32
     test_parser::assert_true(result.accepted(), "concrete concept impl source should pass semantic analysis");
     test_parser::assert_true(result.concepts.size() == 2, "semantic result should expose concepts");
     test_parser::assert_true(result.concept_impls.size() == 2, "semantic result should expose concept impl facts");
+
+    auto this_result = analyze_one(
+        "concept_this_type.cp",
+        R"(concept comparable {
+    same(self const&, rhs: this const&) -> i32;
+}
+
+struct value {
+    x: i32;
+}
+
+impl comparable for value {
+    same(self const&, rhs: this const&) -> i32
+    {
+        return x + rhs.x;
+    }
+}
+
+main() -> i32
+{
+    let value = value{ .x = 1 };
+    return value.same(value);
+})"
+    );
+    test_parser::assert_true(this_result.accepted(), "this type in concept signatures should pass semantic analysis");
 
 	    auto local_alias_result = analyze_one(
 	        "local_type_alias.cp",
@@ -821,12 +846,12 @@ main() -> i32
     );
     expect_diagnostic (
         "missing_concept_function.cp",
-        "concept c { call(self: Self&) -> i32; } struct value { x: i32; } impl c for value { }",
+        "concept c { call(self&) -> i32; } struct value { x: i32; } impl c for value { }",
         missing_concept_item
     );
     expect_diagnostic (
         "concept_signature_mismatch.cp",
-        "concept c { call(self: Self&) -> i32; } struct value { x: i32; } impl c for value { call(self: value&) -> bool { return true; } }",
+        "concept c { call(self&) -> i32; } struct value { x: i32; } impl c for value { call(self&) -> bool { return true; } }",
         type_mismatch
     );
     expect_diagnostic (
@@ -926,6 +951,51 @@ main() -> i32
         "alloc<T> should record builtin call metadata");
 }
 
+auto check_extern_c_semantics() -> void
+{
+    using enum diagnostic_kind;
+
+    auto sources = source_manager{};
+    auto parsed = parse_source(
+        sources,
+        "extern_c.cp",
+        R"(export module c.wrap;
+
+extern "C" abs(value: i32) -> i32;
+
+export extern "C" answer() -> i32
+{
+    return abs(-42);
+})");
+    auto checked = analyze_single(sources, parsed);
+    test_parser::assert_true(checked.accepted(), "extern C source should pass semantic analysis");
+
+    auto const& unit = *parsed.root;
+    auto const& abs_function = parsed.ast.node(unit.functions.front());
+    auto abs_signature = checked.signature_of(unit.functions.front());
+    test_parser::assert_true(abs_signature.valid(), "extern C declaration should have a signature");
+    test_parser::assert_true(not abs_function.has_body, "extern C declaration should not have a body");
+    test_parser::assert_true(
+        checked.signatures[abs_signature.value].returns == semantic_type_ids::i32,
+        "extern C declaration should preserve its return type");
+
+    expect_diagnostic(
+        "extern_c_bad_abi.cp",
+        "extern \"Rust\" item(value: i32) -> i32;",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "extern_c_bad_return.cp",
+        "extern \"C\" text() -> str;",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "extern_c_generic.cp",
+        "extern \"C\" id<T>(value: T) -> T;",
+        invalid_type_argument
+    );
+}
+
 auto check_string_index_semantics() -> void
 {
     auto checked = analyze_one(
@@ -987,7 +1057,13 @@ auto check_lambda_semantics() -> void
     let add_bias = f(x: i32) -> i32 {
         x + bias
     };
-    return inc(20) + square(4) + add_bias(1) + 3;
+    let generic_add = f<T>(x: T) -> T {
+        x + bias
+    };
+    let generic_id = f<T>(x: T) -> T {
+        x
+    };
+    return inc(20) + square(4) + add_bias(1) + generic_add<i32>(1) + generic_id<i32>(0);
 })");
     auto checked = analyze_single(sources, parsed);
     test_parser::assert_true(checked.accepted(), "lambda source should pass semantic analysis");
@@ -1084,6 +1160,7 @@ auto main() -> int
     check_parameter_pack_semantics();
     check_concept_semantics();
     check_function_type_and_memory_semantics();
+    check_extern_c_semantics();
     check_string_index_semantics();
     check_decltype_ref_and_destructuring_semantics();
     check_lambda_semantics();

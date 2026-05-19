@@ -258,7 +258,7 @@ requires
 - 类型参数的 concept 要求。
 - 多个 concept 的 `and` 组合。
 - 类型相等约束，常用于关联类型。
-- 在 `concept` 体内，裸 concept 名表示 `Self` 必须满足该父 concept。
+- 在 `concept` 体内，裸 concept 名表示 `this` 必须满足该父 concept。
 
 例如：
 
@@ -475,7 +475,7 @@ value_or<T>(value: optional<T>, fallback: T) -> T
 
 ```cp
 impl vector<T> {
-    len(self: vector<T> const&) -> usize
+    len(self const&) -> usize
     {
         return size;
     }
@@ -512,7 +512,7 @@ impl vector<T>
 requires
     T: movable
 {
-    push(self: vector<T>&, value: T)
+    push(self&, value: T)
     {
     }
 }
@@ -532,7 +532,7 @@ for every T:
 
 ```cp
 impl vector<T> {
-    contains(self: vector<T> const&, value: T const&) -> bool
+    contains(self const&, value: T const&) -> bool
     requires
         T: comparable
     {
@@ -549,7 +549,7 @@ impl vector<T> {
 
 ```cp
 impl vector<T> {
-    convert_all<U>(self: vector<T> const&) -> vector<U>
+    convert_all<U>(self const&) -> vector<U>
     requires
         T: convertible_to<U>
     {
@@ -584,7 +584,7 @@ impl comparable for vector<T>
 requires
     T: comparable
 {
-    less(self: vector<T> const&, rhs: vector<T> const&) -> bool
+    less(self const&, rhs: this const&) -> bool
     {
         return self.len() < rhs.len();
     }
@@ -616,7 +616,7 @@ requires
 
 ```cp
 concept comparable {
-    less(self: Self const&, rhs: Self const&) -> bool;
+    less(self const&, rhs: this const&) -> bool;
 }
 ```
 
@@ -624,7 +624,7 @@ concept comparable {
 
 ```cp
 impl comparable for i32 {
-    less(self: i32 const&, rhs: i32 const&) -> bool
+    less(self const&, rhs: this const&) -> bool
     {
         return self < rhs;
     }

@@ -12,6 +12,8 @@ export struct parameter_syntax
     source_span full_span{};
     bool is_const{};
     bool is_pack{};
+    bool is_self_receiver{};
+    bool self_is_reference{};
     source_span name{};
     std::optional<type_id> type{};
 };
@@ -83,6 +85,8 @@ export struct function_syntax
     function_syntax_kind kind{ function_syntax_kind::free_function };
     bool exported{};
     bool defaulted{};
+    bool has_body{ true };
+    std::optional<source_span> extern_abi{};
     source_span name{};
     std::vector<generic_parameter_syntax> generic_parameters{};
     std::vector<parameter_syntax> parameters{};

@@ -36,14 +36,14 @@ export import std.option;
 export concept iterator {
     type iter_item;
 
-    next(self: Self&) -> optional<iter_item>;
+    next(self&) -> optional<iter_item>;
 }
 ```
 
 规则：
 
 - `iter_item` 是每次迭代产生的元素类型。
-- `next(self: Self&)` 需要可写 `self`，因为 iterator 本身保存遍历状态。
+- `next(self&)` 需要可写 `self`，因为 iterator 本身保存遍历状态。
 - 返回 `.some(value)` 表示本轮产生一个元素，并且 iterator 已经前进到下一状态。
 - 返回 `.none` 表示迭代结束。结束后再次调用 `next` 应继续返回 `.none`。
 - 按值产生元素。引用迭代、可变引用迭代和借用生命周期不属于当前迭代协议。
@@ -59,7 +59,7 @@ struct range_iter {
 impl iterator for range_iter {
     type iter_item = i32;
 
-    next(self: range_iter&) -> optional<i32>
+    next(self&) -> optional<i32>
     {
         if(current_value >= end_value) {
             return optional<i32>::none;
@@ -88,7 +88,7 @@ export concept iterable {
         and iter_type::iter_item == iter_item
     );
 
-    iter(self: Self&) -> iter_type;
+    iter(self&) -> iter_type;
 }
 ```
 
@@ -97,8 +97,8 @@ export concept iterable {
 - `iter_type` 是 `iter(self)` 产生的 iterator 类型。
 - `iter_type` 必须实现 `iterator`。
 - `iter_type::iter_item` 必须和 `iterable::iter_item` 相同。
-- `iter(self: Self&)` 可以保存必要的当前位置、边界、指针或引用信息。
-- 只定义可写 `self` 的入口。只读迭代需要通过 `iter(self: Self const&)`、独立 concept 或函数重载规则单独定义。
+- `iter(self&)` 可以保存必要的当前位置、边界、指针或引用信息。
+- 只定义可写 `self` 的入口。只读迭代需要通过 `iter(self const&)`、独立 concept 或函数重载规则单独定义。
 
 例如：
 
@@ -109,7 +109,7 @@ struct range {
 }
 
 impl range {
-    iter(self: range&) -> range_iter
+    iter(self&) -> range_iter
     {
         return range_iter{ .current_value = begin, .end_value = end };
     }
@@ -138,7 +138,7 @@ for(let value : values) {
 3. 否则，如果 `R implements iterator`，则直接把 `values` 作为一次性 iterator 消费。
 4. 否则报错：范围表达式必须实现 `iterable` 或 `iterator`。
 
-如果选中的入口需要 `self: Self&`，但范围表达式只能作为 const 值或 const 引用使用，则报错。实现 `iterator` 不代表任意当前值都能推进；`next(self: Self&)` 需要可写 iterator 状态。
+如果选中的入口需要 `self&`，但范围表达式只能作为 const 值或 const 引用使用，则报错。实现 `iterator` 不代表任意当前值都能推进；`next(self&)` 需要可写 iterator 状态。
 
 取得 iterator 后，range-for 只有一套展开规则：
 

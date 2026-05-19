@@ -82,6 +82,13 @@ auto semantic_analyzer::collect_declarations() -> void
 
 auto semantic_analyzer::resolve_imports() -> void
 {
+    auto named_modules = std::set<std::string>{};
+    for(auto const& state : units) {
+        if(state.named_module) {
+            named_modules.emplace(state.module_name);
+        }
+    }
+
     for(auto& state : units) {
         auto const& syntax = state.root;
         if(auto local = module_functions.find(state.module_key); local != module_functions.end()) {
@@ -107,7 +114,8 @@ auto semantic_analyzer::resolve_imports() -> void
             auto found_types = module_type_exports.find(module_name);
             auto found_concepts = module_concept_exports.find(module_name);
             if (
-                found_functions == module_exports.end()
+                not named_modules.contains(module_name)
+                and found_functions == module_exports.end()
                 and found_types == module_type_exports.end()
                 and found_concepts == module_concept_exports.end()
             ) {
@@ -338,6 +346,19 @@ auto semantic_analyzer::collect_concept_items(
                         );
                         return;
                     }
+                    for(auto index = 0uz; index < value.parameters.size(); ++index) {
+                        auto const& parameter = value.parameters[index];
+                        if(ast_source.slice(parameter.name) != "self") {
+                            continue;
+                        }
+                        if(index != 0uz or not parameter.is_self_receiver) {
+                            report(
+                                diagnostic_kind::invalid_self_parameter,
+                                parameter.full_span,
+                                "concept self parameter must use receiver syntax"
+                            );
+                        }
+                    }
                     concept_value.functions.emplace(
                         name,
                         semantic_concept_function_requirement {
@@ -492,18 +513,22 @@ auto semantic_analyzer::collect_function_declaration(
     auto parameter_types = (
         function.parameters
         | std::views::transform([&](parameter_syntax const& parameter) {
-            return parameter.type
-                ? lower_type(ast, *parameter.type)
-                : semantic_type_ids::inferred;
+            return lower_parameter_type(ast, parameter);
         }) | std::ranges::to<std::vector<semantic_type_id>>()
     );
-    auto inferred_return = not function.return_type;
+    auto inferred_return = not function.return_type and function.has_body;
     auto return_type = semantic_type_ids::inferred;
     if(function.return_type) {
         return_type = lower_type(ast, *function.return_type);
+    } else if(not function.has_body) {
+        return_type = semantic_type_ids::unit;
     }
     active_generic_parameters = std::move(old_parameters);
     active_generic_parameter_packs = std::move(old_packs);
+
+    if(function.extern_abi) {
+        validate_extern_c_function(function, parameter_types, return_type);
+    }
 
     auto signature_id = (
         add_signature (function_signature {
@@ -551,6 +576,57 @@ auto semantic_analyzer::collect_function_declaration(
     if(function.kind != function_syntax_kind::lambda) {
         local_names.emplace(std::move(name), symbol);
     }
+}
+
+auto semantic_analyzer::validate_extern_c_function(
+    function_syntax const& function,
+    std::span<semantic_type_id const> parameter_types,
+    semantic_type_id return_type
+) -> void
+{
+    if(not function.extern_abi) {
+        return;
+    }
+
+    if(ast_source.slice(*function.extern_abi) != "\"C\"") {
+        report(diagnostic_kind::invalid_type_argument, *function.extern_abi, "extern ABI must be \"C\"");
+    }
+    if(not function.generic_parameters.empty()) {
+        report(diagnostic_kind::invalid_type_argument, function.full_span, "extern \"C\" function cannot be generic");
+    }
+    if(function.requires_clause) {
+        report(diagnostic_kind::invalid_type_argument, function.requires_clause->full_span, "extern \"C\" function cannot have a requires clause");
+    }
+    if(not is_extern_c_compatible_type(return_type, true)) {
+        report(diagnostic_kind::invalid_type_argument, function.full_span, "extern \"C\" return type is not C-compatible");
+    }
+    for(auto type : parameter_types) {
+        if(not is_extern_c_compatible_type(type, false)) {
+            report(diagnostic_kind::invalid_type_argument, function.full_span, "extern \"C\" parameter type is not C-compatible");
+        }
+    }
+}
+
+auto semantic_analyzer::is_extern_c_compatible_type(semantic_type_id type, bool allow_unit) const -> bool
+{
+    if(is_error(type) or is_inferred(type)) {
+        return true;
+    }
+    auto const& kind = result.types.get(type);
+    return std::visit(overloaded {
+        [&](unit_type const&) {
+            return allow_unit;
+        },
+        [&](builtin_type const& value) {
+            return value.kind != builtin_type_kind::str;
+        },
+        [&](pointer_type const&) {
+            return true;
+        },
+        [](auto const&) {
+            return false;
+        },
+    }, kind);
 }
 
 auto semantic_analyzer::collect_impl_declarations(
@@ -680,8 +756,10 @@ auto semantic_analyzer::collect_impl_function(
             report(diagnostic_kind::invalid_constructor, function.full_span, "constructor cannot declare a return type");
         }
     } else {
+        auto old_self = active_self_type;
         auto old_parameters = std::move(active_generic_parameters);
         auto old_packs = std::move(active_generic_parameter_packs);
+        active_self_type = impl_type;
         bind_active_function_generic_parameters(unit_index, id);
         if(function.return_type) {
             return_type = lower_type(ast, *function.return_type);
@@ -691,8 +769,14 @@ auto semantic_analyzer::collect_impl_function(
         }
         if(not function.parameters.empty() and ast_source.slice(function.parameters.front().name) == "self") {
             function_kind = semantic_function_kind::member_function;
-            auto self_type = function.parameters.front().type;
-            auto lowered_self = self_type ? lower_type(ast, *self_type) : semantic_type_ids::error;
+            if(not function.parameters.front().is_self_receiver) {
+                report(
+                    diagnostic_kind::invalid_self_parameter,
+                    function.parameters.front().full_span,
+                    "self parameter must use receiver syntax"
+                );
+            }
+            auto lowered_self = lower_parameter_type(ast, function.parameters.front(), impl_type);
             auto target = read_type(lowered_self);
             if(target != impl_type) {
                 report(
@@ -717,21 +801,23 @@ auto semantic_analyzer::collect_impl_function(
                 report(diagnostic_kind::duplicate_symbol, function.name, std::format("duplicate associated function '{}'", name));
             }
         }
+        active_self_type = old_self;
         active_generic_parameters = std::move(old_parameters);
         active_generic_parameter_packs = std::move(old_packs);
     }
 
+    auto old_self = active_self_type;
     auto old_parameters = std::move(active_generic_parameters);
     auto old_packs = std::move(active_generic_parameter_packs);
+    active_self_type = impl_type;
     bind_active_function_generic_parameters(unit_index, id);
     auto parameter_types = (
         function.parameters
         | std::views::transform([&](parameter_syntax const& parameter) {
-            return parameter.type
-                ? lower_type(ast, *parameter.type)
-                : semantic_type_ids::inferred;
+            return lower_parameter_type(ast, parameter, impl_type);
         }) | std::ranges::to<std::vector<semantic_type_id>>()
     );
+    active_self_type = old_self;
     active_generic_parameters = std::move(old_parameters);
     active_generic_parameter_packs = std::move(old_packs);
     if(is_destructor) {
@@ -904,13 +990,19 @@ auto semantic_analyzer::collect_concept_impl_function(
     auto function_kind = semantic_function_kind::associated_function;
     if(not function.parameters.empty() and ast_source.slice(function.parameters.front().name) == "self") {
         function_kind = semantic_function_kind::member_function;
+        if(not function.parameters.front().is_self_receiver) {
+            report(
+                diagnostic_kind::invalid_self_parameter,
+                function.parameters.front().full_span,
+                "self parameter must use receiver syntax"
+            );
+        }
         auto old_self = active_self_type;
         auto old_parameters = std::move(active_generic_parameters);
         auto old_packs = std::move(active_generic_parameter_packs);
         active_self_type = target_type;
         bind_active_function_generic_parameters(unit_index, id);
-        auto self_type = function.parameters.front().type;
-        auto lowered_self = self_type ? lower_type(ast, *self_type) : semantic_type_ids::error;
+        auto lowered_self = lower_parameter_type(ast, function.parameters.front(), target_type);
         active_self_type = old_self;
         active_generic_parameters = std::move(old_parameters);
         active_generic_parameter_packs = std::move(old_packs);
@@ -954,9 +1046,7 @@ auto semantic_analyzer::collect_concept_impl_function(
     auto parameter_types = (
         function.parameters
         | std::views::transform([&](parameter_syntax const& parameter) {
-            return parameter.type
-                ? lower_type(ast, *parameter.type)
-                : semantic_type_ids::inferred;
+            return lower_parameter_type(ast, parameter, target_type);
         }) | std::ranges::to<std::vector<semantic_type_id>>()
     );
     auto return_type = function.return_type ? lower_type(ast, *function.return_type) : semantic_type_ids::unit;
@@ -1431,10 +1521,14 @@ auto semantic_analyzer::signatures_match(
 
     auto const& ast = units[expected.unit_index].ast;
     for(auto index = 0uz; index < expected.parameters.size(); ++index) {
-        if(not expected.parameters[index].type) {
+        auto expected_type = semantic_type_id{};
+        if(expected.parameters[index].is_self_receiver) {
+            expected_type = lower_parameter_type(ast, expected.parameters[index], self_type);
+        } else if(expected.parameters[index].type) {
+            expected_type = requirement_type(expected.unit_index, ast, *expected.parameters[index].type, self_type);
+        } else {
             return false;
         }
-        auto expected_type = requirement_type(expected.unit_index, ast, *expected.parameters[index].type, self_type);
         if(actual.parameters[index] != expected_type) {
             return false;
         }

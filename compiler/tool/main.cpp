@@ -10,6 +10,10 @@ import codegen.llvm;
 #define CP_RUNTIME_LIBRARY_PATH ""
 #endif
 
+#ifndef CP_STDLIB_ROOT_PATH
+#define CP_STDLIB_ROOT_PATH ""
+#endif
+
 namespace {
 
 enum class emit_kind : std::uint8_t
@@ -105,6 +109,9 @@ auto module_leaf_path(std::string_view name) -> std::filesystem::path
 auto import_roots(std::string_view executable) -> std::vector<std::filesystem::path>
 {
     auto roots = std::vector<std::filesystem::path>{ std::filesystem::current_path() };
+    if constexpr(std::string_view{ CP_STDLIB_ROOT_PATH }.size() != 0uz) {
+        roots.emplace_back(CP_STDLIB_ROOT_PATH);
+    }
     auto error = std::error_code{};
     auto path = std::filesystem::weakly_canonical(std::filesystem::path{ executable }, error);
     if(error) {
