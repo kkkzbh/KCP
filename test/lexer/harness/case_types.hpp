@@ -62,6 +62,7 @@ auto constexpr inline all_token_kinds = std::array {
     token_kind::kw_struct,
     token_kind::kw_impl,
     token_kind::kw_concept,
+    token_kind::kw_operator,
     token_kind::kw_as,
     token_kind::kw_true,
     token_kind::kw_false,

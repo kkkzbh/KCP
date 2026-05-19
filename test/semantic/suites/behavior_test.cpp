@@ -120,7 +120,8 @@ auto check_fixture_examples() -> void
     check_fixture_example_group({ "variants/main.cp" }, { "option.cp" });
     check_fixture_example_group({ "lambdas/main.cp" });
     check_fixture_example_group({ "memory/main.cp" });
-    check_fixture_example_group({ "std/main.cp" }, { "std.cp", "option.cp", "expected.cp", "iter.cp" });
+    check_fixture_example_group({ "operators/main.cp" });
+    check_fixture_example_group({ "std/main.cp" }, { "option.cp", "expected.cp", "iter.cp", "ranges/iota.cp", "ranges.cp", "std.cp" });
 }
 
 auto check_side_tables() -> void
@@ -1064,6 +1065,219 @@ auto check_lambda_semantics() -> void
         "lambda main should return i32");
 }
 
+auto check_operator_overload_semantics() -> void
+{
+    auto sources = source_manager{};
+    auto parsed = parse_source(
+        sources,
+        "operator_overload.cp",
+        R"(struct vec2 {
+    x: i32;
+    y: i32;
+}
+
+impl vec2 {
+    operator +(self const&, rhs: this const&) -> this
+    {
+        return vec2{ .x = x + rhs.x, .y = y + rhs.y };
+    }
+
+    operator ==(self const&, rhs: this const&) -> bool
+    {
+        return x == rhs.x and y == rhs.y;
+    }
+
+    operator +=(self&, rhs: this const&)
+    {
+        x += rhs.x;
+        y += rhs.y;
+    }
+}
+
+operator -(left: vec2 const&, right: vec2 const&) -> vec2
+{
+    return vec2{ .x = left.x - right.x, .y = left.y - right.y };
+}
+
+struct slot {
+    value: i32;
+}
+
+impl slot {
+    operator [](self&, index: i32) -> i32&
+    {
+        return value;
+    }
+}
+
+main() -> i32
+{
+    let a = vec2{ 1, 2 };
+    let b = vec2{ 3, 4 };
+    let c = a + b;
+    let d = c - a;
+    let expected = vec2{ 4, 6 };
+    let same = c == expected;
+    let holder = slot{ 5 };
+    holder[0] = 9;
+    a += b;
+    if(same) {
+        return d.x + holder[0];
+    }
+    return 0;
+})");
+    auto checked = analyze_single(sources, parsed);
+    test_parser::assert_true(checked.accepted(), "operator overload source should pass semantic analysis");
+    test_parser::assert_true(checked.expression_operators.size() >= 5uz, "operator expressions should record selected overloads");
+}
+
+auto check_operator_import_semantics() -> void
+{
+    {
+        auto sources = source_manager{};
+        auto units = std::vector<parse_result> {
+            parse_source(
+                sources,
+                "ops.cp",
+                R"(export module ops;
+
+export struct vec2 {
+    x: i32;
+    y: i32;
+}
+
+export operator +(left: vec2 const&, right: vec2 const&) -> vec2
+{
+    return vec2{ .x = left.x + right.x, .y = left.y + right.y };
+})"),
+            parse_source(
+                sources,
+                "main.cp",
+                R"(import ops;
+
+main() -> i32
+{
+    let a = vec2{ 1, 2 };
+    let b = vec2{ 3, 4 };
+    let c = a + b;
+    return c.x;
+})")
+        };
+        auto checked = analyze_semantics(sources, std::span<parse_result const>{ units });
+        test_parser::assert_true(checked.accepted(), "exported top-level operator should be visible after import");
+        test_parser::assert_true(not checked.expression_operators.empty(), "imported operator expression should record selected overload");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto units = std::vector<parse_result> {
+            parse_source(
+                sources,
+                "hidden.cp",
+                R"(export module hidden;
+
+export struct box {
+    value: i32;
+}
+
+operator +(left: box const&, right: box const&) -> box
+{
+    return box{ left.value + right.value };
+})"),
+            parse_source(
+                sources,
+                "main.cp",
+                R"(import hidden;
+
+main()
+{
+    let a = box{ 1 };
+    let b = box{ 2 };
+    let c = a + b;
+})")
+        };
+        auto checked = analyze_semantics(sources, std::span<parse_result const>{ units });
+        test_parser::assert_true(
+            has_diagnostic(checked, diagnostic_kind::invalid_operator),
+            "non-exported top-level operator should not be visible after import");
+    }
+}
+
+auto check_operator_negative_semantics() -> void
+{
+    using enum diagnostic_kind;
+    expect_diagnostic (
+        "operator_ambiguous.cp",
+        R"(struct marker {
+    value: i32;
+}
+
+operator +(left: marker const&, right: marker const&) -> marker
+{
+    return marker{ left.value + right.value };
+}
+
+operator +(left: marker const&, right: marker const&) -> marker
+{
+    return marker{ left.value - right.value };
+}
+
+main()
+{
+    let a = marker{ 1 };
+    let b = marker{ 2 };
+    let c = a + b;
+})",
+        invalid_operator
+    );
+    expect_diagnostic (
+        "operator_layer_no_fallback.cp",
+        R"(struct marker {
+    value: i32;
+}
+
+impl marker {
+    operator +(self const&, rhs: bool) -> this
+    {
+        return marker{ value };
+    }
+}
+
+operator +(left: marker const&, right: marker const&) -> marker
+{
+    return marker{ left.value + right.value };
+}
+
+main()
+{
+    let a = marker{ 1 };
+    let b = marker{ 2 };
+    let c = a + b;
+})",
+        invalid_operator
+    );
+    expect_diagnostic (
+        "operator_const_index_assign.cp",
+        R"(struct cell {
+    value: i32;
+}
+
+impl cell {
+    operator [](self const&, index: i32) -> i32 const&
+    {
+        return value;
+    }
+}
+
+main()
+{
+    let item = cell{ 1 };
+    item[0] = 2;
+})",
+        assign_to_const
+    );
+}
+
 auto check_negative_cases() -> void
 {
     using enum diagnostic_kind;
@@ -1131,6 +1345,21 @@ auto check_negative_cases() -> void
     expect_diagnostic("bad_ref_initializer.cp", "main() { let ref value = 1 + 2; }", invalid_assignment_target);
     expect_diagnostic("bad_destructure_initializer.cp", "main() { let (a, b) = 1; }", type_mismatch);
     expect_diagnostic("lambda_parameter_infer.cp", "main() { let f = f(x) => x; }", type_mismatch);
+    expect_diagnostic (
+        "operator_builtin_only.cp",
+        "operator +(left: i32, right: i32) -> i32 { return left + right; }",
+        invalid_operator
+    );
+    expect_diagnostic (
+        "operator_bad_assign_self.cp",
+        "struct value { item: i32; } impl value { operator =(self const&, rhs: this const&) { } }",
+        invalid_operator
+    );
+    expect_diagnostic (
+        "operator_value_index_assign.cp",
+        "struct slot { value: i32; } impl slot { operator [](self&, index: i32) -> i32 { return value; } } main() { let holder = slot{ 1 }; holder[0] = 2; }",
+        invalid_assignment_target
+    );
 }
 
 } // namespace
@@ -1156,6 +1385,9 @@ auto main() -> int
     check_string_index_semantics();
     check_decltype_ref_and_destructuring_semantics();
     check_lambda_semantics();
+    check_operator_overload_semantics();
+    check_operator_import_semantics();
+    check_operator_negative_semantics();
     check_negative_cases();
     return 0;
 }

@@ -401,7 +401,8 @@ auto check_fixture_examples(test_tools const& tools) -> void
         { "variants", { tools.fixture_examples / "variants" / "main.cp" }, 42 },
         { "lambdas", { tools.fixture_examples / "lambdas" / "main.cp" }, 42 },
         { "memory", { tools.fixture_examples / "memory" / "main.cp" }, 42 },
-        { "std", { tools.fixture_examples / "std" / "main.cp" }, 42 },
+        { "operators", { tools.fixture_examples / "operators" / "main.cp" }, 42 },
+        { "std", { tools.fixture_examples / "std" / "main.cp" }, 48 },
     };
 
     for(auto const& group : groups) {
@@ -1053,6 +1054,73 @@ R"(main() -> i32
     test_parser::assert_true(status == 0, "cp should compile string index binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "string index binary should read first char");
 }
+
+auto check_operator_overload_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("operator-overload");
+    auto source = dir / "operator_overload.cp";
+    auto app = dir / "operator_overload";
+    write_source (
+        source,
+        R"(struct vec2 {
+    x: i32;
+    y: i32;
+}
+
+impl vec2 {
+    operator +(self const&, rhs: this const&) -> this
+    {
+        return vec2{ .x = x + rhs.x, .y = y + rhs.y };
+    }
+
+    operator +=(self&, rhs: this const&)
+    {
+        x += rhs.x;
+        y += rhs.y;
+    }
+}
+
+struct slot {
+    value: i32;
+}
+
+impl slot {
+    operator [](self&, index: i32) -> i32&
+    {
+        return value;
+    }
+}
+
+struct tagged {
+    value: i32;
+}
+
+impl tagged {
+    operator =(self&, rhs: this const&)
+    {
+        value = rhs.value + 5;
+    }
+}
+
+main() -> i32
+{
+    let a = vec2{ 1, 2 };
+    let b = vec2{ 3, 4 };
+    let c = a + b;
+    a += b;
+    let holder = slot{ 0 };
+    holder[0] = c.x + a.y;
+    let lhs = tagged{ 1 };
+    let rhs = tagged{ 9 };
+    lhs = rhs;
+    return holder[0] + lhs.value + 18;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile operator overload binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "operator overload binary should return computed value");
+}
 } // namespace
 
 auto main(int argc, char** argv) -> int
@@ -1099,5 +1167,6 @@ auto main(int argc, char** argv) -> int
     check_parameter_pack_binary(tools);
     check_direct_iterator_consumes_original_binary(tools);
     check_string_index_binary(tools);
+    check_operator_overload_binary(tools);
     return 0;
 }

@@ -32,6 +32,7 @@ export enum class token_kind
     kw_struct,   ///< `struct` 关键字。
     kw_impl,     ///< `impl` 关键字。
     kw_concept,  ///< `concept` 关键字。
+    kw_operator, ///< `operator` 关键字。
     kw_as,       ///< `as` 关键字。
     kw_true,     ///< `true` 关键字。
     kw_false,    ///< `false` 关键字。
@@ -110,6 +111,7 @@ export auto constexpr token_name_table = std::to_array<std::pair<token_kind, std
     { token_kind::kw_struct, "kw_struct" },
     { token_kind::kw_impl, "kw_impl" },
     { token_kind::kw_concept, "kw_concept" },
+    { token_kind::kw_operator, "kw_operator" },
     { token_kind::kw_as, "kw_as" },
     { token_kind::kw_true, "kw_true" },
     { token_kind::kw_false, "kw_false" },

@@ -90,6 +90,9 @@ auto keyword_kind(std::string_view text) -> std::optional<token_kind>
             if(text == "continue"sv) {
                 return token_kind::kw_continue;
             }
+            if(text == "operator"sv) {
+                return token_kind::kw_operator;
+            }
             break;
         default:
             break;

@@ -46,6 +46,7 @@ auto main() -> int
             {"export", token_kind::kw_export},
             {"import", token_kind::kw_import},
             {"module", token_kind::kw_module},
+            {"operator", token_kind::kw_operator},
             {"return", token_kind::kw_return},
             {"struct", token_kind::kw_struct},
             {"continue", token_kind::kw_continue},

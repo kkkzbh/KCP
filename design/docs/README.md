@@ -14,6 +14,7 @@
 - [泛型](generic.md)：泛型函数、泛型类型、泛型 `impl`、参数包、`template for`、约束和实例化。
 - [Lambda 与函数值](lambda.md)：函数类型、函数指针、普通函数绑定、lambda、捕获和闭包边界。
 - [迭代](iteration.md)：range-for 的语言入口、`iterator` / `iterable` 协议要求和内建类型入口。
+- [标准库 ranges](std_ranges.md)：`std.ranges` 的范围对象、`iota` 入口和非重载命名规则。
 - [运算符](operator.md)：运算符表、内建运算符和第一版 `operator` 重载。
 - [类型转换](cast.md)：`as` 和函数式转换。
 - [`extern "C"`](extern_c.md)：外部 C 函数声明、C 符号名导出和第一版 ABI 边界。

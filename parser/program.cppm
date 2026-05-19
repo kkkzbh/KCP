@@ -5,7 +5,7 @@ import source;
 import lexer;
 import parser.ast;
 import diagnostic;
-import parser;
+import :state;
 
 auto parser::parse_translation_unit_node() -> std::optional<translation_unit_syntax>
 {
@@ -96,6 +96,16 @@ auto parser::parse_translation_unit_node() -> std::optional<translation_unit_syn
                 continue;
             }
             unit.impls.emplace_back(*impl);
+            continue;
+        }
+
+        if(check(token_kind::kw_operator)) {
+            auto function = parse_operator_function(function_syntax_kind::free_function, export_span);
+            if(not function) {
+                synchronize_function_list();
+                continue;
+            }
+            unit.functions.emplace_back(*function);
             continue;
         }
 
@@ -228,6 +238,7 @@ auto parser::starts_top_level_item() const -> bool
         or check_contextual("variant")
         or check(token_kind::kw_impl)
         or check(token_kind::kw_concept)
+        or check(token_kind::kw_operator)
         or check(token_kind::kw_export)
     );
 }
@@ -348,6 +359,118 @@ auto parser::parse_function(function_syntax_kind kind, std::optional<source_span
         .body = body,
     };
     return arena.add(std::move(function));
+}
+
+auto parser::parse_operator_function(function_syntax_kind kind, std::optional<source_span> export_span) -> std::optional<function_id>
+{
+    auto operator_kw = expect(token_kind::kw_operator);
+    auto operator_kind = parse_overload_operator();
+    auto l_paren = expect(token_kind::l_paren);
+    if(not operator_kw or not operator_kind or not l_paren) {
+        return std::nullopt;
+    }
+
+    auto parameters = parse_parameter_list();
+    if(not parameters) {
+        return std::nullopt;
+    }
+
+    auto r_paren = expect(token_kind::r_paren);
+    if(not r_paren) {
+        return std::nullopt;
+    }
+
+    auto return_type = std::optional<type_id>{};
+    if(check(token_kind::arrow)) {
+        consume();
+        return_type = parse_expected_type();
+        if(not return_type) {
+            return std::nullopt;
+        }
+    }
+
+    auto requires_clause = std::optional<concept_requires_syntax>{};
+    if(check_contextual("requires")) {
+        requires_clause = parse_requires_clause_until(token_kind::l_brace);
+        if(not requires_clause) {
+            return std::nullopt;
+        }
+    }
+
+    auto body = parse_block_statement();
+    if(not body) {
+        return std::nullopt;
+    }
+
+    auto full_span = combine_spans(operator_kw->span, arena.span(*body));
+    if(export_span) {
+        full_span = combine_spans(*export_span, full_span);
+    }
+    return arena.add(function_syntax {
+        .full_span = full_span,
+        .kind = kind,
+        .exported = static_cast<bool>(export_span),
+        .overload_operator = operator_kind->first,
+        .name = operator_kind->second,
+        .parameters = std::move(*parameters),
+        .return_type = return_type,
+        .requires_clause = std::move(requires_clause),
+        .body = *body,
+    });
+}
+
+auto parser::parse_overload_operator() -> std::optional<std::pair<overload_operator_kind, source_span>>
+{
+    using enum token_kind;
+    auto current = peek();
+    auto consume_operator = [&](overload_operator_kind kind) {
+        return std::pair{ kind, consume().span };
+    };
+
+    switch(current.kind) {
+        case plus: { return consume_operator(overload_operator_kind::plus); }
+        case minus: { return consume_operator(overload_operator_kind::minus); }
+        case star: { return consume_operator(overload_operator_kind::star); }
+        case slash: { return consume_operator(overload_operator_kind::slash); }
+        case percent: { return consume_operator(overload_operator_kind::percent); }
+        case amp: { return consume_operator(overload_operator_kind::amp); }
+        case pipe: { return consume_operator(overload_operator_kind::pipe); }
+        case caret: { return consume_operator(overload_operator_kind::caret); }
+        case less_less: { return consume_operator(overload_operator_kind::less_less); }
+        case greater_greater: { return consume_operator(overload_operator_kind::greater_greater); }
+        case tilde: { return consume_operator(overload_operator_kind::tilde); }
+        case equal_equal: { return consume_operator(overload_operator_kind::equal_equal); }
+        case bang_equal: { return consume_operator(overload_operator_kind::bang_equal); }
+        case less: { return consume_operator(overload_operator_kind::less); }
+        case less_equal: { return consume_operator(overload_operator_kind::less_equal); }
+        case greater: { return consume_operator(overload_operator_kind::greater); }
+        case greater_equal: { return consume_operator(overload_operator_kind::greater_equal); }
+        case equal: { return consume_operator(overload_operator_kind::equal); }
+        case plus_equal: { return consume_operator(overload_operator_kind::plus_equal); }
+        case minus_equal: { return consume_operator(overload_operator_kind::minus_equal); }
+        case star_equal: { return consume_operator(overload_operator_kind::star_equal); }
+        case slash_equal: { return consume_operator(overload_operator_kind::slash_equal); }
+        case percent_equal: { return consume_operator(overload_operator_kind::percent_equal); }
+        case amp_equal: { return consume_operator(overload_operator_kind::amp_equal); }
+        case pipe_equal: { return consume_operator(overload_operator_kind::pipe_equal); }
+        case caret_equal: { return consume_operator(overload_operator_kind::caret_equal); }
+        case less_less_equal: { return consume_operator(overload_operator_kind::less_less_equal); }
+        case greater_greater_equal: { return consume_operator(overload_operator_kind::greater_greater_equal); }
+        case l_bracket: {
+            auto open = consume();
+            auto close = expect(token_kind::r_bracket);
+            if(not close) {
+                return std::nullopt;
+            }
+            return std::pair{ overload_operator_kind::subscript, combine_spans(open.span, close->span) };
+        }
+        default:
+            report_current(
+                diagnostic_kind::unexpected_token,
+                std::format("expected overloadable operator, got {}", token_name(current.kind))
+            );
+            return std::nullopt;
+    }
 }
 
 auto parser::parse_struct_declaration(bool exported, std::optional<source_span> export_span) -> std::optional<struct_id>
@@ -919,6 +1042,11 @@ auto parser::parse_concept_impl_block() -> std::optional<concept_impl_id>
 
 auto parser::parse_impl_item(type_syntax const& impl_type) -> std::optional<function_id>
 {
+    if(check(token_kind::kw_operator)) {
+        static_cast<void>(impl_type);
+        return parse_operator_function(function_syntax_kind::impl_function);
+    }
+
     if(check(token_kind::tilde)) {
         auto start = consume();
         auto name = expect_identifier("destructor name");

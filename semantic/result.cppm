@@ -341,6 +341,16 @@ export struct semantic_result
         return lookup_result_entry(expression_symbols, context, unit, id);
     }
 
+    auto selected_operator(std::size_t unit, expr_id id) const -> symbol_id
+    {
+        return lookup_result_entry(expression_operators, unit, id);
+    }
+
+    auto selected_operator(std::size_t context, std::size_t unit, expr_id id) const -> symbol_id
+    {
+        return lookup_result_entry(expression_operators, context, unit, id);
+    }
+
     auto signature_of(function_id id) const -> function_signature_id
     {
         return signature_of(0uz, id);
@@ -623,6 +633,7 @@ export struct semantic_result
     std::map<semantic_node_key, std::size_t> function_generic_parameter_counts{};
     std::map<semantic_node_key, semantic_type_id> expression_types{};
     std::map<semantic_node_key, symbol_id> expression_symbols{};
+    std::map<semantic_node_key, symbol_id> expression_operators{};
     std::map<semantic_node_key, function_signature_id> function_signatures{};
     std::map<semantic_node_key, symbol_id> statement_bindings{};
     std::map<semantic_parameter_key, symbol_id> local_bindings{};

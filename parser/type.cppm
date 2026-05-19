@@ -4,7 +4,7 @@ import std;
 import lexer;
 import parser.ast;
 import diagnostic;
-import parser;
+import :state;
 
 auto parser::starts_type(token_kind kind) const -> bool
 {

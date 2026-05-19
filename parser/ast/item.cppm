@@ -77,6 +77,39 @@ export enum class function_syntax_kind : std::uint8_t
     lambda,
 };
 
+export enum class overload_operator_kind : std::uint8_t
+{
+    plus,
+    minus,
+    star,
+    slash,
+    percent,
+    amp,
+    pipe,
+    caret,
+    less_less,
+    greater_greater,
+    tilde,
+    equal_equal,
+    bang_equal,
+    less,
+    less_equal,
+    greater,
+    greater_equal,
+    equal,
+    plus_equal,
+    minus_equal,
+    star_equal,
+    slash_equal,
+    percent_equal,
+    amp_equal,
+    pipe_equal,
+    caret_equal,
+    less_less_equal,
+    greater_greater_equal,
+    subscript,
+};
+
 export struct function_syntax
 {
     auto constexpr operator==(function_syntax const& other) const -> bool = default;
@@ -87,6 +120,7 @@ export struct function_syntax
     bool defaulted{};
     bool has_body{ true };
     std::optional<source_span> extern_abi{};
+    std::optional<overload_operator_kind> overload_operator{};
     source_span name{};
     std::vector<generic_parameter_syntax> generic_parameters{};
     std::vector<parameter_syntax> parameters{};

@@ -1,0 +1,4 @@
+operator ++(value: i32)
+{
+}
+

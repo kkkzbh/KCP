@@ -19,6 +19,7 @@
 - `examples/types/main.cp`: 类型示例，展示字面量、`array/tuple`、元组下标与解构、引用、指针和 target const
 - `examples/flow/main.cp`: 流程控制示例，展示 `while`、`do while`、范围 `for` 以及带标签的 `break/continue`
 - `examples/structs/main.cp`: 结构示例，展示 `struct/impl`、默认构造、构造函数、成员/关联函数、字段访问、块表达式和析构清理
+- `examples/operators/main.cp`: 运算符重载示例，展示 `operator +`、`operator +=` 和 `operator []`
 - `examples/concepts/main.cp`: concept 示例，展示关联类型、父 concept、默认实现和 `impl concept for type`
 
 ## 设计文档
@@ -31,6 +32,7 @@
 - `docs/generic.md`: 泛型函数、泛型 `struct`、泛型 `variant`、泛型 `impl`、参数包、`template for`、强无约束模板语义、`concept` 约束和 `requires` 子句
 - `docs/initial.md`: 变量、常量与初始化
 - `docs/iteration.md`: `iterator`、`iterable`、`optional<T>` 和范围 `for` 的协议语义
+- `docs/std_ranges.md`: `std.ranges` 基础范围对象和 `iota` 设计
 - `docs/lambda.md`: 函数类型、函数指针、普通函数绑定、lambda、自动捕获和闭包边界
 - `docs/memory_allocation.md`: 底层内存分配、对象生命周期原语和 runtime ABI
 - `docs/module.md`: 模块声明、导入与导出

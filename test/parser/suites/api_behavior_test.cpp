@@ -476,5 +476,35 @@ main()
         is<index_expr_syntax>(indexed.ast.node(index_assignment.left)),
         "index expression should parse as an assignment target");
 
+    auto const operator_source = sources.add_source (
+        "api_operator.cp",
+        R"(struct vec2 {
+    x: i32;
+    y: i32;
+}
+
+operator +(left: vec2 const&, right: vec2 const&) -> vec2
+{
+    return vec2{ .x = left.x + right.x, .y = left.y + right.y };
+}
+
+impl vec2 {
+    operator [](self&, index: i32) -> i32&
+    {
+        return x;
+    }
+})");
+    auto operators = parse_source(sources, operator_source);
+    test_parser::assert_true(operators.accepted, "operator declaration source should parse");
+    test_parser::assert_true(operators.root->functions.size() == 1, "top-level operator should stay in function list");
+    auto const& top_operator = operators.ast.node(operators.root->functions.front());
+    test_parser::assert_true (
+        top_operator.overload_operator == overload_operator_kind::plus,
+        "top-level operator should record its overload kind");
+    auto const& impl_operator = operators.ast.node(operators.ast.node(operators.root->impls.front()).functions.front());
+    test_parser::assert_true (
+        impl_operator.overload_operator == overload_operator_kind::subscript,
+        "impl operator [] should record subscript overload kind");
+
     return 0;
 }

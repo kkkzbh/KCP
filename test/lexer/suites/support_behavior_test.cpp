@@ -67,7 +67,7 @@ auto main() -> int
         invalid_result.diagnostics.front().kind == diagnostic_kind::invalid_character,
         "lexer diagnostics should observe invalid character diagnostics");
 
-    test_lexer::assert_true(test_lexer::all_token_kinds.size() == 72, "token list should stay exhaustive");
+    test_lexer::assert_true(test_lexer::all_token_kinds.size() == 73, "token list should stay exhaustive");
     auto const to_string_ptr = static_cast<std::string_view (*)(token_kind)>(&to_string);
     test_lexer::assert_true(to_string_ptr(token_kind::kw_let) == "kw_let",
         "function pointer should call to_string");

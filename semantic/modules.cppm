@@ -89,10 +89,64 @@ auto semantic_analyzer::resolve_imports() -> void
         }
     }
 
+    auto changed = true;
+    while(changed) {
+        changed = false;
+        for(auto const& state : units) {
+            if(not state.named_module) {
+                continue;
+            }
+            for(auto const& import : state.root.imports) {
+                if(not import.exported) {
+                    continue;
+                }
+                auto module_name = ast_source.module_name(import.name);
+                if(auto found_functions = module_exports.find(module_name); found_functions != module_exports.end()) {
+                    auto& exports = module_exports[state.module_name];
+                    for(auto const& [name, symbol] : found_functions->second) {
+                        changed = exports.emplace(name, symbol).second or changed;
+                    }
+                }
+                if(auto found_operators = module_operator_exports.find(module_name); found_operators != module_operator_exports.end()) {
+                    for(auto const& [kind, symbols] : found_operators->second) {
+                        auto& exports = module_operator_exports[state.module_name][kind];
+                        for(auto symbol : symbols) {
+                            if(not std::ranges::contains(exports, symbol)) {
+                                exports.emplace_back(symbol);
+                                changed = true;
+                            }
+                        }
+                    }
+                }
+                if(auto found_types = module_type_exports.find(module_name); found_types != module_type_exports.end()) {
+                    auto& exports = module_type_exports[state.module_name];
+                    for(auto const& [name, symbol] : found_types->second) {
+                        changed = exports.emplace(name, symbol).second or changed;
+                    }
+                }
+                if(auto found_concepts = module_concept_exports.find(module_name); found_concepts != module_concept_exports.end()) {
+                    auto& exports = module_concept_exports[state.module_name];
+                    for(auto const& [name, symbol] : found_concepts->second) {
+                        changed = exports.emplace(name, symbol).second or changed;
+                    }
+                }
+            }
+        }
+    }
+
     for(auto& state : units) {
         auto const& syntax = state.root;
         if(auto local = module_functions.find(state.module_key); local != module_functions.end()) {
             state.visible_functions.insert_range(local->second);
+        }
+        if(auto local = module_operators.find(state.module_key); local != module_operators.end()) {
+            for(auto const& [kind, symbols] : local->second) {
+                state.visible_operators[kind].insert(
+                    state.visible_operators[kind].end(),
+                    symbols.begin(),
+                    symbols.end()
+                );
+            }
         }
         if(auto local = module_types.find(state.module_key); local != module_types.end()) {
             state.visible_types.insert_range(local->second);
@@ -111,11 +165,13 @@ auto semantic_analyzer::resolve_imports() -> void
                 );
             }
             auto found_functions = module_exports.find(module_name);
+            auto found_operators = module_operator_exports.find(module_name);
             auto found_types = module_type_exports.find(module_name);
             auto found_concepts = module_concept_exports.find(module_name);
             if (
                 not named_modules.contains(module_name)
                 and found_functions == module_exports.end()
+                and found_operators == module_operator_exports.end()
                 and found_types == module_type_exports.end()
                 and found_concepts == module_concept_exports.end()
             ) {
@@ -140,6 +196,17 @@ auto semantic_analyzer::resolve_imports() -> void
                     state.visible_functions.emplace(name, symbol);
                     if(import.exported and state.named_module) {
                         module_exports[state.module_name].emplace(name, symbol);
+                    }
+                }
+            }
+
+            if(found_operators != module_operator_exports.end()) {
+                for(auto const& [kind, symbols] : found_operators->second) {
+                    auto& target = state.visible_operators[kind];
+                    target.insert(target.end(), symbols.begin(), symbols.end());
+                    if(import.exported and state.named_module) {
+                        auto& exported_operators = module_operator_exports[state.module_name][kind];
+                        exported_operators.insert(exported_operators.end(), symbols.begin(), symbols.end());
                     }
                 }
             }
@@ -464,6 +531,10 @@ auto semantic_analyzer::collect_function_declaration(std::size_t unit_index, ast
 {
     active_unit_index = unit_index;
     auto const& function = ast.node(id);
+    if(function.overload_operator) {
+        collect_operator_declaration(unit_index, ast, id);
+        return;
+    }
     auto name = function.kind == function_syntax_kind::lambda
         ? std::format("cp.lambda.{}.{}", unit_index, id.value)
         : std::string{ ast_source.identifier(function.name) };
@@ -555,6 +626,97 @@ auto semantic_analyzer::collect_function_declaration(std::size_t unit_index, ast
     }
     if(function.kind != function_syntax_kind::lambda) {
         local_names.emplace(std::move(name), symbol);
+    }
+}
+
+auto semantic_analyzer::collect_operator_declaration(std::size_t unit_index, ast_arena const& ast, function_id id) -> void
+{
+    active_unit_index = unit_index;
+    auto const& function = ast.node(id);
+    if(not function.overload_operator) {
+        return;
+    }
+
+    validate_function_pack_shape(unit_index, id);
+    auto old_parameters = std::move(active_generic_parameters);
+    auto old_packs = std::move(active_generic_parameter_packs);
+    bind_active_function_generic_parameters(unit_index, id);
+    auto parameter_types = (
+        function.parameters
+        | std::views::transform([&](parameter_syntax const& parameter) {
+            return lower_parameter_type(ast, parameter);
+        }) | std::ranges::to<std::vector<semantic_type_id>>()
+    );
+    auto return_type = semantic_type_ids::unit;
+    auto inferred_return = false;
+    if(function.return_type) {
+        return_type = lower_type(ast, *function.return_type);
+    } else {
+        return_type = semantic_type_ids::inferred;
+        inferred_return = true;
+    }
+    active_generic_parameters = std::move(old_parameters);
+    active_generic_parameter_packs = std::move(old_packs);
+
+    auto has_nominal_parameter = std::ranges::any_of(parameter_types, [&](semantic_type_id type) {
+        auto read = read_type(type);
+        return struct_index_of(read) or variant_index_of(read);
+    });
+    if(not has_nominal_parameter) {
+        report(
+            diagnostic_kind::invalid_operator,
+            function.full_span,
+            "top-level operator requires a user-defined parameter type"
+        );
+    }
+
+    if(*function.overload_operator == overload_operator_kind::equal or compound_assignment_operator(operator_token(*function.overload_operator))) {
+        auto const* reference = parameter_types.empty()
+            ? nullptr
+            : std::get_if<reference_type>(&result.types.get(parameter_types.front()));
+        if(reference == nullptr or reference->is_const) {
+            report(diagnostic_kind::invalid_operator, function.full_span, "assignment operator left parameter must be a writable reference");
+        }
+    }
+
+    auto signature_id = add_signature(function_signature {
+        .parameters = parameter_types,
+        .returns = return_type,
+        .inferred_return = inferred_return,
+    });
+    result.function_signatures.emplace(semantic_node_key{unit_index, id}, signature_id);
+    if(not function.generic_parameters.empty()) {
+        result.function_generic_parameter_counts.emplace(semantic_node_key{unit_index, id}, function.generic_parameters.size());
+    }
+
+    auto name = std::format("operator.{}.{}", std::to_underlying(*function.overload_operator), id.value);
+    auto function_type_id = intern_type(function_type {
+        .parameters = parameter_types,
+        .returns = return_type,
+    });
+    auto symbol = add_symbol(semantic_symbol {
+        .kind = symbol_kind::function,
+        .name = name,
+        .span = function.name,
+        .type = function_type_id,
+        .exported = function.exported,
+        .unit_index = unit_index,
+        .function = id,
+        .function_kind = semantic_function_kind::free_function,
+    });
+    result.function_symbols.emplace(semantic_node_key{unit_index, id}, symbol);
+
+    auto const& state = units[unit_index];
+    module_operators[state.module_key][*function.overload_operator].emplace_back(symbol);
+    if(function.exported and not state.named_module) {
+        report(
+            diagnostic_kind::export_requires_module,
+            function.name,
+            "exported operator requires an export module declaration"
+        );
+    }
+    if(function.exported and state.named_module) {
+        module_operator_exports[state.module_name][*function.overload_operator].emplace_back(symbol);
     }
 }
 
@@ -650,6 +812,10 @@ auto semantic_analyzer::collect_impl_declarations(std::size_t unit_index, ast_ar
     }
 
     for(auto function_id : impl.functions) {
+        if(ast.node(function_id).overload_operator) {
+            collect_impl_operator(unit_index, ast, impl, type, impl_generic_parameters, function_id);
+            continue;
+        }
         collect_impl_function(unit_index, ast, impl, type, impl_generic_parameters, function_id);
     }
 }
@@ -832,6 +998,122 @@ auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena 
         } else {
             result.variants[*variant_index].associated_functions.emplace(name, symbol);
         }
+    }
+}
+
+auto semantic_analyzer::collect_impl_operator(std::size_t unit_index, ast_arena const& ast, impl_syntax const& impl, semantic_type_id impl_type, std::vector<std::string> const& impl_generic_parameters, function_id id) -> void
+{
+    active_unit_index = unit_index;
+    auto const& function = ast.node(id);
+    auto struct_index = struct_index_of(impl_type);
+    auto variant_index = variant_index_of(impl_type);
+    if(not function.overload_operator or (not struct_index and not variant_index)) {
+        return;
+    }
+
+    auto all_generic_parameters = impl_generic_parameters;
+    for(auto const& parameter : function.generic_parameters) {
+        all_generic_parameters.emplace_back(ast_source.identifier(parameter.name));
+    }
+    implicit_function_generic_parameters[function_key(unit_index, id)] = impl_generic_parameters;
+    function_impl_target_patterns[function_key(unit_index, id)] = impl_type;
+    if(impl.requires_clause) {
+        function_impl_requires[function_key(unit_index, id)] = *impl.requires_clause;
+    }
+    validate_function_pack_shape(unit_index, id);
+
+    auto old_self = active_self_type;
+    auto old_parameters = std::move(active_generic_parameters);
+    auto old_packs = std::move(active_generic_parameter_packs);
+    active_self_type = impl_type;
+    bind_active_function_generic_parameters(unit_index, id);
+    auto parameter_types = (
+        function.parameters
+        | std::views::transform([&](parameter_syntax const& parameter) {
+            return lower_parameter_type(ast, parameter, impl_type);
+        }) | std::ranges::to<std::vector<semantic_type_id>>()
+    );
+    auto return_type = semantic_type_ids::unit;
+    auto inferred_return = false;
+    if(function.return_type) {
+        return_type = lower_type(ast, *function.return_type);
+    } else {
+        return_type = semantic_type_ids::inferred;
+        inferred_return = true;
+    }
+    active_self_type = old_self;
+    active_generic_parameters = std::move(old_parameters);
+    active_generic_parameter_packs = std::move(old_packs);
+
+    auto has_current_type_parameter = false;
+    for(auto index = 0uz; index < function.parameters.size(); ++index) {
+        auto const& parameter = function.parameters[index];
+        if(parameter.is_self_receiver) {
+            has_current_type_parameter = true;
+            if(index != 0uz) {
+                report(diagnostic_kind::invalid_self_parameter, parameter.full_span, "self receiver must be the first operator parameter");
+            }
+            continue;
+        }
+        if(index < parameter_types.size() and read_type(parameter_types[index]) == impl_type) {
+            has_current_type_parameter = true;
+        }
+    }
+    if(not has_current_type_parameter) {
+        report(diagnostic_kind::invalid_operator, function.full_span, "impl operator requires a self or this parameter");
+    }
+
+    auto is_assignment = (
+        *function.overload_operator == overload_operator_kind::equal
+        or compound_assignment_operator(operator_token(*function.overload_operator))
+    );
+    if(is_assignment) {
+        auto const first_is_writable_self = (
+            not function.parameters.empty()
+            and function.parameters.front().is_self_receiver
+            and function.parameters.front().self_is_reference
+            and not function.parameters.front().is_const
+        );
+        if(not first_is_writable_self) {
+            report(diagnostic_kind::invalid_operator, function.full_span, "member assignment operator must start with self&");
+        }
+    }
+
+    auto signature_id = add_signature(function_signature {
+        .parameters = parameter_types,
+        .returns = return_type,
+        .inferred_return = inferred_return,
+    });
+    result.function_signatures.emplace(semantic_node_key{unit_index, id}, signature_id);
+    if(not all_generic_parameters.empty()) {
+        result.function_generic_parameter_counts.emplace(semantic_node_key{unit_index, id}, all_generic_parameters.size());
+    }
+
+    auto function_type_id = intern_type(function_type {
+        .parameters = parameter_types,
+        .returns = return_type,
+    });
+    auto function_kind = (
+        not function.parameters.empty() and function.parameters.front().is_self_receiver
+            ? semantic_function_kind::member_function
+            : semantic_function_kind::associated_function
+    );
+    auto symbol = add_symbol(semantic_symbol {
+        .kind = symbol_kind::function,
+        .name = std::format("operator.{}.{}", std::to_underlying(*function.overload_operator), id.value),
+        .span = function.name,
+        .type = function_type_id,
+        .unit_index = unit_index,
+        .function = id,
+        .struct_index = struct_index.value_or(std::numeric_limits<std::uint32_t>::max()),
+        .variant_index = variant_index.value_or(std::numeric_limits<std::uint32_t>::max()),
+        .function_kind = function_kind,
+    });
+    result.function_symbols.emplace(semantic_node_key{unit_index, id}, symbol);
+    if(struct_index) {
+        result.structs[*struct_index].operators[*function.overload_operator].emplace_back(symbol);
+    } else {
+        result.variants[*variant_index].operators[*function.overload_operator].emplace_back(symbol);
     }
 }
 

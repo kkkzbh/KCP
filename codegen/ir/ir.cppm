@@ -271,6 +271,11 @@ struct function_lowerer
         return semantics.resolved_name(current_context_index(), unit_index, id);
     }
 
+    auto selected_operator(expr_id id) const -> symbol_id
+    {
+        return semantics.selected_operator(current_context_index(), unit_index, id);
+    }
+
     auto current_context_index() const -> std::size_t
     {
         return context_stack.empty() ? context_index : context_stack.back();
@@ -668,15 +673,22 @@ struct function_lowerer
                 },
                 [&](return_statement_syntax const& node) {
                     if(node.value) {
-                        auto value = emit_expression(*node.value);
+                        auto value = ir_value_id{};
+                        if(is_reference(function->returns)) {
+                            value = emit_address(*node.value);
+                        } else {
+                            value = emit_expression(*node.value);
+                        }
                         if(not value.valid()) {
                             return false;
                         }
-                        value = materialize_conversion(*node.value, value);
+                        if(not is_reference(function->returns)) {
+                            value = materialize_conversion(*node.value, value);
+                        }
                         emit_cleanups_to(0uz);
                         emit_void(ir_instruction {
                             .opcode = ir_opcode::return_,
-                            .type = info_of(*node.value).read_type,
+                            .type = function->returns,
                             .operands = { value },
                         });
                     } else {
@@ -1089,12 +1101,21 @@ struct function_lowerer
                     return emit(std::move(instruction));
                 },
                 [&](unary_expr_syntax const& node) {
+                    if(selected_operator(id).valid()) {
+                        return emit_operator_read(id, std::vector<expr_id>{ node.operand });
+                    }
                     return emit_unary_expression(node, id);
                 },
                 [&](binary_expr_syntax const& node) {
+                    if(selected_operator(id).valid()) {
+                        return emit_operator_read(id, std::vector<expr_id>{ node.left, node.right });
+                    }
                     return emit_binary_expression(node, id);
                 },
                 [&](assignment_expr_syntax const& node) {
+                    if(selected_operator(id).valid()) {
+                        return emit_operator_read(id, std::vector<expr_id>{ node.left, node.right });
+                    }
                     return emit_assignment_expression(node, id);
                 },
                 [&](call_expr_syntax const& node) {
@@ -1108,6 +1129,9 @@ struct function_lowerer
                     return emit_load(address, info_of(id).read_type);
                 },
                 [&](index_expr_syntax const& node) {
+                    if(selected_operator(id).valid()) {
+                        return emit_operator_read(id, std::vector<expr_id>{ node.object, node.index });
+                    }
                     if(as_builtin(info_of(node.object).read_type) == builtin_type_kind::str) {
                         return emit_string_index(node);
                     }
@@ -1908,6 +1932,46 @@ struct function_lowerer
         return emit(std::move(instruction));
     }
 
+    auto emit_operator_call(expr_id id, std::vector<expr_id> const& arguments) -> ir_value_id
+    {
+        auto symbol = selected_operator(id);
+        if(not symbol.valid()) {
+            return unsupported_expression("operator expression is missing selected symbol");
+        }
+        auto const* function = std::get_if<function_type>(&module.types.get(semantics.symbols[symbol.value].type));
+        if(function == nullptr or function->parameters.size() != arguments.size()) {
+            return unsupported_expression("operator symbol is missing function type");
+        }
+
+        auto operands = std::vector<ir_value_id>{};
+        operands.reserve(arguments.size());
+        for(auto index = 0uz; index < arguments.size(); ++index) {
+            auto parameter = function->parameters[index];
+            auto value = is_reference(parameter) ? emit_address(arguments[index]) : emit_expression(arguments[index]);
+            if(not value.valid()) {
+                return {};
+            }
+            operands.emplace_back(value);
+        }
+
+        auto instruction = emit_value_instruction(ir_opcode::call, function->returns);
+        instruction.symbol = symbol;
+        instruction.operands = std::move(operands);
+        return emit(std::move(instruction));
+    }
+
+    auto emit_operator_read(expr_id id, std::vector<expr_id> const& arguments) -> ir_value_id
+    {
+        auto value = emit_operator_call(id, arguments);
+        if(not value.valid()) {
+            return {};
+        }
+        if(info_of(id).is_lvalue) {
+            return emit_load(value, info_of(id).read_type);
+        }
+        return value;
+    }
+
     auto emit_address(expr_id id) -> ir_value_id
     {
         auto const& expression = parsed.ast.node(id);
@@ -1956,8 +2020,26 @@ struct function_lowerer
             );
         }
         if(auto const* index = std::get_if<index_expr_syntax>(&expression)) {
+            if(selected_operator(id).valid()) {
+                if(not info_of(id).is_lvalue) {
+                    return unsupported_expression("value-returning operator [] has no address");
+                }
+                return emit_operator_call(id, std::vector<expr_id>{ index->object, index->index });
+            }
             auto object_info = info_of(index->object);
             auto object_type = object_info.read_type;
+            if(auto pointee = pointer_value_pointee(object_type)) {
+                auto pointer = emit_expression(index->object);
+                auto index_value = emit_expression(index->index);
+                if(not pointer.valid() or not index_value.valid()) {
+                    return {};
+                }
+                auto instruction = emit_value_instruction(ir_opcode::binary, result_pointer_type(*pointee));
+                instruction.operator_kind = token_kind::plus;
+                instruction.operands = { pointer, index_value };
+                instruction.aggregate_type = *pointee;
+                return emit(std::move(instruction));
+            }
             auto object_address = ir_value_id{};
             if(object_info.is_lvalue) {
                 object_address = emit_address(index->object);

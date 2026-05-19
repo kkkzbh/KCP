@@ -10,3 +10,5 @@
 - `std.option`: 定义 `optional<T>` 和基础查询/回退方法。
 - `std.expected`: 定义 `expected<T,E>` 和基础查询/回退方法。
 - `std.iter`: 定义 `iterator` 和 `iterable` 迭代协议，并导入 `std.option` 作为签名依赖。
+- `std.ranges`: ranges 聚合入口，重导出 `std.ranges.*` 的公共范围对象。
+- `std.ranges.iota`: 定义可被范围 `for` 消费的半开整数范围 `iota(begin, end)`。

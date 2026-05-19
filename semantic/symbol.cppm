@@ -134,6 +134,7 @@ export struct semantic_struct
     symbol_id destructor{};
     std::map<std::string, symbol_id> methods{};
     std::map<std::string, symbol_id> associated_functions{};
+    std::map<overload_operator_kind, std::vector<symbol_id>> operators{};
 };
 
 export struct semantic_variant_case
@@ -179,6 +180,7 @@ export struct semantic_variant
     std::map<std::string, std::uint32_t> case_indices{};
     std::map<std::string, symbol_id> methods{};
     std::map<std::string, symbol_id> associated_functions{};
+    std::map<overload_operator_kind, std::vector<symbol_id>> operators{};
 };
 
 export struct semantic_concept_associated_type

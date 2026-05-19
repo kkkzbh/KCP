@@ -4,7 +4,7 @@ import std;
 import lexer;
 import parser.ast;
 import diagnostic;
-import parser;
+import :state;
 
 struct binary_operator_entry
 {

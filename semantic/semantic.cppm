@@ -42,6 +42,20 @@ struct constructor_match
     int score{};
 };
 
+struct operator_match
+{
+    operator_match() = default;
+
+    operator_match(symbol_id matched_symbol, int conversion_score, int generic_score_value) :
+        symbol(matched_symbol),
+        score(conversion_score),
+        generic_score(generic_score_value) {}
+
+    symbol_id symbol{};
+    int score{};
+    int generic_score{};
+};
+
 struct aggregate_context
 {
     semantic_type_id element{};
@@ -72,6 +86,7 @@ struct semantic_unit_state
     std::string module_key{};
     bool named_module{};
     std::map<std::string, symbol_id> visible_functions{};
+    std::map<overload_operator_kind, std::vector<symbol_id>> visible_operators{};
     std::map<std::string, symbol_id> visible_types{};
     std::map<std::string, symbol_id> visible_concepts{};
 };
@@ -185,10 +200,12 @@ private:
     auto collect_variant_cases(std::size_t unit_index, ast_arena const& ast, variant_id id) -> void;
     auto resolve_imports() -> void;
     auto collect_function_declaration(std::size_t unit_index, ast_arena const& ast, function_id id) -> void;
+    auto collect_operator_declaration(std::size_t unit_index, ast_arena const& ast, function_id id) -> void;
     auto validate_extern_c_function(function_syntax const& function, std::span<semantic_type_id const> parameter_types, semantic_type_id return_type) -> void;
     auto is_extern_c_compatible_type(semantic_type_id type, bool allow_unit) const -> bool;
     auto collect_impl_declarations(std::size_t unit_index, ast_arena const& ast, impl_id id) -> void;
     auto collect_impl_function(std::size_t unit_index, ast_arena const& ast, impl_syntax const& impl, semantic_type_id impl_type, std::vector<std::string> const& impl_generic_parameters, function_id id) -> void;
+    auto collect_impl_operator(std::size_t unit_index, ast_arena const& ast, impl_syntax const& impl, semantic_type_id impl_type, std::vector<std::string> const& impl_generic_parameters, function_id id) -> void;
     auto collect_concept_impl_declarations(std::size_t unit_index, ast_arena const& ast, concept_impl_id id) -> void;
     auto collect_concept_impl_function(std::size_t unit_index, ast_arena const& ast, concept_impl_syntax const& impl, semantic_type_id target_type, function_id id) -> std::optional<symbol_id>;
     auto validate_concept_impl(semantic_concept_impl const& impl, source_span span) -> void;
@@ -243,6 +260,12 @@ private:
     auto range_info(expression_info range, source_span span) -> semantic_for_range_info;
     auto method_symbol(semantic_type_id owner, std::string_view name) const -> std::optional<symbol_id>;
     auto concrete_method_symbol(symbol_id symbol, semantic_type_id receiver_type, std::vector<expression_info> const& arguments, source_span span) -> std::optional<symbol_id>;
+    auto resolve_operator(overload_operator_kind kind, std::span<semantic_type_id const> owner_types, std::vector<expression_info> const& arguments, source_span span) -> std::optional<symbol_id>;
+    auto choose_operator(std::span<symbol_id const> candidates, std::vector<expression_info> const& arguments, std::optional<semantic_type_id> receiver_type, source_span span) -> std::optional<symbol_id>;
+    auto operator_score(symbol_id symbol, std::vector<expression_info> const& arguments, std::optional<semantic_type_id> receiver_type, source_span span) -> std::optional<operator_match>;
+    auto operator_expression_info(symbol_id symbol) -> expression_info;
+    auto operator_token(overload_operator_kind kind) const -> token_kind;
+    auto overload_kind(token_kind kind) const -> std::optional<overload_operator_kind>;
     auto pointer_pointee(semantic_type_id type) -> std::optional<expression_info>;
     auto target_const(semantic_type_id type, bool lvalue_const) -> bool;
     auto lower_parameter_type(ast_arena const& ast, parameter_syntax const& parameter, std::optional<semantic_type_id> self_type = std::nullopt) -> semantic_type_id;
@@ -263,6 +286,7 @@ private:
     auto literal_type(source_span span) -> semantic_type_id;
     auto unary_type(token_kind operator_kind, expression_info operand) -> expression_info;
     auto binary_type(token_kind operator_kind, semantic_type_id left, semantic_type_id right) -> expression_info;
+    auto try_builtin_binary_operator(token_kind operator_kind, semantic_type_id left_type, semantic_type_id right_type) -> std::optional<expression_info>;
     auto function_style_cast_type(ast_arena const& ast, call_expr_syntax const& node)
         -> std::optional<semantic_type_id>;
     auto check_builtin_call(ast_arena const& ast, call_expr_syntax const& node, name_expr_syntax const& callee, expr_id id)
@@ -341,9 +365,12 @@ private:
     auto check_name_expression(name_expr_syntax const& node, expr_id id) -> expression_info;
     auto check_literal_expression(literal_expr_syntax const& node, expr_id id) -> expression_info;
     auto check_unary_expression(ast_arena const& ast, unary_expr_syntax const& node) -> expression_info;
+    auto check_unary_expression(ast_arena const& ast, unary_expr_syntax const& node, expr_id id) -> expression_info;
     auto check_binary_expression(ast_arena const& ast, binary_expr_syntax const& node) -> expression_info;
+    auto check_binary_expression(ast_arena const& ast, binary_expr_syntax const& node, expr_id id) -> expression_info;
     auto check_binary_operator(token_kind operator_kind, semantic_type_id left_type, semantic_type_id right_type, source_span span) -> expression_info;
     auto check_assignment_expression(ast_arena const& ast, assignment_expr_syntax const& node) -> expression_info;
+    auto check_assignment_expression(ast_arena const& ast, assignment_expr_syntax const& node, expr_id id) -> expression_info;
     auto compound_assignment_operator(token_kind operator_kind) -> std::optional<token_kind>;
     auto check_call_expression(ast_arena const& ast, call_expr_syntax const& node, expr_id id) -> expression_info;
     auto check_member_call(ast_arena const& ast, call_expr_syntax const& node, member_expr_syntax const& callee)
@@ -352,6 +379,7 @@ private:
         -> expression_info;
     auto check_member_expression(ast_arena const& ast, member_expr_syntax const& node, expr_id id) -> expression_info;
     auto check_index_expression(ast_arena const& ast, index_expr_syntax const& node) -> expression_info;
+    auto check_index_expression(ast_arena const& ast, index_expr_syntax const& node, expr_id id) -> expression_info;
     auto check_associated_name_expression(associated_name_expr_syntax const& node, expr_id id) -> expression_info;
     auto check_cast_expression(ast_arena const& ast, cast_expr_syntax const& node) -> expression_info;
     auto check_array_literal(ast_arena const& ast, source_span span, std::vector<expr_id> const& elements, std::optional<semantic_type_id> expected) -> expression_info;
@@ -378,7 +406,9 @@ private:
     semantic_result result{}; ///< 正在构建的语义结果，保存类型、符号、绑定和转换信息。
     std::vector<semantic_unit_state> units{}; ///< 待分析的翻译单元状态列表。
     std::map<std::string, std::map<std::string, symbol_id>> module_functions{}; ///< 按内部模块 key 索引的本模块函数符号表。
+    std::map<std::string, std::map<overload_operator_kind, std::vector<symbol_id>>> module_operators{}; ///< 按内部模块 key 索引的本模块 operator 符号表。
     std::map<std::string, std::map<std::string, symbol_id>> module_exports{}; ///< 按模块名索引的导出函数符号表。
+    std::map<std::string, std::map<overload_operator_kind, std::vector<symbol_id>>> module_operator_exports{}; ///< 按模块名索引的导出 operator 符号表。
     std::map<std::string, std::map<std::string, symbol_id>> module_types{}; ///< 按内部模块 key 索引的本模块类型符号表。
     std::map<std::string, std::map<std::string, symbol_id>> module_type_exports{}; ///< 按模块名索引的导出类型符号表。
     std::map<std::string, std::map<std::string, symbol_id>> module_concepts{}; ///< 按内部模块 key 索引的本模块 concept 符号表。

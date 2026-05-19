@@ -5,7 +5,7 @@ import source;
 import lexer;
 import parser.ast;
 import diagnostic;
-import parser;
+import :state;
 
 auto parser::parse_statement() -> std::optional<stmt_id>
 {

@@ -14,6 +14,7 @@ target_sources(parser
             ast/arena.cppm
             ast/visit.cppm
             ast/ast.cppm
+            state.cppm
             type.cppm
             expression.cppm
             statement.cppm
