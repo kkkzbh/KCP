@@ -50,20 +50,75 @@ export auto constexpr is_exponent_marker(char ch) -> bool
 /// @details 遇到这些字符时，恢复逻辑会停止向前吞噬当前无效片段。
 export auto constexpr is_recovery_delimiter(char ch) -> bool
 {
-    auto constexpr delimiters = " \t\r\n(){}[],:;.+-*/%<>=&|^~?\"'"sv;
-    return delimiters.contains(ch);
+    switch(ch) {
+        case ' ':
+        case '\t':
+        case '\r':
+        case '\n':
+        case '(':
+        case ')':
+        case '{':
+        case '}':
+        case '[':
+        case ']':
+        case ',':
+        case ':':
+        case ';':
+        case '.':
+        case '+':
+        case '-':
+        case '*':
+        case '/':
+        case '%':
+        case '<':
+        case '>':
+        case '=':
+        case '&':
+        case '|':
+        case '^':
+        case '~':
+        case '?':
+        case '"':
+        case '\'':
+            return true;
+        default:
+            return false;
+    }
 }
 
 /// @brief 判断字符是否是可直接通过的简单转义字符。
 export auto constexpr is_simple_escape(char ch) -> bool
 {
-    auto constexpr escapes = "\\'\"?abfnrtv"sv;
-    return escapes.contains(ch);
+    switch(ch) {
+        case '\\':
+        case '\'':
+        case '"':
+        case '?':
+        case 'a':
+        case 'b':
+        case 'f':
+        case 'n':
+        case 'r':
+        case 't':
+        case 'v':
+            return true;
+        default:
+            return false;
+    }
 }
 
 /// @brief 判断字符是否为 ASCII 空白字符。
 export auto constexpr is_space(char ch) -> bool
 {
-    return ch == ' ' or ch == '\t' or ch == '\n'
-        or ch == '\r' or ch == '\v' or ch == '\f';
+    switch(ch) {
+        case ' ':
+        case '\t':
+        case '\n':
+        case '\r':
+        case '\v':
+        case '\f':
+            return true;
+        default:
+            return false;
+    }
 }

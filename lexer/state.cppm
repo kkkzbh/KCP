@@ -88,6 +88,13 @@ private:
         bool at_line_start{ true };
     };
 
+    enum class escape_result
+    {
+        valid,
+        invalid,
+        unterminated,
+    };
+
     auto skip_trivia() -> trivia_state
     {
         auto result = trivia_state{ .saw_space = false, .at_line_start = at_line_start_ };
@@ -149,6 +156,7 @@ private:
     auto lex_number_literal(token_flags flags) -> token;
     auto lex_string_literal(token_flags flags) -> token;
     auto lex_char_literal(token_flags flags) -> token;
+    auto consume_escape_sequence(std::size_t& offset, std::size_t literal_start, diagnostic_kind unterminated_kind, std::string_view unterminated_message) -> escape_result;
 
     diagnostic_collector diagnostics_{};
     lexer_cursor cursor_{};

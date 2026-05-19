@@ -7,34 +7,19 @@ import lexer.cursor;
 import lexer.token;
 import :state;
 
-enum class escape_result
-{
-    valid,
-    invalid,
-    unterminated,
-};
-
-auto consume_escape_sequence(std::string_view source, std::size_t& offset, diagnostic_collector& diagnostics, lexer_cursor const& cursor, std::size_t literal_start, diagnostic_kind unterminated_kind, std::string_view unterminated_message) -> escape_result
+auto lexer::consume_escape_sequence(std::size_t& offset, std::size_t literal_start, diagnostic_kind unterminated_kind, std::string_view unterminated_message) -> escape_result
 {
     using namespace std::literals;
 
+    auto const source = cursor_.source();
     auto const escape_start = offset;
     ++offset;
 
-    if(offset >= source.size()) {
-        diagnostics.report(
+    if(offset >= source.size() or source[offset] == '\n') {
+        diagnostics_.report(
             unterminated_kind,
             unterminated_message,
-            cursor.make_span(literal_start, offset)
-        );
-        return escape_result::unterminated;
-    }
-
-    if(source[offset] == '\n') {
-        diagnostics.report(
-            unterminated_kind,
-            unterminated_message,
-            cursor.make_span(literal_start, offset)
+            cursor_.make_span(literal_start, offset)
         );
         return escape_result::unterminated;
     }
@@ -55,10 +40,10 @@ auto consume_escape_sequence(std::string_view source, std::size_t& offset, diagn
     if(source[offset] == 'x') {
         ++offset;
         if(offset >= source.size() or not is_hex_digit(source[offset])) {
-            diagnostics.report(
+            diagnostics_.report(
                 diagnostic_kind::invalid_escape_sequence,
                 "invalid escape sequence"sv,
-                cursor.make_span(escape_start, offset)
+                cursor_.make_span(escape_start, offset)
             );
             return escape_result::invalid;
         }
@@ -69,10 +54,10 @@ auto consume_escape_sequence(std::string_view source, std::size_t& offset, diagn
     }
 
     ++offset;
-    diagnostics.report(
+    diagnostics_.report(
         diagnostic_kind::invalid_escape_sequence,
         "invalid escape sequence"sv,
-        cursor.make_span(escape_start, offset)
+        cursor_.make_span(escape_start, offset)
     );
     return escape_result::invalid;
 }
@@ -171,10 +156,7 @@ auto lexer::lex_string_literal(token_flags flags) -> token
         }
         if(ch == '\\') {
             auto const escape = consume_escape_sequence(
-                source,
                 offset,
-                diagnostics_,
-                cursor_,
                 start,
                 diagnostic_kind::unterminated_string_literal,
                 unterminated_message
@@ -192,7 +174,6 @@ auto lexer::lex_string_literal(token_flags flags) -> token
 
     diagnostics_.report(
         diagnostic_kind::unterminated_string_literal,
-        unterminated_message,
         cursor_.make_span(start, offset)
     );
     return finish(token_kind::invalid, offset, flags | token_flags::unterminated | token_flags::recovered);
@@ -241,10 +222,7 @@ auto lexer::lex_char_literal(token_flags flags) -> token
         }
         if(ch == '\\') {
             auto const escape = consume_escape_sequence(
-                source,
                 offset,
-                diagnostics_,
-                cursor_,
                 start,
                 diagnostic_kind::unterminated_char_literal,
                 unterminated_message
