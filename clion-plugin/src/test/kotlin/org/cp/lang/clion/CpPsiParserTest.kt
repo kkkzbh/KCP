@@ -98,6 +98,47 @@ class CpPsiParserTest : BasePlatformTestCase() {
         assertTrue("after declaration should survive recovery", "after" in declarations)
     }
 
+    fun testLambdaUsesFMarker() {
+        val file = parse(
+            """
+            main() -> i32
+            {
+                let inc: f(i32) -> i32 = f(value) => value + 1;
+                let add_bias = f(value: i32) -> i32 {
+                    value + 1
+                };
+                return inc(1) + add_bias(2);
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(2, file.descendants(CpElements.LAMBDA_EXPRESSION).size)
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
+    fun testIncompleteConceptDoesNotTrapParserRecovery() {
+        val file = parse(
+            """
+            import math;
+
+            add1<T>(x: T) -> T {
+                return x + 1;
+            }
+
+            concept
+
+            sum<T...>(args: T...) -> _
+            {
+                let sum = 0 as i64;
+                return sum;
+            }
+            """.trimIndent(),
+        )
+
+        assertTrue(file.descendants(CpElements.CONCEPT_DECLARATION).isNotEmpty())
+        assertTrue(file.collectPsiErrors().isNotEmpty())
+    }
+
     private fun parse(text: String): PsiElement =
         myFixture.configureByText(CpFileType.INSTANCE, text)
 
@@ -124,7 +165,7 @@ class CpPsiParserTest : BasePlatformTestCase() {
 
     private fun PsiElement.collectPsiErrors(result: MutableList<String>) {
         if (this is PsiErrorElement) {
-            result += errorDescription
+            result += "$errorDescription at $textRange"
         }
         for (child in children) {
             child.collectPsiErrors(result)

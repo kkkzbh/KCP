@@ -264,6 +264,11 @@ struct function_lowerer
         return semantics.lambda_capture_of(current_context_index(), unit_index, id);
     }
 
+    auto lambda_call_of(expr_id id) const -> semantic_lambda_info
+    {
+        return semantics.lambda_call_of(current_context_index(), unit_index, id);
+    }
+
     auto pattern_binding_of(source_span name) const -> symbol_id
     {
         return semantics.pattern_binding_of(current_context_index(), unit_index, name);
@@ -288,10 +293,14 @@ struct function_lowerer
             return fail("function is missing semantic signature or symbol");
         }
 
+        auto lambda = lambda_of(function_id_value);
+        auto return_type = lambda.valid()
+            ? lambda.callable.returns
+            : semantics.signatures[signature_id.value].returns;
         module.functions.emplace_back(
             lowered_function_name(symbol),
             lowered_function_linkage(syntax),
-            semantics.signatures[signature_id.value].returns,
+            return_type,
             symbol
         );
         function = &module.functions.back();
@@ -299,7 +308,6 @@ struct function_lowerer
 
         auto const& signature = semantics.signatures[signature_id.value];
         auto parameter_index = 0uz;
-        auto lambda = lambda_of(function_id_value);
         if(lambda.valid() and lambda.env_symbol.valid()) {
             bind_parameter(lambda.env_symbol, semantics.symbols[lambda.env_symbol.value].type, "closure.env");
         }
@@ -1742,6 +1750,11 @@ struct function_lowerer
             return emit_member_call_expression(*member, node, id);
         }
 
+        auto lambda_call = lambda_call_of(id);
+        if(lambda_call.valid()) {
+            return emit_closure_call_expression(node, id, lambda_call);
+        }
+
         auto closure = semantics.lambda_of_closure(info_of(node.callee).read_type);
         if(closure.valid()) {
             return emit_closure_call_expression(node, id, closure);
@@ -1824,7 +1837,7 @@ struct function_lowerer
             arguments.emplace_back(value);
         }
 
-        auto instruction = emit_value_instruction(ir_opcode::call, info_of(id).read_type);
+        auto instruction = emit_value_instruction(ir_opcode::call, lambda.callable.returns);
         instruction.symbol = lambda.function_symbol;
         instruction.operands = std::move(arguments);
         return emit(std::move(instruction));
@@ -2057,7 +2070,7 @@ struct function_lowerer
     auto materialize_conversion(expr_id id, ir_value_id value) -> ir_value_id
     {
         auto target = conversion_of(id);
-        if(not target.valid()) {
+        if(not target.valid() or is_error(target) or is_inferred(target) or is_unit(target)) {
             return value;
         }
         return emit_cast(value, target);

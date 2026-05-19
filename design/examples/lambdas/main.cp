@@ -15,9 +15,9 @@ call_raw(op: f*(i32, i32) -> i32) -> i32
 
 main() -> i32
 {
-    let inc: f(i32) -> i32 = fn(value) => value + 1;
+    let inc: f(i32) -> i32 = f(value) => value + 1;
     let bias = 1;
-    let add_bias = fn(value: i32) -> i32 {
+    let add_bias = f(value: i32) -> i32 {
         value + bias
     };
 

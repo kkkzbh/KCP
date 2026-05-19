@@ -758,12 +758,12 @@ auto check_lambda_binary(test_tools const& tools) -> void
         R"(main() -> i32
 {
     let inc: f(i32) -> i32 =
-        fn(x) => x + 1;
-    let square = fn(x: i32) -> i32 {
+        f(x) => x + 1;
+    let square = f(x: i32) -> i32 {
         x * x
     };
     let bias = 1;
-    let add_bias = fn(x: i32) -> i32 {
+    let add_bias = f(x: i32) -> i32 {
         x + bias
     };
     return inc(20) + square(4) + add_bias(1) + 3;
@@ -773,6 +773,29 @@ auto check_lambda_binary(test_tools const& tools) -> void
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status == 0, "cp should compile lambda binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "lambda binary should return 42");
+}
+
+auto check_nested_inferred_lambda_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("nested-lambda");
+    auto source = dir / "nested_lambda.cp";
+    auto app = dir / "nested_lambda";
+    write_source(
+        source,
+        R"(main() -> i32
+{
+    let y = 2;
+    let func = f(x: i32) => x + y;
+    let func2 = f() {
+        func(1)
+    };
+    return func2();
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile nested inferred lambda binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 3, "nested inferred lambda should return 3");
 }
 
 auto check_generic_struct_binary(test_tools const& tools) -> void
@@ -1022,6 +1045,7 @@ auto main(int argc, char** argv) -> int
     check_pointer_difference_binary(tools);
     check_decltype_ref_destructure_binary(tools);
     check_lambda_binary(tools);
+    check_nested_inferred_lambda_binary(tools);
     check_generic_struct_binary(tools);
     check_generic_function_binary(tools);
     check_imported_generic_function_binary(tools);

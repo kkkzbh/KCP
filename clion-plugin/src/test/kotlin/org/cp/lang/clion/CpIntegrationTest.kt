@@ -1,5 +1,6 @@
 package org.cp.lang.clion
 
+import com.intellij.lang.annotation.HighlightSeverity
 import com.intellij.testFramework.LightVirtualFile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -41,6 +42,25 @@ class CpIntegrationTest {
         assertTrue(
             diagnostics.any { it.code == "unterminated_string_literal" && it.message == "unterminated string literal" },
         )
+    }
+
+    @Test
+    fun diagnosticPresentationKeepsNativeStageAndCode() {
+        val diagnostic = CpHelperDiagnostic(
+            stage = "semantic",
+            code = "unknown_module",
+            message = "unknown module 'missing'",
+            severity = "error",
+            startOffset = 0,
+            endOffset = 7,
+            line = 1,
+            column = 1,
+        )
+
+        assertEquals(HighlightSeverity.ERROR, CpExternalAnnotator.diagnosticSeverity(diagnostic.severity))
+        assertEquals("unknown module 'missing' [semantic:unknown_module]", CpExternalAnnotator.diagnosticMessage(diagnostic))
+        assertEquals(HighlightSeverity.WARNING, CpExternalAnnotator.diagnosticSeverity("warning"))
+        assertEquals(HighlightSeverity.INFORMATION, CpExternalAnnotator.diagnosticSeverity("info"))
     }
 
     @Test

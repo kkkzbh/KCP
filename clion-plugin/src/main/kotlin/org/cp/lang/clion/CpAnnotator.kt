@@ -11,8 +11,13 @@ class CpAnnotator : Annotator {
         when (element.cpElementType()) {
             CpElements.FUNCTION_NAME -> annotate(element, holder, CpSyntaxHighlighter.FUNCTION_DECLARATION)
             CpElements.PARAMETER_NAME -> annotate(element, holder, CpSyntaxHighlighter.PARAMETER)
+            CpElements.MATCH_BINDING -> annotate(element, holder, CpSyntaxHighlighter.PARAMETER)
             CpElements.LOCAL_DECLARATION -> annotate(element, holder, CpSyntaxHighlighter.LOCAL_VARIABLE)
             CpElements.TYPE_NAME -> annotate(element, holder, CpSyntaxHighlighter.TYPE)
+            CpElements.GENERIC_PARAMETER_NAME -> annotate(element, holder, CpSyntaxHighlighter.TYPE_PARAMETER)
+            CpElements.FIELD_DECLARATION -> annotate(element, holder, CpSyntaxHighlighter.FIELD)
+            CpElements.MEMBER_NAME -> annotateMemberName(element, holder)
+            CpElements.VARIANT_CASE_NAME -> annotate(element, holder, CpSyntaxHighlighter.VARIANT_CASE)
             CpElements.MODULE_NAME, CpElements.IMPORT_NAME -> annotate(element, holder, CpSyntaxHighlighter.MODULE_NAME)
             CpElements.LOOP_LABEL -> annotate(element, holder, CpSyntaxHighlighter.LABEL)
             CpElements.CALL_EXPRESSION -> annotateCall(element, holder)
@@ -21,8 +26,27 @@ class CpAnnotator : Annotator {
     }
 
     private fun annotateCall(element: PsiElement, holder: AnnotationHolder) {
+        val member = element.descendants(CpElements.MEMBER_NAME).lastOrNull()
+        if (member != null) {
+            annotate(member, holder, CpSyntaxHighlighter.MEMBER_FUNCTION)
+            return
+        }
+
+        val associated = element.descendants(CpElements.ASSOCIATED_NAME).lastOrNull()
+        if (associated != null) {
+            annotate(associated, holder, CpSyntaxHighlighter.ASSOCIATED_FUNCTION)
+            return
+        }
+
         val callee = element.firstDescendant(CpElements.NAME_EXPRESSION) ?: return
         annotate(callee, holder, CpSyntaxHighlighter.FUNCTION_CALL)
+    }
+
+    private fun annotateMemberName(element: PsiElement, holder: AnnotationHolder) {
+        if (element.parentByType(CpElements.CALL_EXPRESSION) != null) {
+            return
+        }
+        annotate(element, holder, CpSyntaxHighlighter.FIELD)
     }
 
     private fun annotateNameReference(element: PsiElement, holder: AnnotationHolder) {

@@ -277,32 +277,25 @@ auto add_token_highlights(
 ) -> void
 {
     for(auto const& token : tokens) {
-        if(is_literal_token(token.kind)) {
-            collector.add("literal", token.span);
+        if(token.kind == token_kind::kw_true or token.kind == token_kind::kw_false) {
+            collector.add("boolean.literal", token.span);
+            continue;
+        }
+        if(token.kind == token_kind::string_literal) {
+            collector.add("string.literal", token.span);
+            continue;
+        }
+        if(token.kind == token_kind::char_literal) {
+            collector.add("character.literal", token.span);
+            continue;
+        }
+        if(token.kind == token_kind::integer_literal or token.kind == token_kind::float_literal) {
+            collector.add("number.literal", token.span);
             continue;
         }
         if(is_operator_token(token.kind)) {
             collector.add("operator", token.span);
         }
-    }
-}
-
-auto collect_type_highlights(highlight_collector& collector, ast_arena const& ast, type_id id) -> void
-{
-    auto const& type = ast.node(id);
-    collector.add("type", type.name);
-    for(auto const& argument : type.arguments) {
-        std::visit(overloaded {
-            [&](type_argument_type_syntax const& node) {
-                collect_type_highlights(collector, ast, node.type);
-            },
-            [&](type_argument_literal_syntax const& node) {
-                collector.add("literal", node.literal);
-            },
-        }, argument);
-    }
-    for(auto associated : type.associated_names) {
-        collector.add("type", associated);
     }
 }
 
@@ -321,43 +314,187 @@ auto collect_expression_highlights(
     std::size_t unit_index,
     expr_id id,
     bool call_callee = false
+) -> void;
+
+auto source_text(highlight_collector& collector, source_span span) -> std::string_view
+{
+    return collector.sources.slice(span);
+}
+
+auto collect_literal_highlight(highlight_collector& collector, source_span span) -> void
+{
+    auto const text = source_text(collector, span);
+    if(text == "true" or text == "false") {
+        collector.add("boolean.literal", span);
+    } else if(text.starts_with("\"")) {
+        collector.add("string.literal", span);
+    } else if(text.starts_with("'")) {
+        collector.add("character.literal", span);
+    } else {
+        collector.add("number.literal", span);
+    }
+}
+
+auto collect_type_highlights(
+    highlight_collector& collector,
+    ast_arena const& ast,
+    semantic_result const* checked,
+    std::size_t unit_index,
+    type_id id
+) -> void
+{
+    auto const& type = ast.node(id);
+    auto const name = source_text(collector, type.name);
+    if(type.is_function_type or type.is_function_pointer) {
+        collector.add("function.type", type.name);
+        for(auto const& parameter : type.function_parameters) {
+            if(parameter.name) {
+                collector.add("parameter.declaration", *parameter.name);
+            }
+            collect_type_highlights(collector, ast, checked, unit_index, parameter.type);
+        }
+        collect_type_highlights(collector, ast, checked, unit_index, type.function_return);
+    } else if(type.is_decltype) {
+        collector.add("decltype", type.name);
+        collect_expression_highlights(collector, ast, checked, unit_index, type.decltype_expression);
+    } else if(name == "Self") {
+        collector.add("self.type", type.name);
+    } else {
+        collector.add("type", type.name);
+    }
+    for(auto const& argument : type.arguments) {
+        std::visit(overloaded {
+            [&](type_argument_type_syntax const& node) {
+                collect_type_highlights(collector, ast, checked, unit_index, node.type);
+            },
+            [&](type_argument_literal_syntax const& node) {
+                collect_literal_highlight(collector, node.literal);
+            },
+        }, argument);
+    }
+    for(auto associated : type.associated_names) {
+        collector.add("associated.type.reference", associated);
+    }
+}
+
+auto collect_type_argument_highlights(
+    highlight_collector& collector,
+    ast_arena const& ast,
+    semantic_result const* checked,
+    std::size_t unit_index,
+    std::span<type_argument_syntax const> arguments
+) -> void
+{
+    for(auto const& argument : arguments) {
+        std::visit(overloaded {
+            [&](type_argument_type_syntax const& node) {
+                collect_type_highlights(collector, ast, checked, unit_index, node.type);
+            },
+            [&](type_argument_literal_syntax const& node) {
+                collect_literal_highlight(collector, node.literal);
+            },
+        }, argument);
+    }
+}
+
+auto function_declaration_category(
+    semantic_result const* checked,
+    std::size_t unit_index,
+    function_id id,
+    function_syntax const& function
+) -> std::string_view
+{
+    if(checked != nullptr) {
+        auto const symbol = checked->function_symbol_of(unit_index, id);
+        if(symbol.valid() and symbol.value < checked->symbols.size()) {
+            switch(checked->symbols[symbol.value].function_kind) {
+                case semantic_function_kind::free_function:
+                    return "function.declaration";
+                case semantic_function_kind::constructor:
+                    return "constructor.declaration";
+                case semantic_function_kind::destructor:
+                    return "destructor.declaration";
+                case semantic_function_kind::member_function:
+                    return "member.function.declaration";
+                case semantic_function_kind::associated_function:
+                    return "associated.function.declaration";
+            }
+        }
+    }
+    if(function.kind == function_syntax_kind::constructor) {
+        return "constructor.declaration";
+    }
+    if(function.kind == function_syntax_kind::destructor) {
+        return "destructor.declaration";
+    }
+    return "function.declaration";
+}
+
+auto local_category(semantic_result const* checked, symbol_id symbol, std::string_view fallback) -> std::string_view
+{
+    if(checked != nullptr and symbol.valid() and symbol.value < checked->symbols.size()) {
+        auto const& value = checked->symbols[symbol.value];
+        if(value.kind == symbol_kind::local and value.is_const) {
+            return fallback.ends_with(".reference") ? "constant.reference" : "constant.declaration";
+        }
+    }
+    return fallback;
+}
+
+auto collect_expression_highlights(
+    highlight_collector& collector,
+    ast_arena const& ast,
+    semantic_result const* checked,
+    std::size_t unit_index,
+    expr_id id,
+    bool call_callee
 ) -> void
 {
     auto const& expression = ast.node(id);
+    auto const semantic_symbol = [&]() -> symbol_id {
+        if(checked == nullptr) {
+            return {};
+        }
+        auto symbol = checked->resolved_name(unit_index, id);
+        if(symbol.valid() and symbol.value < checked->symbols.size()) {
+            return symbol;
+        }
+        return {};
+    };
     std::visit(overloaded {
         [&](name_expr_syntax const& node) {
-            if(call_callee) {
-                collector.add("function.call", node.name);
+            if(checked != nullptr and checked->field_access_of(unit_index, id).valid()) {
+                collector.add("field.reference", node.name);
                 return;
             }
-
-            if(checked != nullptr) {
-                auto const symbol = checked->resolved_name(unit_index, id);
-                if(symbol.valid() and symbol.value < checked->symbols.size()) {
-                    switch(checked->symbols[symbol.value].kind) {
-                        case symbol_kind::function:
-                            collector.add("function.reference", node.name);
-                            return;
-                        case symbol_kind::type:
-                            collector.add("type", node.name);
-                            return;
-                        case symbol_kind::concept_:
-                            collector.add("type", node.name);
-                            return;
-                        case symbol_kind::parameter:
-                            collector.add("parameter.reference", node.name);
-                            return;
-                        case symbol_kind::local:
-                            collector.add("local.reference", node.name);
-                            return;
-                    }
+            if(checked != nullptr and checked->lambda_capture_of(unit_index, id).valid()) {
+                collector.add("lambda.capture.reference", node.name);
+                return;
+            }
+            if(auto const symbol = semantic_symbol(); symbol.valid()) {
+                switch(checked->symbols[symbol.value].kind) {
+                    case symbol_kind::function:
+                        collector.add(call_callee ? "function.call" : "function.reference", node.name);
+                        return;
+                    case symbol_kind::type:
+                        collector.add("type", node.name);
+                        return;
+                    case symbol_kind::concept_:
+                        collector.add("concept.reference", node.name);
+                        return;
+                    case symbol_kind::parameter:
+                        collector.add("parameter.reference", node.name);
+                        return;
+                    case symbol_kind::local:
+                        collector.add(local_category(checked, symbol, "local.reference"), node.name);
+                        return;
                 }
             }
 
             collector.add("identifier.reference", node.name);
         },
         [&](literal_expr_syntax const& node) {
-            collector.add("literal", node.full_span);
+            collect_literal_highlight(collector, node.full_span);
         },
         [&](unary_expr_syntax const& node) {
             collect_expression_highlights(collector, ast, checked, unit_index, node.operand);
@@ -371,6 +508,30 @@ auto collect_expression_highlights(
             collect_expression_highlights(collector, ast, checked, unit_index, node.right);
         },
         [&](call_expr_syntax const& node) {
+            collect_type_argument_highlights(collector, ast, checked, unit_index, node.type_arguments);
+            if(checked != nullptr) {
+                auto found = checked->builtin_calls.find(semantic_node_key{unit_index, id});
+                if(found != checked->builtin_calls.end()) {
+                    if(auto const* name = std::get_if<name_expr_syntax>(&ast.node(node.callee))) {
+                        collector.add("builtin.function.call", name->name);
+                    } else {
+                        collect_expression_highlights(collector, ast, checked, unit_index, node.callee, true);
+                    }
+                    for(auto argument : node.arguments) {
+                        collect_expression_highlights(collector, ast, checked, unit_index, argument);
+                    }
+                    return;
+                }
+            }
+            if(auto const* name = std::get_if<name_expr_syntax>(&ast.node(node.callee))) {
+                if(is_builtin_name(source_text(collector, name->name))) {
+                    collector.add("function.style.cast", name->name);
+                    for(auto argument : node.arguments) {
+                        collect_expression_highlights(collector, ast, checked, unit_index, argument);
+                    }
+                    return;
+                }
+            }
             collect_expression_highlights(collector, ast, checked, unit_index, node.callee, true);
             for(auto argument : node.arguments) {
                 collect_expression_highlights(collector, ast, checked, unit_index, argument);
@@ -378,19 +539,34 @@ auto collect_expression_highlights(
         },
         [&](member_expr_syntax const& node) {
             collect_expression_highlights(collector, ast, checked, unit_index, node.object);
-            collector.add(call_callee ? "function.call" : "field.reference", node.name);
+            if(call_callee) {
+                collector.add("member.function.call", node.name);
+                return;
+            }
+            collector.add("field.reference", node.name);
         },
         [&](index_expr_syntax const& node) {
             collect_expression_highlights(collector, ast, checked, unit_index, node.object);
             collect_expression_highlights(collector, ast, checked, unit_index, node.index);
         },
         [&](associated_name_expr_syntax const& node) {
-            collect_type_highlights(collector, ast, node.type);
-            collector.add(call_callee ? "function.call" : "function.reference", node.name);
+            collect_type_highlights(collector, ast, checked, unit_index, node.type);
+            if(checked != nullptr and checked->variant_case_of(unit_index, id).valid()) {
+                collector.add("variant.case", node.name);
+                return;
+            }
+            if(auto const symbol = semantic_symbol(); symbol.valid()) {
+                auto const& value = checked->symbols[symbol.value];
+                if(value.function_kind == semantic_function_kind::associated_function) {
+                    collector.add(call_callee ? "associated.function.call" : "associated.function.reference", node.name);
+                    return;
+                }
+            }
+            collector.add(call_callee ? "associated.function.call" : "associated.function.reference", node.name);
         },
         [&](cast_expr_syntax const& node) {
             collect_expression_highlights(collector, ast, checked, unit_index, node.operand);
-            collect_type_highlights(collector, ast, node.type);
+            collect_type_highlights(collector, ast, checked, unit_index, node.type);
         },
         [&](array_literal_expr_syntax const& node) {
             for(auto element : node.elements) {
@@ -406,7 +582,7 @@ auto collect_expression_highlights(
             collect_expression_highlights(collector, ast, checked, unit_index, node.expression);
         },
         [&](struct_init_expr_syntax const& node) {
-            collect_type_highlights(collector, ast, node.type);
+            collect_type_highlights(collector, ast, checked, unit_index, node.type);
             for(auto const& initializer : node.initializers) {
                 if(auto const* named = std::get_if<named_field_initializer_syntax>(&initializer)) {
                     collector.add("field.reference", named->name);
@@ -437,7 +613,7 @@ auto collect_expression_highlights(
                     [&](match_case_pattern_syntax const& pattern) {
                         collector.add("variant.case", pattern.name);
                         for(auto binding : pattern.bindings) {
-                            collector.add("local.declaration", binding);
+                            collector.add("pattern.binding", binding);
                         }
                     },
                     [&](match_wildcard_pattern_syntax const& pattern) {
@@ -448,7 +624,18 @@ auto collect_expression_highlights(
             }
         },
         [&](lambda_expr_syntax const& node) {
-            collector.add("function.reference", node.full_span);
+            auto const& function = ast.node(node.function);
+            collector.add("lambda.marker", function.name);
+            for(auto const& parameter : function.parameters) {
+                collector.add("parameter.declaration", parameter.name);
+                if(parameter.type) {
+                    collect_type_highlights(collector, ast, checked, unit_index, *parameter.type);
+                }
+            }
+            if(function.return_type) {
+                collect_type_highlights(collector, ast, checked, unit_index, *function.return_type);
+            }
+            collect_statement_highlights(collector, ast, checked, unit_index, function.body);
         },
     }, expression);
 }
@@ -459,9 +646,9 @@ auto collect_generic_parameter_highlights(
 ) -> void
 {
     for(auto const& parameter : parameters) {
-        collector.add("type.parameter", parameter.name);
+        collector.add(parameter.is_pack ? "type.parameter.pack" : "type.parameter", parameter.name);
         for(auto concept_name : parameter.concept_bounds) {
-            collector.add("type", concept_name);
+            collector.add("concept.reference", concept_name);
         }
     }
 }
@@ -471,19 +658,20 @@ auto collect_function_highlights(
     ast_arena const& ast,
     semantic_result const* checked,
     std::size_t unit_index,
+    function_id id,
     function_syntax const& function
 ) -> void
 {
-    collector.add("function.declaration", function.name);
+    collector.add(function_declaration_category(checked, unit_index, id, function), function.name);
     collect_generic_parameter_highlights(collector, function.generic_parameters);
     for(auto const& parameter : function.parameters) {
         collector.add("parameter.declaration", parameter.name);
         if(parameter.type) {
-            collect_type_highlights(collector, ast, *parameter.type);
+            collect_type_highlights(collector, ast, checked, unit_index, *parameter.type);
         }
     }
     if(function.return_type) {
-        collect_type_highlights(collector, ast, *function.return_type);
+        collect_type_highlights(collector, ast, checked, unit_index, *function.return_type);
     }
     if(not function.defaulted) {
         collect_statement_highlights(collector, ast, checked, unit_index, function.body);
@@ -506,15 +694,23 @@ auto collect_statement_highlights(
             }
         },
         [&](declaration_statement_syntax const& node) {
-            collector.add("local.declaration", node.name);
+            if(node.binding_names.empty()) {
+                auto const symbol = checked == nullptr ? symbol_id{} : checked->local_binding_of(unit_index, node.name);
+                collector.add(local_category(checked, symbol, "local.declaration"), node.name);
+            } else {
+                for(auto binding : node.binding_names) {
+                    auto const symbol = checked == nullptr ? symbol_id{} : checked->local_binding_of(unit_index, binding);
+                    collector.add(local_category(checked, symbol, "local.declaration"), binding);
+                }
+            }
             if(node.declared_type) {
-                collect_type_highlights(collector, ast, *node.declared_type);
+                collect_type_highlights(collector, ast, checked, unit_index, *node.declared_type);
             }
             collect_expression_highlights(collector, ast, checked, unit_index, node.initializer);
         },
         [&](type_alias_statement_syntax const& node) {
-            collector.add("type.declaration", node.name);
-            collect_type_highlights(collector, ast, node.type);
+            collector.add("type.alias.declaration", node.name);
+            collect_type_highlights(collector, ast, checked, unit_index, node.type);
         },
         [&](if_statement_syntax const& node) {
             collect_expression_highlights(collector, ast, checked, unit_index, node.condition);
@@ -532,7 +728,8 @@ auto collect_statement_highlights(
             collect_expression_highlights(collector, ast, checked, unit_index, node.condition);
         },
         [&](for_statement_syntax const& node) {
-            collector.add("local.declaration", node.name);
+            auto const symbol = checked == nullptr ? symbol_id{} : checked->binding_of(unit_index, id);
+            collector.add(local_category(checked, symbol, "local.declaration"), node.name);
             if(node.label) {
                 collector.add("loop.label", *node.label);
             }
@@ -542,11 +739,11 @@ auto collect_statement_highlights(
         [&](template_for_statement_syntax const& node) {
             collector.add(
                 node.binding_kind == template_for_binding_kind::type_binding
-                    ? "type.declaration"
+                    ? "type.parameter"
                     : "local.declaration",
                 node.name
             );
-            collector.add("local.reference", node.pack_name);
+            collector.add("parameter.pack.reference", node.pack_name);
             collect_statement_highlights(collector, ast, checked, unit_index, node.body);
         },
         [&](break_statement_syntax const& node) {
@@ -606,7 +803,7 @@ auto collect_ast_highlights(
         collect_generic_parameter_highlights(collector, value.generic_parameters);
         for(auto const& field : value.fields) {
             collector.add("field.declaration", field.name);
-            collect_type_highlights(collector, parsed.ast, field.type);
+            collect_type_highlights(collector, parsed.ast, checked, unit_index, field.type);
         }
     }
     for(auto id : root.variants) {
@@ -616,50 +813,62 @@ auto collect_ast_highlights(
         for(auto const& variant_case : value.cases) {
             collector.add("variant.case", variant_case.name);
             for(auto payload : variant_case.payloads) {
-                collect_type_highlights(collector, parsed.ast, payload);
+                collect_type_highlights(collector, parsed.ast, checked, unit_index, payload);
             }
         }
     }
     for(auto id : root.concepts) {
         auto const& value = parsed.ast.node(id);
-        collector.add("type", value.name);
+        collector.add("concept.declaration", value.name);
         for(auto const& item : value.items) {
             std::visit(overloaded {
                 [&](concept_requires_syntax const& requirement) {
                     for(auto const& constraint : requirement.constraints) {
                         std::visit(overloaded {
                             [&](concept_parent_constraint_syntax const& parent) {
-                                collector.add("type", parent.name);
+                                collector.add("concept.reference", parent.name);
                             },
                             [&](concept_type_bound_constraint_syntax const& bound) {
-                                collect_type_highlights(collector, parsed.ast, bound.type);
+                                collect_type_highlights(collector, parsed.ast, checked, unit_index, bound.type);
                                 for(auto concept_name : bound.concept_bounds) {
-                                    collector.add("type", concept_name);
+                                    collector.add("concept.reference", concept_name);
                                 }
                             },
                             [&](concept_type_equality_constraint_syntax const& equality) {
-                                collect_type_highlights(collector, parsed.ast, equality.left);
-                                collect_type_highlights(collector, parsed.ast, equality.right);
+                                collect_type_highlights(collector, parsed.ast, checked, unit_index, equality.left);
+                                collect_type_highlights(collector, parsed.ast, checked, unit_index, equality.right);
                             },
                         }, constraint);
                     }
                 },
                 [&](type_alias_syntax const& alias) {
-                    collector.add("type.declaration", alias.name);
+                    collector.add(alias.value ? "associated.type.declaration" : "associated.type.requirement", alias.name);
                     if(alias.value) {
-                        collect_type_highlights(collector, parsed.ast, *alias.value);
+                        collect_type_highlights(collector, parsed.ast, checked, unit_index, *alias.value);
                     }
                 },
                 [&](concept_function_requirement_syntax const& function) {
-                    collector.add("function.declaration", function.name);
+                    if(function.default_function) {
+                        auto const& default_function = parsed.ast.node(*function.default_function);
+                        collect_function_highlights(
+                            collector,
+                            parsed.ast,
+                            checked,
+                            unit_index,
+                            *function.default_function,
+                            default_function
+                        );
+                        return;
+                    }
+                    collector.add("concept.function.requirement", function.name);
                     for(auto const& parameter : function.parameters) {
                         collector.add("parameter.declaration", parameter.name);
                         if(parameter.type) {
-                            collect_type_highlights(collector, parsed.ast, *parameter.type);
+                            collect_type_highlights(collector, parsed.ast, checked, unit_index, *parameter.type);
                         }
                     }
                     if(function.return_type) {
-                        collect_type_highlights(collector, parsed.ast, *function.return_type);
+                        collect_type_highlights(collector, parsed.ast, checked, unit_index, *function.return_type);
                     }
                 },
             }, item);
@@ -667,37 +876,37 @@ auto collect_ast_highlights(
     }
     for(auto id : root.impls) {
         auto const& value = parsed.ast.node(id);
-        collect_type_highlights(collector, parsed.ast, value.type);
+        collect_type_highlights(collector, parsed.ast, checked, unit_index, value.type);
         for(auto const& alias : value.type_aliases) {
-            collector.add("type.declaration", alias.name);
+            collector.add("associated.type.declaration", alias.name);
             if(alias.value) {
-                collect_type_highlights(collector, parsed.ast, *alias.value);
+                collect_type_highlights(collector, parsed.ast, checked, unit_index, *alias.value);
             }
         }
         for(auto function_id : value.functions) {
             auto const& function = parsed.ast.node(function_id);
-            collect_function_highlights(collector, parsed.ast, checked, unit_index, function);
+            collect_function_highlights(collector, parsed.ast, checked, unit_index, function_id, function);
         }
     }
     for(auto id : root.concept_impls) {
         auto const& value = parsed.ast.node(id);
-        collector.add("type", value.concept_name);
-        collect_type_highlights(collector, parsed.ast, value.target_type);
+        collector.add("concept.reference", value.concept_name);
+        collect_type_highlights(collector, parsed.ast, checked, unit_index, value.target_type);
         for(auto const& alias : value.type_aliases) {
-            collector.add("type.declaration", alias.name);
+            collector.add("associated.type.declaration", alias.name);
             if(alias.value) {
-                collect_type_highlights(collector, parsed.ast, *alias.value);
+                collect_type_highlights(collector, parsed.ast, checked, unit_index, *alias.value);
             }
         }
         for(auto function_id : value.functions) {
             auto const& function = parsed.ast.node(function_id);
-            collect_function_highlights(collector, parsed.ast, checked, unit_index, function);
+            collect_function_highlights(collector, parsed.ast, checked, unit_index, function_id, function);
         }
     }
 
     for(auto id : root.functions) {
         auto const& function = parsed.ast.node(id);
-        collect_function_highlights(collector, parsed.ast, checked, unit_index, function);
+        collect_function_highlights(collector, parsed.ast, checked, unit_index, id, function);
     }
 }
 

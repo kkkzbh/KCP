@@ -70,6 +70,7 @@ struct parser
     auto parse_postfix() -> std::optional<expr_id>;
     auto parse_primary() -> std::optional<expr_id>;
     auto looks_like_generic_call_suffix() const -> bool;
+    auto looks_like_lambda_expression() const -> bool;
     auto looks_like_associated_name_expression() const -> bool;
     auto parse_associated_name_expression() -> std::optional<expr_id>;
     auto parse_match_expression() -> std::optional<expr_id>;

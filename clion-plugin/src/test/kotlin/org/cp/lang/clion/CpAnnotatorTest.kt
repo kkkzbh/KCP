@@ -52,6 +52,34 @@ class CpAnnotatorTest : BasePlatformTestCase() {
         assertHasHighlight(file.text, highlights, "i32", CpSyntaxHighlighter.TYPE)
     }
 
+    fun testMemberCallsAndMatchPatternsUseSpecificHighlights() {
+        val file = myFixture.configureByText(
+            CpFileType.INSTANCE,
+            """
+            variant event {
+                key(char);
+                quit;
+            }
+
+            score(value: event) -> i32
+            {
+                let item = value;
+                return match value {
+                    .key(code) => item.value_or(code),
+                    .quit => 0,
+                };
+            }
+            """.trimIndent(),
+        )
+        val highlights = myFixture.doHighlighting()
+
+        assertHasHighlight(file.text, highlights, "key", CpSyntaxHighlighter.VARIANT_CASE)
+        assertHasHighlight(file.text, highlights, "quit", CpSyntaxHighlighter.VARIANT_CASE)
+        assertHasHighlight(file.text, highlights, "code", CpSyntaxHighlighter.PARAMETER)
+        assertHasHighlight(file.text, highlights, "value_or", CpSyntaxHighlighter.MEMBER_FUNCTION)
+        assertNoHighlight(file.text, highlights, "item", CpSyntaxHighlighter.FUNCTION_CALL)
+    }
+
     fun testSemanticHighlightsRealExampleFiles() {
         val repoRoot = Path.of(System.getProperty("cp.repo.root") ?: error("cp.repo.root is not configured"))
         val cases = mapOf(
@@ -101,6 +129,21 @@ class CpAnnotatorTest : BasePlatformTestCase() {
     ) {
         assertTrue(
             "$text should have $key",
+            highlights.any { info ->
+                info.forcedTextAttributesKey == key &&
+                    source.substring(info.startOffset, info.endOffset) == text
+            },
+        )
+    }
+
+    private fun assertNoHighlight(
+        source: String,
+        highlights: List<HighlightInfo>,
+        text: String,
+        key: TextAttributesKey,
+    ) {
+        assertFalse(
+            "$text should not have $key",
             highlights.any { info ->
                 info.forcedTextAttributesKey == key &&
                     source.substring(info.startOffset, info.endOffset) == text

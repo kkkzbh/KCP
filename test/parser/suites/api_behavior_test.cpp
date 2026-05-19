@@ -315,7 +315,7 @@ main()
         (left, right) = (first, second);
     type alias_type = decltype(alias);
     let inc: f(i32) -> i32 =
-        fn(x: i32) => x + 1;
+        f(x: i32) => x + 1;
 })");
     auto function_type_parsed = parse_source(sources, function_type_source);
     test_parser::assert_true(function_type_parsed.accepted, "function type source should parse");

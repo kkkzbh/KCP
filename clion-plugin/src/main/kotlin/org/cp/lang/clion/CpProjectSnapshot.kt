@@ -1,7 +1,9 @@
 package org.cp.lang.clion
 
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.vfs.VfsUtilCore
+import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiFile
 import com.intellij.psi.search.FileTypeIndex
 import com.intellij.psi.search.GlobalSearchScope
@@ -28,7 +30,7 @@ object CpProjectSnapshotCollector {
                     runCatching {
                         CpSnapshotSource(
                             path = virtualFile.path,
-                            text = VfsUtilCore.loadText(virtualFile),
+                            text = loadEditorText(virtualFile),
                         )
                     }.getOrElse { exception ->
                         log.warn("failed to read cp project file ${virtualFile.path}", exception)
@@ -66,4 +68,8 @@ object CpProjectSnapshotCollector {
             },
         )
     }
+
+    private fun loadEditorText(virtualFile: VirtualFile): String =
+        FileDocumentManager.getInstance().getDocument(virtualFile)?.text
+            ?: VfsUtilCore.loadText(virtualFile)
 }

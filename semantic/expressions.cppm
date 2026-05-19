@@ -88,6 +88,9 @@ auto semantic_analyzer::check_expression(
     if (
         expected
         and can_implicitly_convert(info, *expected)
+        and not is_error(*expected)
+        and not is_inferred(*expected)
+        and not is_unit(*expected)
         and read_type(info.type) != read_type(*expected)
     ) {
         result.expression_conversions[node_key(id)] = *expected;
@@ -591,17 +594,66 @@ auto semantic_analyzer::check_call_expression(ast_arena const& ast, call_expr_sy
         return *generic;
     }
 
-    if(not node.type_arguments.empty()) {
-        report(
-            diagnostic_kind::invalid_type_argument,
-            node.full_span,
-            "non-generic call does not take type arguments"
-        );
-    }
-
     auto callee = check_expression(ast, node.callee, std::nullopt);
     auto closure = result.lambda_of_closure(read_type(callee.type));
     if(closure.valid()) {
+        auto const& closure_symbol = result.symbols[closure.function_symbol.value];
+        if(function_is_generic(closure_symbol.unit_index, closure.function)) {
+            auto explicit_arguments = explicit_type_arguments(ast, node);
+            if(not explicit_arguments) {
+                for(auto argument : node.arguments) {
+                    check_expression(ast, argument, std::nullopt);
+                }
+                return expression_info{ .type = semantic_type_ids::error };
+            }
+
+            auto arguments = std::vector<expression_info>{};
+            arguments.reserve(node.arguments.size());
+            for(auto argument : node.arguments) {
+                arguments.emplace_back(check_expression(ast, argument, std::nullopt));
+            }
+
+            auto instance = instantiate_lambda(closure, arguments, std::move(*explicit_arguments), node.full_span);
+            if(not instance.valid()) {
+                return expression_info{ .type = semantic_type_ids::error };
+            }
+
+            auto const& callable = instance.callable;
+            if(callable.parameters.size() != node.arguments.size()) {
+                report(
+                    diagnostic_kind::argument_count_mismatch,
+                    node.full_span,
+                    "generic closure call argument count does not match lambda signature"
+                );
+            }
+
+            auto count = std::min(callable.parameters.size(), node.arguments.size());
+            for(auto index = 0uz; index < count; ++index) {
+                if(not can_implicitly_convert(arguments[index], callable.parameters[index])) {
+                    report(
+                        diagnostic_kind::type_mismatch,
+                        ast.span(node.arguments[index]),
+                        "closure call argument does not match generic lambda instance"
+                    );
+                    continue;
+                }
+                if(read_type(arguments[index].type) != read_type(callable.parameters[index])) {
+                    result.expression_conversions[node_key(node.arguments[index])] = callable.parameters[index];
+                }
+            }
+
+            result.lambda_call_infos[node_key(id)] = instance;
+            return expression_info{ .type = callable.returns };
+        }
+
+        if(not node.type_arguments.empty()) {
+            report(
+                diagnostic_kind::invalid_type_argument,
+                node.full_span,
+                "non-generic closure call does not take type arguments"
+            );
+        }
+
         auto const& callable = closure.callable;
         if(callable.parameters.size() != node.arguments.size()) {
             report(
@@ -619,6 +671,14 @@ auto semantic_analyzer::check_call_expression(ast_arena const& ast, call_expr_sy
             check_expression(ast, node.arguments[index], std::nullopt);
         }
         return expression_info{ .type = callable.returns };
+    }
+
+    if(not node.type_arguments.empty()) {
+        report(
+            diagnostic_kind::invalid_type_argument,
+            node.full_span,
+            "non-generic call does not take type arguments"
+        );
     }
 
     auto const* callable = callable_type(callee.type);
@@ -1405,6 +1465,17 @@ auto semantic_analyzer::check_lambda_expression(
 
     apply_lambda_parameter_context(node, expected);
     result.expression_symbols[node_key(id)] = symbol;
+    if(function_is_generic(active_unit_index, node.function)) {
+        auto info = result.lambda_of(active_context_index, active_unit_index, node.function);
+        if(not info.valid()) {
+            info = build_generic_lambda_info(node);
+        }
+        if(info.closure_type.valid()) {
+            return expression_info{ .type = info.closure_type };
+        }
+        return expression_info{ .type = result.symbols[symbol.value].type };
+    }
+
     auto info = result.lambda_of(active_unit_index, node.function);
     if(not info.valid()) {
         info = check_lambda_body(node);

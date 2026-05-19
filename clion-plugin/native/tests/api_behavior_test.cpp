@@ -31,6 +31,20 @@ auto has_highlight(
     });
 }
 
+auto highlight_count(
+    cp_lexer_helper::inspect_result const& result,
+    std::string_view source,
+    std::string_view category,
+    std::string_view text
+) -> std::size_t
+{
+    return static_cast<std::size_t>(std::ranges::count_if(result.highlights, [&](auto const& highlight) {
+        return highlight.category == category
+               and highlight.end_offset <= source.size()
+               and source.substr(highlight.start_offset, highlight.end_offset - highlight.start_offset) == text;
+    }));
+}
+
 } // namespace
 
 auto main() -> int
@@ -131,6 +145,156 @@ main() -> i32
     assert_true(has_highlight(multi_file, "import.name"), "inspect should highlight import module names");
     assert_true(has_highlight(multi_file, "function.call"), "inspect should highlight function calls");
     assert_true(has_highlight(multi_file, "type"), "inspect should highlight type names");
+
+    auto constexpr rich_source = R"(struct vec2 {
+    x: i32;
+    y: i32;
+}
+
+impl vec2 {
+    zero() -> vec2
+    {
+        return vec2{ .x = 0, .y = 0 };
+    }
+
+    sum(self: vec2 const&) -> i32
+    {
+        return self.x + self.y;
+    }
+}
+
+variant event {
+    quit;
+    resize(i32, i32);
+}
+
+score(value: event) -> i32
+{
+    return match value {
+        .resize(width, height) => width + height,
+        .quit => 0,
+    };
+}
+
+main() -> i32
+{
+    let point = vec2::zero();
+    return point.sum() + score(event::resize(5, 7));
+})"sv;
+    auto const rich_highlights = cp_lexer_helper::inspect(cp_lexer_helper::inspect_request {
+        .active_file = "rich.cp",
+        .files = {
+            cp_lexer_helper::source_file_record {
+                "rich.cp",
+                std::string{ rich_source },
+            },
+        },
+    });
+    assert_true(rich_highlights.accepted, "rich highlight sample should pass semantic analysis");
+    assert_true(highlight_count(rich_highlights, rich_source, "associated.function.call", "zero") == 1uz,
+        "inspect should distinguish associated function calls");
+    assert_true(highlight_count(rich_highlights, rich_source, "member.function.call", "sum") == 1uz,
+        "inspect should distinguish member function calls");
+    assert_true(highlight_count(rich_highlights, rich_source, "variant.case", "resize") == 3uz,
+        "inspect should distinguish variant constructors from associated function calls");
+    assert_true(highlight_count(rich_highlights, rich_source, "pattern.binding", "width") == 1uz,
+        "inspect should highlight match payload bindings");
+
+    auto constexpr global_source = R"(concept measurable {
+    type item;
+    size(self: Self const&) -> i32;
+}
+
+struct box {
+    value: i32;
+}
+
+impl box {
+    type scalar = i32;
+
+    box(value: i32)
+    {
+        return box{ .value = value };
+    }
+
+    ~box()
+    {
+    }
+
+    get(self: box const&) -> i32
+    {
+        return value;
+    }
+
+    zero() -> box
+    {
+        return box{ .value = 0 };
+    }
+}
+
+impl measurable for box {
+    type item = i32;
+
+    size(self: box const&) -> i32
+    {
+        return value;
+    }
+}
+
+main() -> i32
+{
+    type payload = box::item;
+    let scalar_value: box::scalar = 2;
+    const bias = 1;
+    let inc: f(i32) -)"
+R"(> i32 = f(value) => value + 1;
+    let add_bias = f(value: i32) -)"
+R"(> i32 {
+        value + bias
+    };
+    let memory = alloc<i32>(1);
+    free(memory);
+    let value = box::zero();
+    return value.get() + value.size() + scalar_value + i32(1.5) + inc(1) + add_bias(1);
+})"sv;
+    auto const global_highlights = cp_lexer_helper::inspect(cp_lexer_helper::inspect_request {
+        .active_file = "global.cp",
+        .files = {
+            cp_lexer_helper::source_file_record {
+                "global.cp",
+                std::string{ global_source },
+            },
+        },
+    });
+    assert_true(global_highlights.accepted, "global highlight sample should pass semantic analysis");
+    assert_true(highlight_count(global_highlights, global_source, "concept.declaration", "measurable") == 1uz,
+        "inspect should distinguish concept declarations");
+    assert_true(highlight_count(global_highlights, global_source, "associated.type.requirement", "item") == 1uz,
+        "inspect should distinguish associated type requirements");
+    assert_true(highlight_count(global_highlights, global_source, "associated.type.declaration", "item") == 1uz,
+        "inspect should distinguish associated type declarations");
+    assert_true(highlight_count(global_highlights, global_source, "associated.type.declaration", "scalar") == 1uz,
+        "inspect should distinguish inherent associated type declarations");
+    assert_true(highlight_count(global_highlights, global_source, "associated.type.reference", "item") == 1uz,
+        "inspect should distinguish associated type references");
+    assert_true(highlight_count(global_highlights, global_source, "associated.type.reference", "scalar") == 1uz,
+        "inspect should distinguish inherent associated type references");
+    assert_true(highlight_count(global_highlights, global_source, "constructor.declaration", "box") == 1uz,
+        "inspect should distinguish constructors");
+    assert_true(highlight_count(global_highlights, global_source, "destructor.declaration", "box") == 1uz,
+        "inspect should distinguish destructors");
+    assert_true(highlight_count(global_highlights, global_source, "builtin.function.call", "alloc") == 1uz,
+        "inspect should distinguish builtin calls");
+    assert_true(highlight_count(global_highlights, global_source, "function.type", "f") == 1uz,
+        "inspect should highlight function type markers");
+    assert_true(highlight_count(global_highlights, global_source, "lambda.marker", "f") == 2uz,
+        "inspect should highlight lambda markers");
+    assert_true(highlight_count(global_highlights, global_source, "lambda.capture.reference", "bias") == 1uz,
+        "inspect should distinguish lambda captures");
+    assert_true(highlight_count(global_highlights, global_source, "constant.declaration", "bias") == 1uz,
+        "inspect should distinguish const local declarations");
+    assert_true(highlight_count(global_highlights, global_source, "function.style.cast", "i32") == 1uz,
+        "inspect should distinguish function-style casts");
 
     auto const unknown_module = cp_lexer_helper::inspect(cp_lexer_helper::inspect_request {
         .active_file = "unknown.cp",

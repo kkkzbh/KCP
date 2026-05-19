@@ -544,6 +544,16 @@ export struct semantic_result
         return lookup_result_entry(lambda_capture_accesses, context, unit, id);
     }
 
+    auto lambda_call_of(std::size_t unit, expr_id id) const -> semantic_lambda_info
+    {
+        return lookup_result_entry(lambda_call_infos, unit, id);
+    }
+
+    auto lambda_call_of(std::size_t context, std::size_t unit, expr_id id) const -> semantic_lambda_info
+    {
+        return lookup_result_entry(lambda_call_infos, context, unit, id);
+    }
+
     auto lambda_of_closure(semantic_type_id type) const -> semantic_lambda_info
     {
         if(not type.valid()) {
@@ -643,6 +653,7 @@ export struct semantic_result
     std::map<semantic_node_key, semantic_field_access> expression_fields{};
     std::map<semantic_node_key, semantic_variant_case_access> expression_variant_cases{};
     std::map<semantic_node_key, semantic_lambda_info> lambda_infos{};
+    std::map<semantic_node_key, semantic_lambda_info> lambda_call_infos{};
     std::map<std::uint32_t, semantic_node_key> closure_lambda_infos{};
     std::map<semantic_node_key, semantic_lambda_capture_access> lambda_capture_accesses{};
     std::map<semantic_parameter_key, symbol_id> pattern_bindings{};

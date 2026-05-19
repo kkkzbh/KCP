@@ -64,7 +64,7 @@ let raw: f*(i32, i32) -> i32 = add;
 lambda 表达式写作：
 
 ```text
-LambdaExpr -> fn ( LambdaParamList? ) ReturnType? LambdaBody
+LambdaExpr -> f ( LambdaParamList? ) ReturnType? LambdaBody
 LambdaBody -> Block
             | => Expr
 ```
@@ -72,7 +72,7 @@ LambdaBody -> Block
 参数语法与普通函数参数一致：
 
 ```cp
-let square = fn(x: i32) -> i32 {
+let square = f(x: i32) -> i32 {
     x * x
 };
 ```
@@ -80,7 +80,7 @@ let square = fn(x: i32) -> i32 {
 返回类型可以省略，由 lambda body 推导：
 
 ```cp
-let square = fn(x: i32) {
+let square = f(x: i32) {
     x * x
 };
 ```
@@ -88,7 +88,7 @@ let square = fn(x: i32) {
 当上下文类型已知时，lambda 参数类型也可以省略：
 
 ```cp
-let square: f(i32) -> i32 = fn(x) {
+let square: f(i32) -> i32 = f(x) {
     x * x
 };
 ```
@@ -102,7 +102,7 @@ lambda 支持三种自然写法。
 常规函数体风格：
 
 ```cp
-let abs = fn(x: i32) -> i32 {
+let abs = f(x: i32) -> i32 {
     if(x < 0) {
         return -x;
     }
@@ -114,7 +114,7 @@ let abs = fn(x: i32) -> i32 {
 块表达式风格：
 
 ```cp
-let abs = fn(x: i32) -> i32 {
+let abs = f(x: i32) -> i32 {
     if(x < 0) {
         return -x;
     }
@@ -126,7 +126,7 @@ let abs = fn(x: i32) -> i32 {
 表达式体风格：
 
 ```cp
-let inc = fn(x: i32) -> i32 => x + 1;
+let inc = f(x: i32) -> i32 => x + 1;
 ```
 
 `{ ... }` body 不在语法上分成“函数体块”和“块表达式块”。parser 只解析为一个块；语义阶段同时允许 `return` 和尾表达式：
@@ -141,13 +141,13 @@ let inc = fn(x: i32) -> i32 => x + 1;
 表达式体：
 
 ```cp
-fn(x: i32) => x + 1
+f(x: i32) => x + 1
 ```
 
 等价于：
 
 ```cp
-fn(x: i32) {
+f(x: i32) {
     x + 1
 }
 ```
@@ -161,7 +161,7 @@ lambda 可以自动捕获外层局部变量：
 ```cp
 let bias = 10;
 
-let add_bias = fn(x: i32) {
+let add_bias = f(x: i32) {
     x + bias
 };
 ```
@@ -176,11 +176,11 @@ let add_bias = fn(x: i32) {
 无捕获 lambda 等价于普通命名函数：
 
 ```cp
-let f: f(i32) -> i32 = fn(x: i32) {
+let f: f(i32) -> i32 = f(x: i32) {
     x + 1
 };
 
-let p: f*(i32) -> i32 = fn(x: i32) {
+let p: f*(i32) -> i32 = f(x: i32) {
     x + 1
 };
 ```
@@ -190,7 +190,7 @@ let p: f*(i32) -> i32 = fn(x: i32) {
 ```cp
 let bias = 10;
 
-let closure = fn(x: i32) {
+let closure = f(x: i32) {
     x + bias
 };
 ```
@@ -198,11 +198,11 @@ let closure = fn(x: i32) {
 有捕获 lambda 不能绑定到函数类型或函数指针类型：
 
 ```cp
-let bad_function: f(i32) -> i32 = fn(x: i32) {
+let bad_function: f(i32) -> i32 = f(x: i32) {
     x + bias
 }; // error
 
-let bad_pointer: f*(i32) -> i32 = fn(x: i32) {
+let bad_pointer: f*(i32) -> i32 = f(x: i32) {
     x + bias
 }; // error
 ```
@@ -223,7 +223,7 @@ let bad_pointer: f*(i32) -> i32 = fn(x: i32) {
 ```cp
 make_adder(bias: i32)
 {
-    return fn(x: i32) {
+    return f(x: i32) {
         x + bias
     };
 }
@@ -236,7 +236,7 @@ make_counter()
 {
     let count = 0;
 
-    return fn() {
+    return f() {
         count = count + 1;
         count
     };
@@ -257,7 +257,7 @@ inc(x: i32) -> i32 {
 }
 
 let a = apply(1, inc);
-let b = apply(1, fn(x: i32) => x + 1);
+let b = apply(1, f(x: i32) => x + 1);
 ```
 
 `cb: f(i32) -> i32` 表示调用方必须提供普通函数或无捕获 lambda。实现可以把它 lower 为代码地址，但语言层保证它是非空函数值。
@@ -275,7 +275,7 @@ apply_raw(value: i32, cb: f*(i32) -> i32) -> i32 {
 ```cp
 let bias = 10;
 
-let closure = fn(x: i32) {
+let closure = f(x: i32) {
     x + bias
 };
 

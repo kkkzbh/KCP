@@ -354,6 +354,12 @@ private:
         std::vector<semantic_type_id> type_arguments,
         source_span span
     ) -> semantic_function_instance const*;
+    auto instantiate_lambda(
+        semantic_lambda_info const& lambda,
+        std::vector<expression_info> const& arguments,
+        std::vector<semantic_type_id> explicit_arguments,
+        source_span span
+    ) -> semantic_lambda_info;
     auto substitute_signature(
         function_signature const& signature,
         std::vector<semantic_type_id> const& type_arguments
@@ -507,10 +513,13 @@ private:
         std::optional<semantic_type_id> expected
     ) -> void;
     auto check_lambda_body(lambda_expr_syntax const& node) -> semantic_lambda_info;
+    auto build_generic_lambda_info(lambda_expr_syntax const& node) -> semantic_lambda_info;
+    auto collect_generic_lambda_captures(function_id id) -> std::vector<semantic_lambda_capture>;
     auto build_lambda_info(
         lambda_expr_syntax const& node,
         std::vector<semantic_lambda_capture> captures,
-        function_type callable
+        function_type callable,
+        bool force_closure
     ) -> semantic_lambda_info;
     auto record_lambda_capture(symbol_id symbol, expr_id id) -> void;
     auto constant_integer_index(ast_arena const& ast, expr_id id) -> std::optional<std::int64_t>;

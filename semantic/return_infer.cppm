@@ -398,6 +398,9 @@ auto semantic_analyzer::infer_lambda_expression(
     active_unit_index = return_unit;
     apply_lambda_parameter_context(node, expected);
     active_unit_index = old_active_unit;
+    if(function_is_generic(return_unit, node.function)) {
+        return expression_info{ .type = result.symbols[symbol.value].type };
+    }
     infer_lambda_return_from_current_return_scope(return_unit, node.function);
     return expression_info{ .type = result.symbols[symbol.value].type };
 }
@@ -627,6 +630,9 @@ auto semantic_analyzer::infer_call_expression(ast_arena const& ast, call_expr_sy
     auto callee = infer_expression_type(ast, node.callee, std::nullopt);
     for(auto argument : node.arguments) {
         infer_expression_type(ast, argument, std::nullopt);
+    }
+    if(auto closure = result.lambda_of_closure(read_type(callee.type)); closure.valid()) {
+        return expression_info{ .type = closure.callable.returns };
     }
     if(auto const* callable = callable_type(callee.type)) {
         return expression_info{ .type = callable->returns };

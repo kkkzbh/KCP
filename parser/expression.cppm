@@ -429,7 +429,7 @@ auto parser::parse_primary() -> std::optional<expr_id>
         return parse_match_expression();
     }
 
-    if(check_contextual("fn") and peek(1uz).kind == token_kind::l_paren) {
+    if(looks_like_lambda_expression()) {
         return parse_lambda_expression();
     }
 
@@ -488,6 +488,68 @@ auto parser::parse_primary() -> std::optional<expr_id>
             return std::nullopt;
     }
     return expression;
+}
+
+auto parser::looks_like_lambda_expression() const -> bool
+{
+    if(not check_contextual("f")) {
+        return false;
+    }
+
+    auto start = 1uz;
+    if(peek(start).kind == token_kind::less) {
+        auto depth = 0;
+        while(true) {
+            auto kind = peek(start).kind;
+            if(kind == token_kind::eof) {
+                return false;
+            }
+            if(kind == token_kind::less) {
+                ++depth;
+            } else if(kind == token_kind::greater) {
+                --depth;
+            } else if(kind == token_kind::greater_greater) {
+                depth -= 2;
+            } else if(kind == token_kind::greater_greater_equal) {
+                return false;
+            }
+
+            ++start;
+            if(depth == 0) {
+                break;
+            }
+            if(depth < 0) {
+                return false;
+            }
+        }
+    }
+    if(peek(start).kind != token_kind::l_paren) {
+        return false;
+    }
+
+    auto depth = 0;
+    auto lookahead = start;
+    while(true) {
+        auto kind = peek(lookahead).kind;
+        if(kind == token_kind::eof) {
+            return false;
+        }
+
+        if(kind == token_kind::l_paren) {
+            ++depth;
+        } else if(kind == token_kind::r_paren) {
+            --depth;
+        }
+
+        ++lookahead;
+        if(depth == 0) {
+            auto next = peek(lookahead).kind;
+            return next == token_kind::arrow or next == token_kind::equal or next == token_kind::l_brace;
+        }
+        if(depth < 0) {
+            return false;
+        }
+    }
 }
 
 auto parser::parse_match_expression() -> std::optional<expr_id>
@@ -612,6 +674,15 @@ auto parser::parse_lambda_expression() -> std::optional<expr_id>
         return std::nullopt;
     }
 
+    auto generic_parameters = std::vector<generic_parameter_syntax>{};
+    if(check(token_kind::less)) {
+        auto parsed = parse_generic_parameter_list();
+        if(not parsed) {
+            return std::nullopt;
+        }
+        generic_parameters = std::move(*parsed);
+    }
+
     auto l_paren = expect(token_kind::l_paren);
     if(not l_paren) {
         return std::nullopt;
@@ -623,6 +694,13 @@ auto parser::parse_lambda_expression() -> std::optional<expr_id>
         consume();
         return_type = parse_expected_type();
     }
+    if(not generic_parameters.empty() and not return_type) {
+        report_current(
+            diagnostic_kind::expected_token,
+            "generic lambda requires an explicit return type"
+        );
+        return std::nullopt;
+    }
     auto body = parse_lambda_body(marker->span);
     if(not parameters or not r_paren or not body) {
         return std::nullopt;
@@ -632,6 +710,7 @@ auto parser::parse_lambda_expression() -> std::optional<expr_id>
         .full_span = combine_spans(marker->span, arena.span(*body)),
         .kind = function_syntax_kind::lambda,
         .name = marker->span,
+        .generic_parameters = std::move(generic_parameters),
         .parameters = std::move(*parameters),
         .return_type = return_type,
         .body = *body,

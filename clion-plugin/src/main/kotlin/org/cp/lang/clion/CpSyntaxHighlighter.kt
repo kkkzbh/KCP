@@ -69,16 +69,44 @@ class CpSyntaxHighlighter : SyntaxHighlighter {
             )
         val FUNCTION_CALL: TextAttributesKey =
             TextAttributesKey.createTextAttributesKey("CP.FUNCTION_CALL", DefaultLanguageHighlighterColors.FUNCTION_CALL)
+        val MEMBER_FUNCTION: TextAttributesKey =
+            TextAttributesKey.createTextAttributesKey("CP.MEMBER_FUNCTION", DefaultLanguageHighlighterColors.INSTANCE_METHOD)
+        val ASSOCIATED_FUNCTION: TextAttributesKey =
+            TextAttributesKey.createTextAttributesKey("CP.ASSOCIATED_FUNCTION", DefaultLanguageHighlighterColors.STATIC_METHOD)
+        val CONSTRUCTOR: TextAttributesKey =
+            TextAttributesKey.createTextAttributesKey("CP.CONSTRUCTOR", DefaultLanguageHighlighterColors.FUNCTION_DECLARATION)
+        val DESTRUCTOR: TextAttributesKey =
+            TextAttributesKey.createTextAttributesKey("CP.DESTRUCTOR", DefaultLanguageHighlighterColors.FUNCTION_DECLARATION)
+        val BUILTIN_FUNCTION: TextAttributesKey =
+            TextAttributesKey.createTextAttributesKey("CP.BUILTIN_FUNCTION", DefaultLanguageHighlighterColors.STATIC_METHOD)
+        val FUNCTION_TYPE: TextAttributesKey =
+            TextAttributesKey.createTextAttributesKey("CP.FUNCTION_TYPE", DefaultLanguageHighlighterColors.KEYWORD)
         val PARAMETER: TextAttributesKey =
             TextAttributesKey.createTextAttributesKey("CP.PARAMETER", DefaultLanguageHighlighterColors.PARAMETER)
         val LOCAL_VARIABLE: TextAttributesKey =
             TextAttributesKey.createTextAttributesKey("CP.LOCAL_VARIABLE", DefaultLanguageHighlighterColors.LOCAL_VARIABLE)
+        val LOCAL_CONSTANT: TextAttributesKey =
+            TextAttributesKey.createTextAttributesKey("CP.LOCAL_CONSTANT", DefaultLanguageHighlighterColors.CONSTANT)
+        val LAMBDA_CAPTURE: TextAttributesKey =
+            TextAttributesKey.createTextAttributesKey("CP.LAMBDA_CAPTURE", DefaultLanguageHighlighterColors.LOCAL_VARIABLE)
         val TYPE: TextAttributesKey =
             TextAttributesKey.createTextAttributesKey("CP.TYPE", DefaultLanguageHighlighterColors.CLASS_NAME)
+        val TYPE_PARAMETER: TextAttributesKey =
+            TextAttributesKey.createTextAttributesKey("CP.TYPE_PARAMETER", DefaultLanguageHighlighterColors.CLASS_NAME)
+        val TYPE_ALIAS: TextAttributesKey =
+            TextAttributesKey.createTextAttributesKey("CP.TYPE_ALIAS", DefaultLanguageHighlighterColors.CLASS_NAME)
+        val ASSOCIATED_TYPE: TextAttributesKey =
+            TextAttributesKey.createTextAttributesKey("CP.ASSOCIATED_TYPE", DefaultLanguageHighlighterColors.STATIC_FIELD)
+        val CONCEPT: TextAttributesKey =
+            TextAttributesKey.createTextAttributesKey("CP.CONCEPT", DefaultLanguageHighlighterColors.INTERFACE_NAME)
         val MODULE_NAME: TextAttributesKey =
-            TextAttributesKey.createTextAttributesKey("CP.MODULE_NAME", DefaultLanguageHighlighterColors.STATIC_FIELD)
+            TextAttributesKey.createTextAttributesKey("CP.MODULE_NAME", DefaultLanguageHighlighterColors.CLASS_NAME)
         val LABEL: TextAttributesKey =
             TextAttributesKey.createTextAttributesKey("CP.LABEL", DefaultLanguageHighlighterColors.LABEL)
+        val FIELD: TextAttributesKey =
+            TextAttributesKey.createTextAttributesKey("CP.FIELD", DefaultLanguageHighlighterColors.INSTANCE_FIELD)
+        val VARIANT_CASE: TextAttributesKey =
+            TextAttributesKey.createTextAttributesKey("CP.VARIANT_CASE", DefaultLanguageHighlighterColors.CONSTANT)
 
         private val CONTROL_KEYWORD_KEYS = arrayOf(CONTROL_KEYWORD)
         private val DECLARATION_KEYWORD_KEYS = arrayOf(DECLARATION_KEYWORD)

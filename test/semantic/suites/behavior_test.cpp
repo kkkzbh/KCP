@@ -979,12 +979,12 @@ auto check_lambda_semantics() -> void
         R"(main() -> i32
 {
     let inc: f(i32) -> i32 =
-        fn(x) => x + 1;
-    let square = fn(x: i32) -> i32 {
+        f(x) => x + 1;
+    let square = f(x: i32) -> i32 {
         x * x
     };
     let bias = 1;
-    let add_bias = fn(x: i32) -> i32 {
+    let add_bias = f(x: i32) -> i32 {
         x + bias
     };
     return inc(20) + square(4) + add_bias(1) + 3;
@@ -1062,7 +1062,7 @@ auto check_negative_cases() -> void
     expect_diagnostic("bad_construct_value.cp", "main() { let pointer = alloc<i32>(1); construct_at(pointer, true); }", type_mismatch);
     expect_diagnostic("bad_ref_initializer.cp", "main() { let ref value = 1 + 2; }", invalid_assignment_target);
     expect_diagnostic("bad_destructure_initializer.cp", "main() { let (a, b) = 1; }", type_mismatch);
-    expect_diagnostic("lambda_parameter_infer.cp", "main() { let f = fn(x) => x; }", type_mismatch);
+    expect_diagnostic("lambda_parameter_infer.cp", "main() { let f = f(x) => x; }", type_mismatch);
 }
 
 } // namespace
