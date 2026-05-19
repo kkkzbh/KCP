@@ -1,133 +1,123 @@
-export module lexer.punctuation;
+module lexer:punctuation;
 
 import std;
 import lexer.token;
+import :state;
 
-/// @brief 标点最长匹配结果。
-export struct punctuation_match
+/// @brief 从当前位置尝试匹配一个 cp 标点 token。
+auto lexer::lex_punctuation(token_flags flags) -> std::optional<token>
 {
-    token_kind kind{};
-    std::size_t length{};
-};
+    auto const start = cursor_.offset();
 
-auto char_at(std::string_view source, std::size_t start, std::size_t distance = 0) -> char
-{
-    auto const index = start + distance;
-    return index < source.size() ? source[index] : '\0';
-}
-
-/// @brief 从 `start` 开始尝试匹配一个 cp 标点 token。
-export auto match_punctuation(std::string_view source, std::size_t start) -> std::optional<punctuation_match>
-{
-    switch(char_at(source, start)) {
+    switch(cursor_.peek_char()) {
         case '(':
-            return punctuation_match{ .kind = token_kind::l_paren, .length = 1 };
+            return make_punctuation_token(token_kind::l_paren, start, 1, flags);
         case ')':
-            return punctuation_match{ .kind = token_kind::r_paren, .length = 1 };
+            return make_punctuation_token(token_kind::r_paren, start, 1, flags);
         case '{':
-            return punctuation_match{ .kind = token_kind::l_brace, .length = 1 };
+            return make_punctuation_token(token_kind::l_brace, start, 1, flags);
         case '}':
-            return punctuation_match{ .kind = token_kind::r_brace, .length = 1 };
+            return make_punctuation_token(token_kind::r_brace, start, 1, flags);
         case '[':
-            return punctuation_match{ .kind = token_kind::l_bracket, .length = 1 };
+            return make_punctuation_token(token_kind::l_bracket, start, 1, flags);
         case ']':
-            return punctuation_match{ .kind = token_kind::r_bracket, .length = 1 };
+            return make_punctuation_token(token_kind::r_bracket, start, 1, flags);
         case ',':
-            return punctuation_match{ .kind = token_kind::comma, .length = 1 };
+            return make_punctuation_token(token_kind::comma, start, 1, flags);
         case ';':
-            return punctuation_match{ .kind = token_kind::semicolon, .length = 1 };
+            return make_punctuation_token(token_kind::semicolon, start, 1, flags);
         case ':':
-            if(char_at(source, start, 1) == ':') {
-                return punctuation_match{ .kind = token_kind::colon_colon, .length = 2 };
+            if(cursor_.peek_char(1) == ':') {
+                return make_punctuation_token(token_kind::colon_colon, start, 2, flags);
             }
-            return punctuation_match{ .kind = token_kind::colon, .length = 1 };
+            return make_punctuation_token(token_kind::colon, start, 1, flags);
         case '.':
-            return punctuation_match{ .kind = token_kind::dot, .length = 1 };
+            return make_punctuation_token(token_kind::dot, start, 1, flags);
         case '+':
-            if(char_at(source, start, 1) == '+') {
-                return punctuation_match{ .kind = token_kind::plus_plus, .length = 2 };
+            if(cursor_.peek_char(1) == '+') {
+                return make_punctuation_token(token_kind::plus_plus, start, 2, flags);
             }
-            if(char_at(source, start, 1) == '=') {
-                return punctuation_match{ .kind = token_kind::plus_equal, .length = 2 };
+            if(cursor_.peek_char(1) == '=') {
+                return make_punctuation_token(token_kind::plus_equal, start, 2, flags);
             }
-            return punctuation_match{ .kind = token_kind::plus, .length = 1 };
+            return make_punctuation_token(token_kind::plus, start, 1, flags);
         case '-':
-            if(char_at(source, start, 1) == '>') {
-                return punctuation_match{ .kind = token_kind::arrow, .length = 2 };
+            if(cursor_.peek_char(1) == '>') {
+                return make_punctuation_token(token_kind::arrow, start, 2, flags);
             }
-            if(char_at(source, start, 1) == '-') {
-                return punctuation_match{ .kind = token_kind::minus_minus, .length = 2 };
+            if(cursor_.peek_char(1) == '-') {
+                return make_punctuation_token(token_kind::minus_minus, start, 2, flags);
             }
-            if(char_at(source, start, 1) == '=') {
-                return punctuation_match{ .kind = token_kind::minus_equal, .length = 2 };
+            if(cursor_.peek_char(1) == '=') {
+                return make_punctuation_token(token_kind::minus_equal, start, 2, flags);
             }
-            return punctuation_match{ .kind = token_kind::minus, .length = 1 };
+            return make_punctuation_token(token_kind::minus, start, 1, flags);
         case '*':
-            if(char_at(source, start, 1) == '=') {
-                return punctuation_match{ .kind = token_kind::star_equal, .length = 2 };
+            if(cursor_.peek_char(1) == '=') {
+                return make_punctuation_token(token_kind::star_equal, start, 2, flags);
             }
-            return punctuation_match{ .kind = token_kind::star, .length = 1 };
+            return make_punctuation_token(token_kind::star, start, 1, flags);
         case '/':
-            if(char_at(source, start, 1) == '=') {
-                return punctuation_match{ .kind = token_kind::slash_equal, .length = 2 };
+            if(cursor_.peek_char(1) == '=') {
+                return make_punctuation_token(token_kind::slash_equal, start, 2, flags);
             }
-            return punctuation_match{ .kind = token_kind::slash, .length = 1 };
+            return make_punctuation_token(token_kind::slash, start, 1, flags);
         case '%':
-            if(char_at(source, start, 1) == '=') {
-                return punctuation_match{ .kind = token_kind::percent_equal, .length = 2 };
+            if(cursor_.peek_char(1) == '=') {
+                return make_punctuation_token(token_kind::percent_equal, start, 2, flags);
             }
-            return punctuation_match{ .kind = token_kind::percent, .length = 1 };
+            return make_punctuation_token(token_kind::percent, start, 1, flags);
         case '=':
-            if(char_at(source, start, 1) == '=') {
-                return punctuation_match{ .kind = token_kind::equal_equal, .length = 2 };
+            if(cursor_.peek_char(1) == '=') {
+                return make_punctuation_token(token_kind::equal_equal, start, 2, flags);
             }
-            return punctuation_match{ .kind = token_kind::equal, .length = 1 };
+            return make_punctuation_token(token_kind::equal, start, 1, flags);
         case '<':
-            if(char_at(source, start, 1) == '<') {
-                if(char_at(source, start, 2) == '=') {
-                    return punctuation_match{ .kind = token_kind::less_less_equal, .length = 3 };
+            if(cursor_.peek_char(1) == '<') {
+                if(cursor_.peek_char(2) == '=') {
+                    return make_punctuation_token(token_kind::less_less_equal, start, 3, flags);
                 }
-                return punctuation_match{ .kind = token_kind::less_less, .length = 2 };
+                return make_punctuation_token(token_kind::less_less, start, 2, flags);
             }
-            if(char_at(source, start, 1) == '=') {
-                return punctuation_match{ .kind = token_kind::less_equal, .length = 2 };
+            if(cursor_.peek_char(1) == '=') {
+                return make_punctuation_token(token_kind::less_equal, start, 2, flags);
             }
-            return punctuation_match{ .kind = token_kind::less, .length = 1 };
+            return make_punctuation_token(token_kind::less, start, 1, flags);
         case '>':
-            if(char_at(source, start, 1) == '>') {
-                if(char_at(source, start, 2) == '=') {
-                    return punctuation_match{ .kind = token_kind::greater_greater_equal, .length = 3 };
+            if(cursor_.peek_char(1) == '>') {
+                if(cursor_.peek_char(2) == '=') {
+                    return make_punctuation_token(token_kind::greater_greater_equal, start, 3, flags);
                 }
-                return punctuation_match{ .kind = token_kind::greater_greater, .length = 2 };
+                return make_punctuation_token(token_kind::greater_greater, start, 2, flags);
             }
-            if(char_at(source, start, 1) == '=') {
-                return punctuation_match{ .kind = token_kind::greater_equal, .length = 2 };
+            if(cursor_.peek_char(1) == '=') {
+                return make_punctuation_token(token_kind::greater_equal, start, 2, flags);
             }
-            return punctuation_match{ .kind = token_kind::greater, .length = 1 };
+            return make_punctuation_token(token_kind::greater, start, 1, flags);
         case '&':
-            if(char_at(source, start, 1) == '=') {
-                return punctuation_match{ .kind = token_kind::amp_equal, .length = 2 };
+            if(cursor_.peek_char(1) == '=') {
+                return make_punctuation_token(token_kind::amp_equal, start, 2, flags);
             }
-            return punctuation_match{ .kind = token_kind::amp, .length = 1 };
+            return make_punctuation_token(token_kind::amp, start, 1, flags);
         case '|':
-            if(char_at(source, start, 1) == '=') {
-                return punctuation_match{ .kind = token_kind::pipe_equal, .length = 2 };
+            if(cursor_.peek_char(1) == '=') {
+                return make_punctuation_token(token_kind::pipe_equal, start, 2, flags);
             }
-            return punctuation_match{ .kind = token_kind::pipe, .length = 1 };
+            return make_punctuation_token(token_kind::pipe, start, 1, flags);
         case '^':
-            if(char_at(source, start, 1) == '=') {
-                return punctuation_match{ .kind = token_kind::caret_equal, .length = 2 };
+            if(cursor_.peek_char(1) == '=') {
+                return make_punctuation_token(token_kind::caret_equal, start, 2, flags);
             }
-            return punctuation_match{ .kind = token_kind::caret, .length = 1 };
+            return make_punctuation_token(token_kind::caret, start, 1, flags);
         case '!':
-            if(char_at(source, start, 1) == '=') {
-                return punctuation_match{ .kind = token_kind::bang_equal, .length = 2 };
+            if(cursor_.peek_char(1) == '=') {
+                return make_punctuation_token(token_kind::bang_equal, start, 2, flags);
             }
             return std::nullopt;
         case '~':
-            return punctuation_match{ .kind = token_kind::tilde, .length = 1 };
+            return make_punctuation_token(token_kind::tilde, start, 1, flags);
         case '?':
-            return punctuation_match{ .kind = token_kind::question, .length = 1 };
+            return make_punctuation_token(token_kind::question, start, 1, flags);
         default:
             return std::nullopt;
     }

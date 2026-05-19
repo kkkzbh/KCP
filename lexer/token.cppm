@@ -187,7 +187,8 @@ export enum class token_flags : std::uint8_t
 export auto constexpr operator|(token_flags lhs, token_flags rhs) -> token_flags
 {
     return static_cast<token_flags> (
-        static_cast<std::uint8_t>(lhs) | static_cast<std::uint8_t>(rhs));
+        static_cast<std::uint8_t>(lhs) | static_cast<std::uint8_t>(rhs)
+    );
 }
 
 /// @brief 将右侧标记并入左侧标记集合。

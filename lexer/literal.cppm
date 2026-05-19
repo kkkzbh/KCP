@@ -1,27 +1,11 @@
-export module lexer.literal;
+module lexer:literal;
 
 import std;
-import lexer.token;
 import diagnostic;
 import lexer.charset;
-
-/// @brief 字面量扫描产生的局部诊断。
-export struct literal_diagnostic
-{
-    diagnostic_kind kind{};
-    std::string_view message;
-    std::size_t start{};
-    std::size_t end{};
-};
-
-/// @brief 字面量扫描 helper 的结果。
-export struct literal_scan_result
-{
-    token_kind kind{};
-    std::size_t end{};
-    token_flags flags{};
-    std::vector<literal_diagnostic> diagnostics;
-};
+import lexer.cursor;
+import lexer.token;
+import :state;
 
 enum class escape_result
 {
@@ -30,10 +14,22 @@ enum class escape_result
     unterminated,
 };
 
+auto report_literal_diagnostic(
+    diagnostic_collector& diagnostics,
+    lexer_cursor const& cursor,
+    diagnostic_kind kind,
+    std::string_view message,
+    std::size_t start,
+    std::size_t end) -> void
+{
+    diagnostics.report(kind, std::string{ message }, cursor.make_span(start, end));
+}
+
 auto consume_escape_sequence(
     std::string_view source,
     std::size_t& offset,
-    std::vector<literal_diagnostic>& diagnostics,
+    diagnostic_collector& diagnostics,
+    lexer_cursor const& cursor,
     std::size_t literal_start,
     diagnostic_kind unterminated_kind,
     std::string_view unterminated_message) -> escape_result
@@ -44,12 +40,12 @@ auto consume_escape_sequence(
     ++offset;
 
     if(offset >= source.size()) {
-        diagnostics.emplace_back(unterminated_kind, unterminated_message, literal_start, offset);
+        report_literal_diagnostic(diagnostics, cursor, unterminated_kind, unterminated_message, literal_start, offset);
         return escape_result::unterminated;
     }
 
     if(source[offset] == '\n') {
-        diagnostics.emplace_back(unterminated_kind, unterminated_message, literal_start, offset);
+        report_literal_diagnostic(diagnostics, cursor, unterminated_kind, unterminated_message, literal_start, offset);
         return escape_result::unterminated;
     }
 
@@ -69,7 +65,9 @@ auto consume_escape_sequence(
     if(source[offset] == 'x') {
         ++offset;
         if(offset >= source.size() or not is_hex_digit(source[offset])) {
-            diagnostics.emplace_back(
+            report_literal_diagnostic(
+                diagnostics,
+                cursor,
                 diagnostic_kind::invalid_escape_sequence,
                 "invalid escape sequence"sv,
                 escape_start,
@@ -84,7 +82,9 @@ auto consume_escape_sequence(
     }
 
     ++offset;
-    diagnostics.emplace_back(
+    report_literal_diagnostic(
+        diagnostics,
+        cursor,
         diagnostic_kind::invalid_escape_sequence,
         "invalid escape sequence"sv,
         escape_start,
@@ -93,23 +93,23 @@ auto consume_escape_sequence(
     return escape_result::invalid;
 }
 
-/// @brief 扫描数字字面量（整数或浮点）。
-export auto scan_number_literal(std::string_view source, std::size_t start, token_flags flags) -> literal_scan_result
+auto lexer::lex_number_literal(token_flags flags) -> token
 {
     using namespace std::literals;
 
-    auto result = literal_scan_result{ .flags = flags };
-    auto invalid_number = [&](std::size_t end) -> literal_scan_result {
-        result.kind = token_kind::invalid;
-        result.end = end;
-        result.flags = flags | token_flags::recovered;
-        result.diagnostics.emplace_back(
+    auto const source = cursor_.source();
+    auto const start = cursor_.offset();
+    auto invalid_number = [&](std::size_t end) -> token {
+        cursor_.set_offset(end);
+        report_literal_diagnostic(
+            diagnostics_,
+            cursor_,
             diagnostic_kind::invalid_number_suffix,
             "invalid numeric suffix"sv,
             start,
             end
         );
-        return result;
+        return cursor_.make_token(token_kind::invalid, start, cursor_.offset(), flags | token_flags::recovered);
     };
 
     auto offset = start;
@@ -156,52 +156,58 @@ export auto scan_number_literal(std::string_view source, std::size_t start, toke
         return invalid_number(digit_end);
     }
 
-    result.kind = is_float ? token_kind::float_literal : token_kind::integer_literal;
-    result.end = offset;
-    return result;
+    cursor_.set_offset(offset);
+    auto const kind = is_float ? token_kind::float_literal : token_kind::integer_literal;
+    return cursor_.make_token(kind, start, cursor_.offset(), flags);
 }
 
-/// @brief 扫描字符串字面量。
-export auto scan_string_literal(std::string_view source, std::size_t start, token_flags flags) -> literal_scan_result
+auto lexer::lex_string_literal(token_flags flags) -> token
 {
     using namespace std::literals;
 
+    auto const source = cursor_.source();
+    auto const start = cursor_.offset();
     auto constexpr unterminated_message = "unterminated string literal"sv;
-    auto result = literal_scan_result{ .kind = token_kind::string_literal, .flags = flags };
     auto offset = start + 1;
     auto has_invalid_escape = false;
+
+    auto finish = [&](token_kind kind, std::size_t end, token_flags result_flags) -> token {
+        cursor_.set_offset(end);
+        return cursor_.make_token(kind, start, cursor_.offset(), result_flags);
+    };
 
     while(offset < source.size()) {
         auto const ch = source[offset];
         if(ch == '"') {
             ++offset;
-            result.end = offset;
             if(has_invalid_escape) {
-                result.kind = token_kind::invalid;
-                result.flags = flags | token_flags::recovered;
+                return finish(token_kind::invalid, offset, flags | token_flags::recovered);
             }
-            return result;
+            return finish(token_kind::string_literal, offset, flags);
         }
         if(ch == '\n') {
-            result.diagnostics.emplace_back(
+            report_literal_diagnostic(
+                diagnostics_,
+                cursor_,
                 diagnostic_kind::unterminated_string_literal,
                 unterminated_message,
                 start,
                 offset
             );
-            result.kind = token_kind::invalid;
-            result.end = offset;
-            result.flags = flags | token_flags::unterminated | token_flags::recovered;
-            return result;
+            return finish(token_kind::invalid, offset, flags | token_flags::unterminated | token_flags::recovered);
         }
         if(ch == '\\') {
-            auto const escape = consume_escape_sequence(source, offset, result.diagnostics, start,
-                diagnostic_kind::unterminated_string_literal, unterminated_message);
+            auto const escape = consume_escape_sequence(
+                source,
+                offset,
+                diagnostics_,
+                cursor_,
+                start,
+                diagnostic_kind::unterminated_string_literal,
+                unterminated_message
+            );
             if(escape == escape_result::unterminated) {
-                result.kind = token_kind::invalid;
-                result.end = offset;
-                result.flags = flags | token_flags::unterminated | token_flags::recovered;
-                return result;
+                return finish(token_kind::invalid, offset, flags | token_flags::unterminated | token_flags::recovered);
             }
             if(escape == escape_result::invalid) {
                 has_invalid_escape = true;
@@ -211,72 +217,76 @@ export auto scan_string_literal(std::string_view source, std::size_t start, toke
         ++offset;
     }
 
-    result.diagnostics.emplace_back(
+    report_literal_diagnostic(
+        diagnostics_,
+        cursor_,
         diagnostic_kind::unterminated_string_literal,
         unterminated_message,
         start,
         offset
     );
-    result.kind = token_kind::invalid;
-    result.end = offset;
-    result.flags = flags | token_flags::unterminated | token_flags::recovered;
-    return result;
+    return finish(token_kind::invalid, offset, flags | token_flags::unterminated | token_flags::recovered);
 }
 
-/// @brief 扫描字符字面量。
-export auto scan_char_literal(std::string_view source, std::size_t start, token_flags flags) -> literal_scan_result
+auto lexer::lex_char_literal(token_flags flags) -> token
 {
     using namespace std::literals;
 
+    auto const source = cursor_.source();
+    auto const start = cursor_.offset();
     auto constexpr unterminated_message = "unterminated char literal"sv;
-    auto result = literal_scan_result{ .kind = token_kind::char_literal, .flags = flags };
     auto offset = start + 1;
     auto content_count = 0U;
     auto has_invalid_escape = false;
+
+    auto finish = [&](token_kind kind, std::size_t end, token_flags result_flags) -> token {
+        cursor_.set_offset(end);
+        return cursor_.make_token(kind, start, cursor_.offset(), result_flags);
+    };
 
     while(offset < source.size()) {
         auto const ch = source[offset];
         if(ch == '\'') {
             ++offset;
-            result.end = offset;
             if(has_invalid_escape) {
-                result.kind = token_kind::invalid;
-                result.flags = flags | token_flags::recovered;
-                return result;
+                return finish(token_kind::invalid, offset, flags | token_flags::recovered);
             }
             if(content_count == 1) {
-                return result;
+                return finish(token_kind::char_literal, offset, flags);
             }
-            result.diagnostics.emplace_back(
+            report_literal_diagnostic(
+                diagnostics_,
+                cursor_,
                 diagnostic_kind::invalid_char_literal,
                 "invalid char literal"sv,
                 start,
                 offset
             );
-            result.kind = token_kind::invalid;
-            result.flags = flags | token_flags::recovered;
-            return result;
+            return finish(token_kind::invalid, offset, flags | token_flags::recovered);
         }
         if(ch == '\n') {
-            result.diagnostics.emplace_back(
+            report_literal_diagnostic(
+                diagnostics_,
+                cursor_,
                 diagnostic_kind::unterminated_char_literal,
                 unterminated_message,
                 start,
                 offset
             );
-            result.kind = token_kind::invalid;
-            result.end = offset;
-            result.flags = flags | token_flags::unterminated | token_flags::recovered;
-            return result;
+            return finish(token_kind::invalid, offset, flags | token_flags::unterminated | token_flags::recovered);
         }
         if(ch == '\\') {
-            auto const escape = consume_escape_sequence(source, offset, result.diagnostics, start,
-                diagnostic_kind::unterminated_char_literal, unterminated_message);
+            auto const escape = consume_escape_sequence(
+                source,
+                offset,
+                diagnostics_,
+                cursor_,
+                start,
+                diagnostic_kind::unterminated_char_literal,
+                unterminated_message
+            );
             if(escape == escape_result::unterminated) {
-                result.kind = token_kind::invalid;
-                result.end = offset;
-                result.flags = flags | token_flags::unterminated | token_flags::recovered;
-                return result;
+                return finish(token_kind::invalid, offset, flags | token_flags::unterminated | token_flags::recovered);
             }
             if(escape == escape_result::invalid) {
                 has_invalid_escape = true;
@@ -288,14 +298,13 @@ export auto scan_char_literal(std::string_view source, std::size_t start, token_
         ++offset;
     }
 
-    result.diagnostics.emplace_back(
+    report_literal_diagnostic(
+        diagnostics_,
+        cursor_,
         diagnostic_kind::unterminated_char_literal,
         unterminated_message,
         start,
         offset
     );
-    result.kind = token_kind::invalid;
-    result.end = offset;
-    result.flags = flags | token_flags::unterminated | token_flags::recovered;
-    return result;
+    return finish(token_kind::invalid, offset, flags | token_flags::unterminated | token_flags::recovered);
 }

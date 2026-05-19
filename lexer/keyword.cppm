@@ -1,10 +1,12 @@
-export module lexer.keyword;
+module lexer:keyword;
 
 import std;
 import lexer.token;
+import lexer.charset;
+import :state;
 
 /// @brief 查询标识符文本是否为 cp 关键字。
-export auto keyword_kind(std::string_view text) -> std::optional<token_kind>
+auto keyword_kind(std::string_view text) -> std::optional<token_kind>
 {
     using namespace std::literals;
 
@@ -94,4 +96,21 @@ export auto keyword_kind(std::string_view text) -> std::optional<token_kind>
     }
 
     return std::nullopt;
+}
+
+auto lexer::lex_identifier_or_keyword(token_flags flags) -> token
+{
+    auto const start = cursor_.offset();
+    while(not cursor_.eof() and is_identifier_continue(cursor_.current())) {
+        cursor_.advance();
+    }
+
+    auto const text = cursor_.source().substr(start, cursor_.offset() - start);
+    if(auto const keyword = keyword_kind(text)) {
+        return cursor_.make_token(*keyword, start, cursor_.offset(), flags);
+    }
+
+    auto token = cursor_.make_token(token_kind::identifier, start, cursor_.offset(), flags);
+    token.text = std::string{ text };
+    return token;
 }

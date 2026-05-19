@@ -7,6 +7,7 @@ target_sources(lexer
             token.cppm
             charset.cppm
             cursor.cppm
+            state.cppm
             keyword.cppm
             punctuation.cppm
             literal.cppm
