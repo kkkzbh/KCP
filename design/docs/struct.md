@@ -14,11 +14,13 @@ ImplBlock       -> impl TypeName { ImplItem* }
 ImplItem        -> Constructor
                 | Destructor
                 | Function
+                | Operator
 
 Constructor     -> TypeName ( ParameterList? ) FunctionBody
                 | TypeName ( ) = default ;
 Destructor      -> ~ TypeName ( ) FunctionBody
 Function        -> identifier ( ParameterList? ) ReturnType? FunctionBody
+Operator        -> operator OverloadableOperator ( ParameterList? ) ReturnType? FunctionBody
 
 StructInit      -> TypeName { InitArgList? }
 InitArgList     -> NamedFieldInit ( , NamedFieldInit )*
@@ -334,12 +336,13 @@ let a = vec2{};
 
 这个规则只用于结构体初始化选择构造函数。不支持 C++ 完整重载体系，例如默认参数、初始化列表优先级、用户自定义转换和模板偏序。
 
-除构造函数外，不支持重载：
+除构造函数和 operator 特殊项外，不支持重载：
 
 - 普通函数同名即冲突。
 - 成员函数同名即冲突。
 - 关联函数同名即冲突。
 - 析构函数不能重载，一个结构体最多一个析构函数。
+- operator 的重载规则见 [operator.md](operator.md)，它不表示普通函数系统支持重载。
 
 ## 字段访问和隐式成员查找
 

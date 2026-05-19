@@ -31,9 +31,7 @@ export extern "C" cp_put_char(ch: char) -> i32;
 
 第二个声明会把 `cp_put_char` 暴露给导入当前模块的 cp 代码，同时它的链接符号名仍是 `cp_put_char`。
 
-## 语法
-
-语法总览：
+## 语法总览
 
 ```text
 ExternFunctionDecl -> export? extern "C" FunctionHeader ;

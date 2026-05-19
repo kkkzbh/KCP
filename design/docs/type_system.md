@@ -1,4 +1,4 @@
-# Type System
+# 类型系统
 
 本文档记录 cp 的核心类型规则。变量初始化写法见 [initial.md](initial.md)，结构体、构造函数、析构函数和成员函数见 [struct.md](struct.md)，`concept` 和 `type` 类型别名语句见 [concept.md](concept.md)。
 
@@ -298,7 +298,7 @@ values[1] = x + 10;
 
 规则：
 
-- `a[i]` 要求 `a` 的类型是 `array<T,N>`。
+- 内建 `a[i]` 要求 `a` 的类型是 `array<T,N>`。
 - 下标 `i` 必须是整数类型。
 - `a[i]` 的结果类型是 `T`。
 - 如果 `a` 是可写左值，则 `a[i]` 是可写左值。
@@ -306,7 +306,7 @@ values[1] = x + 10;
 - 编译期常量下标如果不在 `[0, N)` 范围内，语义分析报错。
 - 非常量下标的越界行为定义为运行时错误；后端通过插入 bounds check 实现。
 
-单独的 `a[]` 不是表达式。数组访问必须写成带下标的 `a[index]`。
+单独的 `a[]` 不是表达式。数组访问必须写成带下标的 `a[index]`。用户自定义类型可以通过 `operator []` 支持下标访问，见 [operator.md](operator.md)。
 
 ## 元组操作
 
@@ -454,6 +454,7 @@ let x = *p;
 let next = p + 1;
 let prev = next - 1;
 let distance: isize = next - p;
+let item = p[0];
 ```
 
 规则：
@@ -461,6 +462,9 @@ let distance: isize = next - p;
 - `p + n`、`n + p` 和 `p - n` 要求 `p` 是 `T*`，`n` 是整数类型，结果为 `T*`。
 - 指针加减的步长是 `T` 的元素大小，不是字节大小。
 - `p2 - p1` 要求两侧都是相同目标类型的指针，结果类型为 `isize`，表示元素距离。
+- `p[i]` 要求 `p` 是 `T*` 或 `T const*`，`i` 是整数类型，语义等价于 `*(p + i)`。
+- `T*` 下标得到可写 `T` 左值；`T const*` 下标得到只读 `T` 左值。
+- 不支持 `i[p]`。整数表达式不能作为指针下标目标。
 - 指针差值只对同一数组对象或同一连续分配对象内的两个元素位置，以及 one-past 位置有定义。
 - 产生或使用越出同一数组对象允许范围的指针值，行为按 C++ 指针算术边界处理；编译器不尝试静态证明。
 
@@ -509,7 +513,7 @@ for(let value : values) {
 
 比较运算结果为 `bool`。逻辑运算要求 `bool` 操作数，结果为 `bool`。
 
-下标运算 `value[index]` 是后缀表达式，只支持 `array<T,N>`、`tuple<T...>` 和 `str`，具体规则分别见上文对应章节。
+下标运算 `value[index]` 是后缀表达式。内建下标支持 `array<T,N>`、`tuple<T...>`、`str` 和指针；用户自定义类型可以通过 `operator []` 提供下标能力，具体规则见 [operator.md](operator.md)。
 
 自增和自减支持前置 `++value` / `--value` 与后置 `value++` / `value--`：
 
@@ -523,4 +527,4 @@ for(let value : values) {
 
 - 赋值左侧必须是左值。
 - 不能给 `const` binding 重新赋值。
-- 复合赋值先按对应二元运算检查，再检查结果能否写回左侧类型。
+- 复合赋值优先查找对应 `operator +=`、`operator -=` 等；没有用户定义 operator 时，内建数值、整数等类型按内建复合赋值规则检查，用户自定义类型不自动退化为 `left = left op right`。

@@ -1,4 +1,4 @@
-# Iteration
+# 迭代
 
 本文档记录 cp 的迭代协议。迭代协议建立在 `concept`、泛型 `variant` 和 `requires` 类型约束之上，不引入运行时多态。
 
@@ -24,7 +24,7 @@ let end = optional<i32>::none;
 let item = optional<i32>::some(1);
 ```
 
-## Iterator
+## Iterator 协议
 
 `iterator` 表示有状态游标。调用 `next` 会推进游标，并返回本次产生的元素或结束标记。
 
@@ -72,7 +72,7 @@ impl iterator for range_iter {
 }
 ```
 
-## Iterable
+## Iterable 协议
 
 `iterable` 表示一个值可以产生 iterator。它通常由容器、范围对象或视图实现。
 
@@ -121,7 +121,7 @@ impl iterable for range {
 }
 ```
 
-## Range For
+## 范围 for
 
 范围 `for` 写作：
 
@@ -161,7 +161,7 @@ while(true) {
 
 `for(const value : values)` 只表示循环变量 binding 不可重新赋值，不改变 iterator 的推进方式。
 
-## Break And Continue
+## break 和 continue
 
 因为 `next` 同时完成“取值”和“推进”，`continue` 不需要额外跳到一个 `advance` 步骤。
 

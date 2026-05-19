@@ -1,4 +1,4 @@
-# Concept
+# Concept 协议
 
 本文档记录 `concept` 的设计。`concept` 表示编译期能力约束，不引入运行时多态、虚表或 `dyn` 机制。
 

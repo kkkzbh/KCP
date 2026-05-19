@@ -1,4 +1,4 @@
-# Design
+# 设计
 
 - 语言名: `cp`
 - 源文件后缀: `.cp`
@@ -23,6 +23,7 @@
 
 ## 设计文档
 
+- `docs/README.md`: 文档总入口
 - `docs/cast.md`: 类型转换
 - `docs/concept.md`: `concept`、关联类型、默认实现、父 concept 和 `type` 类型别名语句
 - `docs/extern_c.md`: `extern "C"` 外部 C 函数声明、C 符号名导出和第一版 ABI 边界
@@ -33,7 +34,7 @@
 - `docs/lambda.md`: 函数类型、函数指针、普通函数绑定、lambda、自动捕获和闭包边界
 - `docs/memory_allocation.md`: 底层内存分配、对象生命周期原语和 runtime ABI
 - `docs/module.md`: 模块声明、导入与导出
-- `docs/operator.md`: 运算符
+- `docs/operator.md`: 运算符与第一版 `operator` 重载
 - `docs/struct.md`: `struct / impl`、构造/析构、成员函数、结构体初始化与块表达式
 - `docs/type_system.md`: 类型分类、默认初始化、聚合字面量、`decltype`、返回类型推导与语义检查规则
 - `docs/variant.md`: `variant`、case 构造、`match` 和 tagged union 布局

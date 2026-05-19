@@ -1,4 +1,4 @@
-# Variant
+# Variant 类型
 
 本文档记录 `variant` 的语言设计。`variant` 用来定义名义和类型，表示若干个 case 中恰好一个。它在语言语义上接近 Rust 的 `enum`，在运行时布局上使用安全 tagged union。
 

@@ -95,7 +95,7 @@ let square: f(i32) -> i32 = f(x) {
 
 省略参数类型只允许在存在明确上下文函数类型时使用。没有上下文类型时，lambda 参数必须显式标注类型。
 
-## Lambda Body
+## Lambda 函数体
 
 lambda 支持三种自然写法。
 

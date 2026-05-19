@@ -1,4 +1,4 @@
-# Generics
+# 泛型
 
 本文档记录泛型设计，覆盖泛型函数、泛型 `struct`、泛型 `variant`、泛型固有 `impl`、泛型 concept `impl`、参数包、`template for` 展开以及 `requires` 约束。泛型 `concept`、const generic 和模板特化不属于本文档。
 

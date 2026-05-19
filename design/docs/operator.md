@@ -1,6 +1,6 @@
 # 运算符
 
-本文档记录 cp 运算符表。完整类型检查规则见 [type_system.md](type_system.md)。
+本文档记录 cp 运算符表和第一版运算符重载规则。完整类型检查规则见 [type_system.md](type_system.md)。
 
 整体优先级接近 C++，但逻辑运算使用关键字形式。
 
@@ -49,6 +49,7 @@ cp 的裸指针运算保持接近 C++：
 let next = p + 1;
 let prev = next - 1;
 let distance: isize = next - p;
+let value = p[0];
 ```
 
 规则：
@@ -57,6 +58,8 @@ let distance: isize = next - p;
 - 指针加减以 `T` 为元素步长。
 - `p2 - p1` 要求两侧是相同目标类型的指针，结果为 `isize`。
 - 指针差值表示元素数量，不是字节数量。
+- `p[i]` 要求 `p` 是指针类型，`i` 是整数类型，语义等价于 `*(p + i)`。
+- 不支持 `i[p]`。即使 `i` 是整数、`p` 是指针，下标目标也必须写在 `[]` 左侧。
 - 有定义的边界与 C++ 保持一致：同一数组对象或同一连续分配对象内的位置，以及 one-past 位置。
 - 编译器只做类型检查，不静态证明边界、生命周期或指针来源。
 
@@ -72,7 +75,7 @@ let distance: isize = next - p;
 - 数值类型按共同数值类型比较。
 - 相同目标类型的指针支持 `==` / `!=`。
 - 相同目标类型的指针支持 `< <= > >=`，有定义边界与 C++ 指针有序比较一致。
-- 非数值类型不提供通用内建比较。特定类型若需要比较能力，应通过标准库 `impl`、运算符协议或专门规则提供。
+- 非数值类型不提供通用内建比较。特定类型若需要比较能力，应通过 `operator` 重载或标准库协议提供。
 
 不支持 `<=>`。
 
@@ -87,22 +90,127 @@ let distance: isize = next - p;
 - 位运算要求整数类型。
 - 结果类型为统一后的整数类型。
 
+## 运算符重载
+
+cp 支持一版受限的 `operator` 重载。它补充内建运算符，不打开普通函数和成员函数的完整重载体系。
+
+### 语法总览
+
+```text
+TopLevelOperator -> export? operator OverloadableOperator ( ParameterList? ) ReturnType? FunctionBody
+ImplOperator     -> operator OverloadableOperator ( ParameterList? ) ReturnType? FunctionBody
+
+OverloadableOperator
+                 -> UnaryOperator
+                  | BinaryOperator
+                  | ComparisonOperator
+                  | AssignmentOperator
+                  | SubscriptOperator
+
+UnaryOperator    -> "+" | "-" | "~"
+BinaryOperator   -> "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>"
+ComparisonOperator
+                 -> "==" | "!=" | "<" | "<=" | ">" | ">="
+AssignmentOperator
+                 -> "=" | "+=" | "-=" | "*=" | "/=" | "%="
+                  | "&=" | "|=" | "^=" | "<<=" | ">>="
+SubscriptOperator
+                 -> "[]"
+```
+
+实际词法中 `operator` 和后面的运算符 token 可以有空白；文档统一写成 `operator +`、`operator []`。
+
+成员 operator 写在固有 `impl` 中，挂到当前类型命名空间：
+
+```cp
+impl vec2 {
+    operator +(self const&, rhs: this const&) -> this
+    {
+        return vec2{ .x = x + rhs.x, .y = y + rhs.y };
+    }
+
+    operator ==(self const&, rhs: this const&) -> bool
+    {
+        return x == rhs.x and y == rhs.y;
+    }
+}
+```
+
+顶层 operator 写作普通顶层声明，遵循模块导出和导入规则：
+
+```cp
+operator +(left: vec2 const&, right: vec2 const&) -> vec2
+{
+    return vec2{ .x = left.x + right.x, .y = left.y + right.y };
+}
+```
+
+声明规则：
+
+- `operator` 是特殊声明，不占用普通函数名空间。
+- 顶层 operator 至少有一个参数类型必须是用户定义名义类型，或者该类型的引用。
+- 固有 `impl` 内的 operator 至少有一个参数必须是 `self`、`self&`、`self const&` 或 `this` 相关类型。
+- 同一个类型命名空间内，相同 operator 可以按参数类型重载。
+- 当前可见的顶层 operator 可以按参数类型重载。
+- 普通函数、普通成员函数和关联函数仍然不支持重载。
+- operator 不参与 UFCS，不能写成 `operator +(a, b)` 普通调用。
+
+查找规则：
+
+- 一元运算 `op value` 先尝试内建规则；内建规则不成立时，查找 `value` 类型命名空间中的 `operator op`；如果类型命名空间中没有该 operator，再查当前可见顶层 `operator op`。
+- 二元运算 `left op right` 先尝试内建规则；内建规则不成立时，依次查找 `left` 类型命名空间、`right` 类型命名空间、当前可见顶层 `operator op`。
+- 赋值 `left = right` 和复合赋值 `left op= right` 先检查 `left` 必须是可写左值；然后查找 `left` 类型命名空间中的对应 operator；找不到时再查当前可见顶层 operator；仍然找不到时才使用允许的内建赋值或报错。
+- 下标 `value[index]` 先尝试内建 `array<T,N>`、`tuple<T...>`、`str` 和指针规则；内建规则不成立时，查找 `value` 类型命名空间中的 `operator []`；找不到时再查当前可见顶层 `operator []`。
+- 某一级查找中如果存在同 operator 声明，但没有可行候选，直接报告参数不匹配或二义性，不继续回退到后续层级。
+
+候选选择使用小型重载规则：
+
+1. 参数数量必须一致。
+2. 完全类型匹配优先于需要内建转换的匹配。
+3. 非模板候选优先于需要实例化后才确定的泛型候选。
+4. 如果最高优先级仍有多个候选，报二义性错误。
+
+不支持 C++ 完整重载体系中的默认参数、用户自定义隐式转换、模板偏序和 ADL。顶层 operator 只从当前模块和 `import` 引入的可见声明中查找。
+
 ## 赋值与复合赋值
 
 ```text
-= -= *= /= %= &= |= ^= <<= >>=
+= += -= *= /= %= &= |= ^= <<= >>=
 ```
 
 规则：
 
 - 赋值左侧必须是左值。
 - 不能给 `const` binding 重新赋值。
-- 简单赋值 `=` 按左侧类型检查右侧表达式。
-- 复合赋值先按对应二元运算检查，再检查结果能否写回左侧类型。
+- 简单赋值 `=` 可以由 `operator =` 重载。
+- 没有可用 `operator =` 时，简单赋值按左侧类型检查右侧表达式并使用内建赋值。
+- `operator =` 的左操作数必须是可写引用；成员形式必须以 `self&` 作为第一个参数。
+- 复合赋值可以由对应 `operator +=`、`operator -=` 等重载。
+- 没有可用复合赋值 operator 时，不自动退化为 `left = left op right`；第一版要求用户显式声明复合赋值能力。
+- 复合赋值 operator 的返回类型可以是内部 `unit`，也可以是左操作数引用类型，例如成员形式的 `this&`。
+
+示例：
+
+```cp
+impl vec2 {
+    operator =(self&, rhs: this const&) -> this&
+    {
+        x = rhs.x;
+        y = rhs.y;
+        return self;
+    }
+
+    operator +=(self&, rhs: this const&)
+    {
+        x += rhs.x;
+        y += rhs.y;
+    }
+}
+```
 
 ## 下标运算
 
-cp 支持内建下标运算符：
+cp 支持内建下标运算符和 `operator []`：
 
 ```cp
 value[index]
@@ -110,16 +218,36 @@ value[index]
 
 规则：
 
-- `[]` 是内建运算符，不属于运算符重载。
 - 下标运算属于后缀表达式，优先级高于一元前缀运算。
-- 下标目标只支持 `array<T,N>`、`tuple<T...>` 和 `str`。
+- 内建下标目标支持 `array<T,N>`、`tuple<T...>`、`str` 和指针。
 - `array<T,N>` 下标要求 `index` 是整数类型，结果类型为 `T`。
 - `tuple<T...>` 下标要求 `index` 是编译期整数常量，结果类型为对应位置的元素类型。
 - `str` 下标要求 `index` 是整数类型，结果类型为 `char`。
-- 如果目标是可写左值且元素本身可写，数组和元组下标结果是可写左值。
+- `T*` 下标要求 `index` 是整数类型，结果类型为 `T` 左值；`T const*` 下标结果是只读 `T` 左值。
+- 指针下标只支持 `p[i]`，不支持 C/C++ 的 `i[p]` 对称写法。
+- 如果目标是可写左值且元素本身可写，数组、元组和指针下标结果是可写左值。
 - `str` 下标结果只读，不是可写左值。
-- 下标越界规则、常量下标诊断和数组/元组/`str` 的具体左值规则见 [type_system.md](type_system.md)。
+- 内建下标规则不成立时，可以查找 `operator []`。
+- `operator []` 可以返回值，也可以返回引用；返回引用时，`value[index]` 可以作为左值参与赋值。
+- 用于可变容器时，推荐同时提供 `self&` 和 `self const&` 两个版本。
+- 下标越界规则、常量下标诊断和内建类型的具体左值规则见 [type_system.md](type_system.md)。
 - 空 `[]` 在表达式中不是下标运算；数组字面量 `[]` / `[a, b]` 是单独的字面量语法。
+
+示例：
+
+```cp
+impl vector<T> {
+    operator [](self&, index: usize) -> T&
+    {
+        return data[index];
+    }
+
+    operator [](self const&, index: usize) -> T const&
+    {
+        return data[index];
+    }
+}
+```
 
 ## 函数调用
 
@@ -169,7 +297,7 @@ value--
 
 规则：
 
-- `++` / `--` 是内建运算符，不属于运算符重载。
+- `++` / `--` 是内建运算符，不属于第一版运算符重载。
 - 操作数必须是可写左值。
 - 不能作用于 `const` binding 或 const target。
 - 只允许整数类型，不支持 `bool`、浮点、指针、`struct`、`array` 或 `tuple`。
