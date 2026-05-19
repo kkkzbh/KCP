@@ -42,7 +42,6 @@ auto lexer::consume_escape_sequence(std::size_t& offset, std::size_t literal_sta
         if(offset >= source.size() or not is_hex_digit(source[offset])) {
             diagnostics_.report(
                 diagnostic_kind::invalid_escape_sequence,
-                "invalid escape sequence"sv,
                 cursor_.make_span(escape_start, offset)
             );
             return escape_result::invalid;
@@ -56,7 +55,6 @@ auto lexer::consume_escape_sequence(std::size_t& offset, std::size_t literal_sta
     ++offset;
     diagnostics_.report(
         diagnostic_kind::invalid_escape_sequence,
-        "invalid escape sequence"sv,
         cursor_.make_span(escape_start, offset)
     );
     return escape_result::invalid;
@@ -207,7 +205,6 @@ auto lexer::lex_char_literal(token_flags flags) -> token
             }
             diagnostics_.report(
                 diagnostic_kind::invalid_char_literal,
-                "invalid char literal"sv,
                 cursor_.make_span(start, offset)
             );
             return finish(token_kind::invalid, offset, flags | token_flags::recovered);
