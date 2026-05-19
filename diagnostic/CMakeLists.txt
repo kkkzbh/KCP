@@ -4,6 +4,11 @@ target_sources(diagnostic
     PUBLIC
         FILE_SET CXX_MODULES
         FILES
+            stage.cppm
+            kind.cppm
+            record.cppm
+            catalog.cppm
+            collector.cppm
             diagnostic.cppm
 )
 
