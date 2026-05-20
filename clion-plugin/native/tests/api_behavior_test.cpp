@@ -245,7 +245,7 @@ R"(> i32 {
     let memory = alloc<i32>(1);
     free(memory);
     let value = box::zero();
-    return value.get() + value.size() + scalar_value + i32(1.5) + inc(1) + add_bias(1);
+    return value.get() + value.size() + scalar_value + (1.5 as i32) + inc(1) + add_bias(1);
 })"sv;
     auto const global_highlights = cp_lexer_helper::inspect(cp_lexer_helper::inspect_request {
         .active_file = "global.cp",
@@ -283,8 +283,6 @@ R"(> i32 {
         "inspect should distinguish lambda captures");
     assert_true(highlight_count(global_highlights, global_source, "constant.declaration", "bias") == 1uz,
         "inspect should distinguish const local declarations");
-    assert_true(highlight_count(global_highlights, global_source, "function.style.cast", "i32") == 1uz,
-        "inspect should distinguish function-style casts");
 
     auto const unknown_module = cp_lexer_helper::inspect(cp_lexer_helper::inspect_request {
         .active_file = "unknown.cp",

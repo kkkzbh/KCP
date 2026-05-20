@@ -42,6 +42,10 @@ object CpTypes {
     @JvmField val KW_AND = token("kw_and")
     @JvmField val KW_OR = token("kw_or")
     @JvmField val KW_NOT = token("kw_not")
+    @JvmField val KW_REF = token("kw_ref")
+    @JvmField val KW_MOVE = token("kw_move")
+    @JvmField val KW_LIKE = token("kw_like")
+    @JvmField val KW_DELETE = token("kw_delete")
 
     @JvmField val L_PAREN = token("l_paren")
     @JvmField val R_PAREN = token("r_paren")
@@ -91,7 +95,7 @@ object CpTypes {
     val KEYWORD_TOKENS: TokenSet = TokenSet.create(
         KW_LET, KW_CONST, KW_IF, KW_ELSE, KW_WHILE, KW_DO, KW_FOR, KW_BREAK, KW_CONTINUE, KW_RETURN,
         KW_IMPORT, KW_EXPORT, KW_MODULE, KW_STRUCT, KW_IMPL, KW_CONCEPT, KW_OPERATOR, KW_TRAIT,
-        KW_AS, KW_TRUE, KW_FALSE, KW_AND, KW_OR, KW_NOT,
+        KW_AS, KW_TRUE, KW_FALSE, KW_AND, KW_OR, KW_NOT, KW_REF, KW_MOVE, KW_LIKE, KW_DELETE,
     )
 
     @JvmField
@@ -101,7 +105,7 @@ object CpTypes {
 
     @JvmField
     val DECLARATION_KEYWORD_TOKENS: TokenSet = TokenSet.create(
-        KW_LET, KW_CONST, KW_STRUCT, KW_IMPL, KW_CONCEPT, KW_OPERATOR, KW_TRAIT,
+        KW_LET, KW_CONST, KW_STRUCT, KW_IMPL, KW_CONCEPT, KW_OPERATOR, KW_TRAIT, KW_DELETE,
     )
 
     @JvmField
@@ -132,7 +136,7 @@ object CpTypes {
         PERCENT, PERCENT_EQUAL, EQUAL, EQUAL_EQUAL, BANG_EQUAL, LESS, LESS_EQUAL, GREATER,
         GREATER_EQUAL, AMP, AMP_EQUAL, PIPE, PIPE_EQUAL, CARET, CARET_EQUAL, TILDE, LESS_LESS,
         LESS_LESS_EQUAL, GREATER_GREATER, GREATER_GREATER_EQUAL, PLUS_PLUS, MINUS_MINUS,
-        QUESTION, KW_AS, KW_AND, KW_OR, KW_NOT,
+        QUESTION, KW_AS, KW_AND, KW_OR, KW_NOT, KW_REF, KW_MOVE,
     )
 
     @JvmField
@@ -166,6 +170,10 @@ object CpTypes {
         "and" to KW_AND,
         "or" to KW_OR,
         "not" to KW_NOT,
+        "ref" to KW_REF,
+        "move" to KW_MOVE,
+        "like" to KW_LIKE,
+        "delete" to KW_DELETE,
     )
 
     val punctuators: List<Pair<String, IElementType>> = listOf(

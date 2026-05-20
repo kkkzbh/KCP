@@ -106,7 +106,7 @@ class CpAnnotatorTest : BasePlatformTestCase() {
             "design/examples/types/main.cp" to listOf(
                 "main" to CpSyntaxHighlighter.FUNCTION_DECLARATION,
                 "count" to CpSyntaxHighlighter.LOCAL_VARIABLE,
-                "array" to CpSyntaxHighlighter.TYPE,
+                "f64" to CpSyntaxHighlighter.TYPE,
                 "i32" to CpSyntaxHighlighter.TYPE,
             ),
         )

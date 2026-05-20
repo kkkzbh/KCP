@@ -289,7 +289,9 @@ private class CpBuilder(
         parseParameterList()
         expect(CpTypes.R_PAREN, "expected ')'")
         if (consume(CpTypes.EQUAL)) {
-            expectContextual("default")
+            if (!consume(CpTypes.KW_DELETE)) {
+                expectContextual("default")
+            }
             expect(CpTypes.SEMICOLON, "expected ';'")
             marker.done(type)
             return
@@ -371,7 +373,7 @@ private class CpBuilder(
         consume(CpTypes.KW_CONST)
         if (at(CpTypes.IDENTIFIER) && builder.tokenText == "self" && lookAhead(1) != CpTypes.COLON) {
             markIdentifier(CpElements.PARAMETER_NAME, "expected parameter name")
-            if (consume(CpTypes.KW_CONST)) {
+            if (consume(CpTypes.KW_CONST) || consume(CpTypes.KW_LIKE) || consume(CpTypes.KW_MOVE)) {
                 expect(CpTypes.AMP, "expected '&'")
             } else {
                 consume(CpTypes.AMP)
@@ -393,6 +395,12 @@ private class CpBuilder(
         if (contextual("decltype") && lookAhead(1) == CpTypes.L_PAREN) {
             return parseDecltype()
         }
+        if (at(CpTypes.L_BRACKET)) {
+            return parseArrayType()
+        }
+        if (at(CpTypes.L_PAREN)) {
+            return parseParenType()
+        }
         if (!at(CpTypes.IDENTIFIER)) {
             builder.error("expected type")
             return false
@@ -406,12 +414,54 @@ private class CpBuilder(
         while (consume(CpTypes.COLON_COLON)) {
             markIdentifier(CpElements.TYPE_NAME, "expected associated type name")
         }
-        consume(CpTypes.KW_CONST)
+        parseTypeSuffix()
+        marker.done(CpElements.TYPE_REFERENCE)
+        return true
+    }
+
+    private fun parseArrayType(): Boolean {
+        val marker = builder.mark()
+        expect(CpTypes.L_BRACKET, "expected '['")
+        parseType()
+        expect(CpTypes.SEMICOLON, "expected ';'")
+        parseTypeLengthArgument()
+        expect(CpTypes.R_BRACKET, "expected ']'")
+        parseTypeSuffix()
+        marker.done(CpElements.TYPE_REFERENCE)
+        return true
+    }
+
+    private fun parseParenType(): Boolean {
+        val marker = builder.mark()
+        expect(CpTypes.L_PAREN, "expected '('")
+        parseType()
+        while (consume(CpTypes.COMMA)) {
+            if (at(CpTypes.R_PAREN)) {
+                break
+            }
+            parseType()
+        }
+        expect(CpTypes.R_PAREN, "expected ')'")
+        parseTypeSuffix()
+        marker.done(CpElements.TYPE_REFERENCE)
+        return true
+    }
+
+    private fun parseTypeSuffix() {
+        consume(CpTypes.KW_CONST) || consume(CpTypes.KW_LIKE) || consume(CpTypes.KW_MOVE)
         while (consume(CpTypes.STAR)) {
         }
         consume(CpTypes.AMP)
-        marker.done(CpElements.TYPE_REFERENCE)
-        return true
+    }
+
+    private fun parseTypeLengthArgument() {
+        val marker = builder.mark()
+        when {
+            at(CpTypes.INTEGER_LITERAL) -> advance()
+            at(CpTypes.IDENTIFIER) -> advance()
+            else -> builder.error("expected array length")
+        }
+        marker.done(CpElements.TYPE_ARGUMENT)
     }
 
     private fun parseFunctionType(): Boolean {
@@ -576,7 +626,7 @@ private class CpBuilder(
     private fun parseDeclarationStatement() {
         val marker = builder.mark()
         advance()
-        consumeContextual("ref")
+        consume(CpTypes.KW_REF)
         if (consume(CpTypes.L_PAREN)) {
             markIdentifier(CpElements.LOCAL_DECLARATION, "expected declaration binding name")
             while (consume(CpTypes.COMMA)) {
@@ -1297,6 +1347,10 @@ private class CpBuilder(
             CpTypes.TILDE,
             CpTypes.AMP,
             CpTypes.STAR,
+            CpTypes.KW_CONST,
+            CpTypes.KW_REF,
+            CpTypes.KW_MOVE,
+            CpTypes.KW_DELETE,
             CpTypes.PLUS_PLUS,
             CpTypes.MINUS_MINUS,
         )

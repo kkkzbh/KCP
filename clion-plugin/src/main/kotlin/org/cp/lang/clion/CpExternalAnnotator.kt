@@ -75,7 +75,6 @@ class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, CpIns
         "associated.function.call", "associated.function.reference" -> CpSyntaxHighlighter.ASSOCIATED_FUNCTION
         "associated.function.declaration" -> CpSyntaxHighlighter.ASSOCIATED_FUNCTION
         "builtin.function.call" -> CpSyntaxHighlighter.BUILTIN_FUNCTION
-        "function.style.cast" -> CpSyntaxHighlighter.TYPE
         "function.type" -> CpSyntaxHighlighter.FUNCTION_TYPE
         "parameter.declaration", "parameter.reference" -> CpSyntaxHighlighter.PARAMETER
         "parameter.pack.reference" -> CpSyntaxHighlighter.PARAMETER

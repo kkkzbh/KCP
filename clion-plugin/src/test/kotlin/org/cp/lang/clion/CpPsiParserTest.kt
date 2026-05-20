@@ -5,6 +5,8 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiErrorElement
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import java.nio.file.Files
 import java.nio.file.Path
@@ -170,6 +172,35 @@ class CpPsiParserTest : BasePlatformTestCase() {
         assertTrue("operator += should be parsed as an impl function", "operator +=" in names)
         assertEquals(3, file.descendants(CpElements.FUNCTION).size)
         assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
+    fun testRunMarkerOnlyAppearsOnTopLevelMain() {
+        val file = parse(
+            """
+            main() -> i32
+            {
+                return 0;
+            }
+
+            helper() -> i32
+            {
+                return 1;
+            }
+
+            impl thing {
+                main(self&) -> i32
+                {
+                    return 2;
+                }
+            }
+            """.trimIndent(),
+        )
+        val contributor = CpRunLineMarkerContributor()
+        val names = file.descendants(CpElements.FUNCTION_NAME)
+
+        assertNotNull(contributor.getInfo(names.first { it.text == "main" }.firstChild))
+        assertNull(contributor.getInfo(names.single { it.text == "helper" }.firstChild))
+        assertNull(contributor.getInfo(names.last { it.text == "main" }.firstChild))
     }
 
     fun testIncompleteConceptDoesNotTrapParserRecovery() {

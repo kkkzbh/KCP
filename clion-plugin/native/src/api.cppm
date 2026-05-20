@@ -240,6 +240,9 @@ auto is_operator_token(token_kind kind) -> bool
         case kw_and:
         case kw_or:
         case kw_not:
+        case kw_ref:
+        case kw_move:
+        case kw_delete:
             return true;
         default:
             return false;
@@ -288,6 +291,8 @@ auto collect_statement_highlights(highlight_collector& collector, ast_arena cons
 
 auto collect_expression_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, expr_id id, bool call_callee = false) -> void;
 
+auto collect_type_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, type_id id) -> void;
+
 auto source_text(highlight_collector& collector, source_span span) -> std::string_view
 {
     return collector.sources.slice(span);
@@ -305,6 +310,34 @@ auto collect_literal_highlight(highlight_collector& collector, source_span span)
     } else {
         collector.add("number.literal", span);
     }
+}
+
+auto collect_type_argument_highlight(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, type_argument_syntax const& argument) -> void
+{
+    std::visit(overloaded {
+        [&](type_argument_type_syntax const& node) {
+            collect_type_highlights(collector, ast, checked, unit_index, node.type);
+        },
+        [&](type_argument_literal_syntax const& node) {
+            collect_literal_highlight(collector, node.literal);
+        },
+        [&](type_argument_name_syntax const& node) {
+            collector.add("type.parameter", node.name);
+        },
+    }, argument);
+}
+
+auto collect_type_argument_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, std::span<type_argument_syntax const> arguments) -> void
+{
+    for(auto const& argument : arguments) {
+        collect_type_argument_highlight(collector, ast, checked, unit_index, argument);
+    }
+}
+
+auto collect_concept_id_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, concept_id_syntax const& concept_id) -> void
+{
+    collector.add("concept.reference", concept_id.name);
+    collect_type_argument_highlights(collector, ast, checked, unit_index, concept_id.arguments);
 }
 
 auto collect_type_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, type_id id) -> void
@@ -329,31 +362,10 @@ auto collect_type_highlights(highlight_collector& collector, ast_arena const& as
         collector.add("type", type.name);
     }
     for(auto const& argument : type.arguments) {
-        std::visit(overloaded {
-            [&](type_argument_type_syntax const& node) {
-                collect_type_highlights(collector, ast, checked, unit_index, node.type);
-            },
-            [&](type_argument_literal_syntax const& node) {
-                collect_literal_highlight(collector, node.literal);
-            },
-        }, argument);
+        collect_type_argument_highlight(collector, ast, checked, unit_index, argument);
     }
     for(auto associated : type.associated_names) {
         collector.add("associated.type.reference", associated);
-    }
-}
-
-auto collect_type_argument_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, std::span<type_argument_syntax const> arguments) -> void
-{
-    for(auto const& argument : arguments) {
-        std::visit(overloaded {
-            [&](type_argument_type_syntax const& node) {
-                collect_type_highlights(collector, ast, checked, unit_index, node.type);
-            },
-            [&](type_argument_literal_syntax const& node) {
-                collect_literal_highlight(collector, node.literal);
-            },
-        }, argument);
     }
 }
 
@@ -471,15 +483,6 @@ auto collect_expression_highlights(highlight_collector& collector, ast_arena con
                     return;
                 }
             }
-            if(auto const* name = std::get_if<name_expr_syntax>(&ast.node(node.callee))) {
-                if(is_builtin_name(source_text(collector, name->name))) {
-                    collector.add("function.style.cast", name->name);
-                    for(auto argument : node.arguments) {
-                        collect_expression_highlights(collector, ast, checked, unit_index, argument);
-                    }
-                    return;
-                }
-            }
             collect_expression_highlights(collector, ast, checked, unit_index, node.callee, true);
             for(auto argument : node.arguments) {
                 collect_expression_highlights(collector, ast, checked, unit_index, argument);
@@ -546,6 +549,10 @@ auto collect_expression_highlights(highlight_collector& collector, ast_arena con
                 }
             }
         },
+        [&](new_expr_syntax const& node) {
+            collect_type_highlights(collector, ast, checked, unit_index, node.type);
+            collect_expression_highlights(collector, ast, checked, unit_index, node.initializer);
+        },
         [&](block_expr_syntax const& node) {
             for(auto statement : node.statements) {
                 collect_statement_highlights(collector, ast, checked, unit_index, statement);
@@ -588,12 +595,12 @@ auto collect_expression_highlights(highlight_collector& collector, ast_arena con
     }, expression);
 }
 
-auto collect_generic_parameter_highlights(highlight_collector& collector, std::span<generic_parameter_syntax const> parameters) -> void
+auto collect_generic_parameter_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, std::span<generic_parameter_syntax const> parameters) -> void
 {
     for(auto const& parameter : parameters) {
         collector.add(parameter.is_pack ? "type.parameter.pack" : "type.parameter", parameter.name);
-        for(auto concept_name : parameter.concept_bounds) {
-            collector.add("concept.reference", concept_name);
+        for(auto const& concept_bound : parameter.concept_bounds) {
+            collect_concept_id_highlights(collector, ast, checked, unit_index, concept_bound);
         }
     }
 }
@@ -601,7 +608,7 @@ auto collect_generic_parameter_highlights(highlight_collector& collector, std::s
 auto collect_function_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, function_id id, function_syntax const& function) -> void
 {
     collector.add(function_declaration_category(checked, unit_index, id, function), function.name);
-    collect_generic_parameter_highlights(collector, function.generic_parameters);
+    collect_generic_parameter_highlights(collector, ast, checked, unit_index, function.generic_parameters);
     for(auto const& parameter : function.parameters) {
         collector.add("parameter.declaration", parameter.name);
         if(parameter.type) {
@@ -723,7 +730,7 @@ auto collect_ast_highlights(highlight_collector& collector, parse_result const& 
     for(auto id : root.structs) {
         auto const& value = parsed.ast.node(id);
         collector.add("type", value.name);
-        collect_generic_parameter_highlights(collector, value.generic_parameters);
+        collect_generic_parameter_highlights(collector, parsed.ast, checked, unit_index, value.generic_parameters);
         for(auto const& field : value.fields) {
             collector.add("field.declaration", field.name);
             collect_type_highlights(collector, parsed.ast, checked, unit_index, field.type);
@@ -732,7 +739,7 @@ auto collect_ast_highlights(highlight_collector& collector, parse_result const& 
     for(auto id : root.variants) {
         auto const& value = parsed.ast.node(id);
         collector.add("type", value.name);
-        collect_generic_parameter_highlights(collector, value.generic_parameters);
+        collect_generic_parameter_highlights(collector, parsed.ast, checked, unit_index, value.generic_parameters);
         for(auto const& variant_case : value.cases) {
             collector.add("variant.case", variant_case.name);
             for(auto payload : variant_case.payloads) {
@@ -749,12 +756,12 @@ auto collect_ast_highlights(highlight_collector& collector, parse_result const& 
                     for(auto const& constraint : requirement.constraints) {
                         std::visit(overloaded {
                             [&](concept_parent_constraint_syntax const& parent) {
-                                collector.add("concept.reference", parent.name);
+                                collect_concept_id_highlights(collector, parsed.ast, checked, unit_index, parent.parent);
                             },
                             [&](concept_type_bound_constraint_syntax const& bound) {
                                 collect_type_highlights(collector, parsed.ast, checked, unit_index, bound.type);
-                                for(auto concept_name : bound.concept_bounds) {
-                                    collector.add("concept.reference", concept_name);
+                                for(auto const& concept_bound : bound.concept_bounds) {
+                                    collect_concept_id_highlights(collector, parsed.ast, checked, unit_index, concept_bound);
                                 }
                             },
                             [&](concept_type_equality_constraint_syntax const& equality) {
@@ -813,7 +820,7 @@ auto collect_ast_highlights(highlight_collector& collector, parse_result const& 
     }
     for(auto id : root.concept_impls) {
         auto const& value = parsed.ast.node(id);
-        collector.add("concept.reference", value.concept_name);
+        collect_concept_id_highlights(collector, parsed.ast, checked, unit_index, value.concept_name);
         collect_type_highlights(collector, parsed.ast, checked, unit_index, value.target_type);
         for(auto const& alias : value.type_aliases) {
             collector.add("associated.type.declaration", alias.name);
