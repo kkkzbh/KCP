@@ -1,0 +1,22 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/review_mode.py\"",
+            "timeout": 5,
+            "statusMessage": "Checking review mode"
+          },
+          {
+            "type": "command",
+            "command": "python3 \"$(git rev-parse --show-toplevel)/.codex/hooks/talk_mode.py\"",
+            "timeout": 5,
+            "statusMessage": "Checking talk mode"
+          }
+        ]
+      }
+    ]
+  }
+}
