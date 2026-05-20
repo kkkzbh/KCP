@@ -125,11 +125,16 @@ object CpProjectSnapshotCollector {
         val source = Path.of(targetPath)
         val configuration = RunManager.getInstance(file.project).selectedConfiguration?.configuration as? CpRunConfiguration
         val compiler = configuration?.let { CpRunPaths.resolveCompiler(file.project, it.compilerPath, source) }
-        return listOfNotNull(
-            source.parent?.toString(),
-            file.project.basePath,
-            compiler?.let { CpRunPaths.resolveStdlibRoot(it)?.toString() },
-        )
+        return source.parent.parentsFromSelf()
+            .map { it.toString() }
+            .plus(
+                listOfNotNull(
+                    file.project.basePath,
+                    compiler?.let { CpRunPaths.resolveStdlibRoot(it)?.toString() },
+                ).asSequence(),
+            )
+            .distinct()
+            .toList()
     }
 
     private fun importedModules(text: String): List<String> =
@@ -145,10 +150,12 @@ object CpProjectSnapshotCollector {
         if (base != null) {
             candidates.add(base.resolve(moduleLeafPath(moduleName)))
             candidates.add(base.resolve(moduleRelativePath(moduleName)))
+            aggregateRelativePath(moduleName)?.let { candidates.add(base.resolve(it)) }
         }
         for (root in roots) {
             val rootPath = Path.of(root)
             candidates.add(rootPath.resolve(moduleRelativePath(moduleName)))
+            aggregateRelativePath(moduleName)?.let { candidates.add(rootPath.resolve(it)) }
             stdlibRelativePath(moduleName)?.let { candidates.add(rootPath.resolve(it)) }
         }
         return candidates
@@ -169,6 +176,15 @@ object CpProjectSnapshotCollector {
     private fun moduleLeafPath(moduleName: String): Path =
         Path.of("${moduleName.substringAfterLast('.')}.cp")
 
+    private fun aggregateRelativePath(moduleName: String): Path? {
+        val components = moduleName.split(".")
+        var path = Path.of("")
+        for (component in components) {
+            path = path.resolve(component)
+        }
+        return path.resolve("${components.last()}.cp")
+    }
+
     private fun stdlibRelativePath(moduleName: String): Path? =
         moduleName.removePrefix("std.").takeIf { it != moduleName }?.let { moduleRelativePath(it) }
 
@@ -180,3 +196,6 @@ object CpProjectSnapshotCollector {
     private fun normalizedPath(path: String): String =
         Path.of(path).toAbsolutePath().normalize().toString()
 }
+
+private fun Path?.parentsFromSelf(): Sequence<Path> =
+    generateSequence(this) { it.parent }

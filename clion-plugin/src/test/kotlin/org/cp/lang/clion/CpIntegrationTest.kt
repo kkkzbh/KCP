@@ -143,6 +143,32 @@ class CpIntegrationTest {
     }
 
     @Test
+    fun projectSnapshotResolvesAggregateSiblingModuleDirectories() {
+        val request = CpProjectSnapshotCollector.buildRequest(
+            activePath = "/project/lab/preprocessor/preprocessor.cp",
+            activeText = """
+                export module preprocessor;
+                import source;
+                import diagnostic;
+            """.trimIndent(),
+            importRoots = listOf("/project/lab"),
+            projectFiles = listOf(
+                CpSnapshotSource(
+                    "/project/lab/preprocessor/preprocessor.cp",
+                    "export module preprocessor;\nimport source;\nimport diagnostic;\n",
+                ),
+                CpSnapshotSource("/project/lab/source/source.cp", "export module source;\n"),
+                CpSnapshotSource("/project/lab/diagnostic/diagnostic.cp", "export module diagnostic;\n"),
+                CpSnapshotSource("/project/lab/lexer/lexer.cp", "export module lexer;\n"),
+            ),
+        )
+
+        assertTrue(request.files.any { it.path == "/project/lab/source/source.cp" })
+        assertTrue(request.files.any { it.path == "/project/lab/diagnostic/diagnostic.cp" })
+        assertFalse(request.files.any { it.path == "/project/lab/lexer/lexer.cp" })
+    }
+
+    @Test
     fun inspectReportsSemanticDiagnosticsAndHighlights() {
         val result = CpHelperRunner.inspect(
             CpInspectionRequest(

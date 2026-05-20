@@ -1,6 +1,8 @@
 package org.cp.lang.clion
 
 import com.intellij.lang.LanguageParserDefinitions
+import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.psi.PsiElement
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.junit.Assert.assertEquals
@@ -13,10 +15,16 @@ class CpNavigationTest : BasePlatformTestCase() {
     override fun setUp() {
         super.setUp()
         LanguageParserDefinitions.INSTANCE.addExplicitExtension(CpLanguage, parserDefinition)
+        ApplicationManager.getApplication().runWriteAction {
+            FileTypeManager.getInstance().associateExtension(CpFileType.INSTANCE, "cp")
+        }
     }
 
     override fun tearDown() {
         try {
+            ApplicationManager.getApplication().runWriteAction {
+                FileTypeManager.getInstance().removeAssociatedExtension(CpFileType.INSTANCE, "cp")
+            }
             LanguageParserDefinitions.INSTANCE.removeExplicitExtension(CpLanguage, parserDefinition)
         } finally {
             super.tearDown()
@@ -113,6 +121,34 @@ class CpNavigationTest : BasePlatformTestCase() {
         assertEquals(CpElements.MODULE_NAME, target.cpElementType())
         assertEquals("math", target.text)
         assertEquals("math.cp", target.containingFile.name)
+    }
+
+    fun testGotoImportModuleDeclarationInAggregateSiblingDirectory() {
+        val diagnostic = myFixture.addFileToProject(
+            "diagnostic/diagnostic.cp",
+            """
+            export module diagnostic;
+
+            export struct diagnostic {
+                code: str;
+            }
+            """.trimIndent(),
+        )
+        myFixture.configureByText(
+            CpFileType.INSTANCE,
+            """
+            export module preprocessor;
+
+            import source;
+            import <caret>diagnostic;
+            """.trimIndent(),
+        )
+
+        val target = singleTarget()
+
+        assertEquals(CpElements.MODULE_NAME, target.cpElementType())
+        assertEquals("diagnostic", target.text)
+        assertEquals(diagnostic.virtualFile.path, target.containingFile.virtualFile.path)
     }
 
     fun testGotoTypeAndFieldDeclarations() {
