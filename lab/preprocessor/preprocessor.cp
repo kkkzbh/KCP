@@ -1,27 +1,27 @@
 export module preprocessor;
 
 import std;
-export import source;
-export import diagnostic;
+import source;
+import diagnostic;
 
 export struct preprocessed_file {
-    normalized_text: string;
+    text: string;
     diagnostics: vector<diagnostic>;
 }
 
-struct preprocessor_state {
+struct preprocessor {
     source: source_file const&;
-    normalized_text: string;
+    text: string;
     diagnostics: diagnostic_collector;
     offset: usize;
 }
 
-impl preprocessor_state {
-    preprocessor_state(input: source_file const&)
+impl preprocessor {
+    preprocessor(input: source_file const&)
     {
-        return preprocessor_state{
+        return preprocessor{
             .source = input,
-            .normalized_text = string{input.as_str()},
+            .text = string{input.as_str()},
             .diagnostics = diagnostic_collector{},
             .offset = 0 as usize
         };
@@ -51,11 +51,6 @@ impl preprocessor_state {
         offset += count;
     }
 
-    blank_at(self&, index: usize) -> void
-    {
-        normalized_text[index] = ' ';
-    }
-
     run(self&) -> preprocessed_file
     {
         while(not eof()) {
@@ -69,18 +64,18 @@ impl preprocessor_state {
         }
 
         return preprocessed_file{
-            .normalized_text = move normalized_text,
+            .text = move text,
             .diagnostics = diagnostics.take()
         };
     }
 
     skip_line_comment(self&) -> void
     {
-        blank_at(offset);
-        blank_at(offset + 1);
+        text[offset] = ' ';
+        text[offset + 1] = ' ';
         advance(2 as usize);
         while(not eof() and current() != '\n') {
-            blank_at(offset);
+            text[offset] = ' ';
             advance();
         }
     }
@@ -88,19 +83,19 @@ impl preprocessor_state {
     skip_block_comment(self&) -> void
     {
         let start = offset;
-        blank_at(offset);
-        blank_at(offset + 1);
+        text[offset] = ' ';
+        text[offset + 1] = ' ';
         advance(2 as usize);
 
         while(not eof()) {
             if(current() == '*' and peek() == '/') {
-                blank_at(offset);
-                blank_at(offset + 1);
+                text[offset] = ' ';
+                text[offset + 1] = ' ';
                 advance(2 as usize);
                 return;
             }
             if(current() != '\n') {
-                blank_at(offset);
+                text[offset] = ' ';
             }
             advance();
         }
@@ -114,6 +109,6 @@ impl preprocessor_state {
 
 export preprocess(source: source_file const&) -> preprocessed_file
 {
-    let state = preprocessor_state{source};
+    let state = preprocessor{source};
     return state.run();
 }

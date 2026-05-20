@@ -78,7 +78,6 @@ auto module_sources(test_tools const& tools) -> std::vector<std::string>
         (tools.lab_root / "preprocessor/preprocessor.cp").string(),
         (tools.lab_root / "lexer/token.cp").string(),
         (tools.lab_root / "lexer/charset.cp").string(),
-        (tools.lab_root / "lexer/cursor.cp").string(),
         (tools.lab_root / "lexer/keyword.cp").string(),
         (tools.lab_root / "lexer/state.cp").string(),
         (tools.lab_root / "lexer/lexer.cp").string()
@@ -107,33 +106,40 @@ auto check_harness(test_tools const& tools) -> void
     auto app = dir / "main";
     write_source(
         source,
-R"(import lexer;
-import diagnostic;
+	R"(import lexer;
+	import preprocessor;
+	import diagnostic;
 
-main() -> i32
-{
-    let program = lex("int main() { return 0; }");
-    if(program.diagnostics.size() != 0) { return 1; }
-    if(program.tokens.size() != 10) { return 2; }
-    if(program.tokens[0].kind != token_kind::kw_int) { return 3; }
-    if(program.tokens[1].kind != token_kind::identifier) { return 4; }
-    if(program.tokens[6].kind != token_kind::integer_literal) { return 5; }
-    if(program.tokens[9].kind != token_kind::eof) { return 6; }
+	preprocess_text(text: str) -> preprocessed_file
+	{
+	    let file = source_file{"<memory>", text};
+	    return preprocess(file);
+	}
 
-    let words = lex("int integer void if else while return");
-    if(words.diagnostics.size() != 0) { return 7; }
-    if(words.tokens[0].kind != token_kind::kw_int) { return 8; }
-    if(words.tokens[1].kind != token_kind::identifier) { return 9; }
+	main() -> i32
+	{
+	    let program = lex(preprocess_text("int main() { return 0; }"));
+	    if(program.diagnostics.size() != 0) { return 1; }
+	    if(program.tokens.size() != 10) { return 2; }
+	    if(program.tokens[0].kind != token_kind::kw_int) { return 3; }
+	    if(program.tokens[1].kind != token_kind::identifier) { return 4; }
+	    if(program.tokens[6].kind != token_kind::integer_literal) { return 5; }
+	    if(program.tokens[9].kind != token_kind::eof) { return 6; }
+
+	    let words = lex(preprocess_text("int integer void if else while return"));
+	    if(words.diagnostics.size() != 0) { return 7; }
+	    if(words.tokens[0].kind != token_kind::kw_int) { return 8; }
+	    if(words.tokens[1].kind != token_kind::identifier) { return 9; }
     if(words.tokens[2].kind != token_kind::kw_void) { return 10; }
     if(words.tokens[3].kind != token_kind::kw_if) { return 11; }
     if(words.tokens[4].kind != token_kind::kw_else) { return 12; }
-    if(words.tokens[5].kind != token_kind::kw_while) { return 13; }
-    if(words.tokens[6].kind != token_kind::kw_return) { return 14; }
+	    if(words.tokens[5].kind != token_kind::kw_while) { return 13; }
+	    if(words.tokens[6].kind != token_kind::kw_return) { return 14; }
 
-    let symbols = lex("( ) { } , ; + - * / % = == != < <= > >= && ||");
-    if(symbols.diagnostics.size() != 0) { return 15; }
-    if(symbols.tokens[0].kind != token_kind::l_paren) { return 16; }
-    if(symbols.tokens[1].kind != token_kind::r_paren) { return 17; }
+	    let symbols = lex(preprocess_text("( ) { } , ; + - * / % = == != < <= > >= && ||"));
+	    if(symbols.diagnostics.size() != 0) { return 15; }
+	    if(symbols.tokens[0].kind != token_kind::l_paren) { return 16; }
+	    if(symbols.tokens[1].kind != token_kind::r_paren) { return 17; }
     if(symbols.tokens[2].kind != token_kind::l_brace) { return 18; }
     if(symbols.tokens[3].kind != token_kind::r_brace) { return 19; }
     if(symbols.tokens[4].kind != token_kind::comma) { return 20; }
@@ -150,41 +156,45 @@ main() -> i32
     if(symbols.tokens[15].kind != token_kind::less_equal) { return 31; }
     if(symbols.tokens[16].kind != token_kind::greater) { return 32; }
     if(symbols.tokens[17].kind != token_kind::greater_equal) { return 33; }
-    if(symbols.tokens[18].kind != token_kind::amp_amp) { return 34; }
-    if(symbols.tokens[19].kind != token_kind::pipe_pipe) { return 35; }
+	    if(symbols.tokens[18].kind != token_kind::amp_amp) { return 34; }
+	    if(symbols.tokens[19].kind != token_kind::pipe_pipe) { return 35; }
 
-    let comments = lex("int/* block */void// line\nreturn");
-    if(comments.diagnostics.size() != 0) { return 36; }
-    if(comments.tokens.size() != 4) { return 37; }
-    if(comments.tokens[0].kind != token_kind::kw_int) { return 38; }
-    if(comments.tokens[1].kind != token_kind::kw_void) { return 39; }
-    if(comments.tokens[2].kind != token_kind::kw_return) { return 40; }
+	    let comments = lex(preprocess_text("int/* block */void// line\nreturn"));
+	    if(comments.diagnostics.size() != 0) { return 36; }
+	    if(comments.tokens.size() != 4) { return 37; }
+	    if(comments.tokens[0].kind != token_kind::kw_int) { return 38; }
+	    if(comments.tokens[1].kind != token_kind::kw_void) { return 39; }
+	    if(comments.tokens[2].kind != token_kind::kw_return) { return 40; }
 
-    let comment_eof = lex("int // line comment at eof");
-    if(comment_eof.diagnostics.size() != 0) { return 48; }
-    if(comment_eof.tokens.size() != 2) { return 49; }
-    if(comment_eof.tokens[0].kind != token_kind::kw_int) { return 50; }
-    if(comment_eof.tokens[1].kind != token_kind::eof) { return 51; }
+	    let comment_eof = lex(preprocess_text("int // line comment at eof"));
+	    if(comment_eof.diagnostics.size() != 0) { return 48; }
+	    if(comment_eof.tokens.size() != 2) { return 49; }
+	    if(comment_eof.tokens[0].kind != token_kind::kw_int) { return 50; }
+	    if(comment_eof.tokens[1].kind != token_kind::eof) { return 51; }
 
-    let position = lex("int\n  return\r\n\twhile");
-    let return_position = position.source.position(position.tokens[1].span.start);
-    let while_position = position.source.position(position.tokens[2].span.start);
-    if(return_position.line != 2) { return 41; }
-    if(return_position.column != 3) { return 42; }
-    if(while_position.line != 3) { return 52; }
-    if(while_position.column != 2) { return 53; }
+	    let position_source = source_file{"<memory>", "int\n  return\r\n\twhile"};
+	    let position = lex(preprocess(position_source));
+	    let return_position = position_source.position(position.tokens[1].span.start);
+	    let while_position = position_source.position(position.tokens[2].span.start);
+	    if(return_position.line != 2) { return 41; }
+	    if(return_position.column != 3) { return 42; }
+	    if(while_position.line != 3) { return 52; }
+	    if(while_position.column != 2) { return 53; }
 
-    let errors = lex("09 12abc @ ! & | /*");
-    if(errors.diagnostics.size() != 7) { return 43; }
-    if(errors.diagnostics[0].kind != diagnostic_kind::leading_zero_integer) { return 44; }
-    if(errors.diagnostics[1].kind != diagnostic_kind::invalid_number_suffix) { return 45; }
-    if(errors.diagnostics[2].kind != diagnostic_kind::invalid_character) { return 46; }
-    if(errors.diagnostics[3].kind != diagnostic_kind::invalid_character) { return 54; }
-    if(errors.diagnostics[4].kind != diagnostic_kind::invalid_character) { return 55; }
-    if(errors.diagnostics[5].kind != diagnostic_kind::invalid_character) { return 56; }
-    if(errors.diagnostics[6].kind != diagnostic_kind::unterminated_block_comment) { return 47; }
-    return 0;
-})"
+	    let error_source = source_file{"<memory>", "09 12abc @ ! & | /*"};
+	    let error_preprocessed = preprocess(error_source);
+	    if(error_preprocessed.diagnostics.size() != 1) { return 47; }
+	    if(error_preprocessed.diagnostics[0].kind != diagnostic_kind::unterminated_block_comment) { return 57; }
+	    let errors = lex(error_preprocessed);
+	    if(errors.diagnostics.size() != 6) { return 43; }
+	    if(errors.diagnostics[0].kind != diagnostic_kind::leading_zero_integer) { return 44; }
+	    if(errors.diagnostics[1].kind != diagnostic_kind::invalid_number_suffix) { return 45; }
+	    if(errors.diagnostics[2].kind != diagnostic_kind::invalid_character) { return 46; }
+	    if(errors.diagnostics[3].kind != diagnostic_kind::invalid_character) { return 54; }
+	    if(errors.diagnostics[4].kind != diagnostic_kind::invalid_character) { return 55; }
+	    if(errors.diagnostics[5].kind != diagnostic_kind::invalid_character) { return 56; }
+	    return 0;
+	})"
     );
 
     auto status = compile_modules(tools, source, app);

@@ -1,4 +1,5 @@
 import std;
+import preprocessor;
 import lexer;
 
 read_source(path: str) -> string
@@ -19,8 +20,15 @@ read_source(path: str) -> string
 main() -> i32
 {
     let source = read_source("lab/test.c");
-    let result = lex(source.as_str());
+    let file = source_file{"lab/test.c", source.as_str()};
+    let preprocessed = preprocess(file);
     println("mini c lexer input bytes: {}", source.size());
+    println("mini c preprocessor diagnostics: {}", preprocessed.diagnostics.size());
+    if(preprocessed.diagnostics.size() != 0) {
+        println("mini c lexer failed: preprocessor diagnostics were produced");
+        return 1;
+    }
+    let result = lex(preprocessed);
     println("mini c lexer token count: {}", result.tokens.size());
     println("mini c lexer diagnostics: {}", result.diagnostics.size());
     if(result.diagnostics.size() != 0) {
@@ -42,9 +50,8 @@ main() -> i32
     let saw_if = false;
     let saw_while = false;
     let saw_return = false;
-    let index: usize = 0;
-    while(index < result.tokens.size()) {
-        let kind = result.tokens[index].kind;
+    for(let token : result.tokens) {
+        let kind = token.kind;
         if(kind == token_kind::kw_if) {
             saw_if = true;
         }
@@ -54,7 +61,6 @@ main() -> i32
         if(kind == token_kind::kw_return) {
             saw_return = true;
         }
-        ++index;
     }
     println("mini c lexer saw if: {}", saw_if);
     println("mini c lexer saw while: {}", saw_while);
