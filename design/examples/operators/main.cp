@@ -25,6 +25,22 @@ impl cell {
     {
         return value;
     }
+
+    operator =(self&, rhs: this const&)
+    {
+        value = rhs.value + 5;
+    }
+}
+
+struct scaler {
+    factor: i32;
+}
+
+impl scaler {
+    operator ()(self const&, value: i32) -> i32
+    {
+        return value * factor;
+    }
 }
 
 main() -> i32
@@ -36,6 +52,9 @@ main() -> i32
 
     let item = cell{ 0 };
     item[0] = c.x + a.y;
-    return item[0] + 32;
-}
+    let other = cell{ 5 };
+    item = other;
 
+    let twice = scaler{ 2 };
+    return item[0] + twice(16);
+}

@@ -14,6 +14,14 @@ main() -> i32
     let nested = rows[1][0];
 
     let triple: (i32, f64, char) = (count, ratio, letter);
+    let first_field = triple.0;
+    let pair = (10, 20);
+    let ref
+        (left, right) = pair;
+    left = 21;
+    type pair_item = decltype(right);
+    let copied_right: pair_item = right;
+    let (copy_left, copy_right) = pair;
 
     let count_ref: i32& = count;
     let count_ptr: i32* = &count;
@@ -29,5 +37,6 @@ main() -> i32
         return 0;
     }
 
-    return readonly_count + count_ref + narrowed + data[2] + nested + [1, 2, 3][0];
+    return readonly_count + count_ref + narrowed + data[2] + nested + [1, 2, 3][0]
+        + first_field + copied_right + copy_left + copy_right - 103;
 }

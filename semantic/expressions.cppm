@@ -1243,9 +1243,20 @@ auto semantic_analyzer::check_implicit_self_call(ast_arena const& ast, call_expr
         symbol = instance->symbol;
         auto const& signature = result.signatures[instance->signature.value];
         auto expected_count = signature.parameters.empty() ? 0uz : signature.parameters.size() - 1uz;
-        if(expected_count != node.arguments.size()) {
+        auto const& symbol_value = result.symbols[symbol.value];
+        if(not has_valid_argument_count(symbol_value.unit_index, symbol_value.function, node.arguments.size(), signature.parameters.size(), 1uz)) {
             report(diagnostic_kind::argument_count_mismatch, node.full_span, "method argument count does not match signature");
         }
+        check_default_argument_expressions(
+            symbol_value.unit_index,
+            symbol_value.function,
+            instance->context_index,
+            signature,
+            node.arguments.size(),
+            1uz,
+            &instance->substitutions,
+            &instance->pack_substitutions
+        );
         if(not signature.parameters.empty() and not can_implicitly_convert(object, signature.parameters.front())) {
             report(diagnostic_kind::type_mismatch, callee.full_span, "method receiver type mismatch");
         }
@@ -1278,9 +1289,15 @@ auto semantic_analyzer::check_implicit_self_call(ast_arena const& ast, call_expr
     }
     auto callable = *callable_pointer;
     auto expected_count = callable.parameters.empty() ? 0uz : callable.parameters.size() - 1uz;
-    if(expected_count != node.arguments.size()) {
+    auto const& symbol_value = result.symbols[symbol.value];
+    auto signature = function_signature {
+        .parameters = callable.parameters,
+        .returns = callable.returns,
+    };
+    if(not has_valid_argument_count(symbol_value.unit_index, symbol_value.function, node.arguments.size(), callable.parameters.size(), 1uz)) {
         report(diagnostic_kind::argument_count_mismatch, node.full_span, "method argument count does not match signature");
     }
+    check_default_argument_expressions(symbol_value.unit_index, symbol_value.function, 0uz, signature, node.arguments.size(), 1uz, nullptr, nullptr);
     if(not callable.parameters.empty() and not can_implicitly_convert(object, callable.parameters.front())) {
         report(diagnostic_kind::type_mismatch, callee.full_span, "method receiver type mismatch");
     }
@@ -1350,9 +1367,20 @@ auto semantic_analyzer::check_member_call(ast_arena const& ast, call_expr_syntax
         symbol = instance->symbol;
         auto const& signature = result.signatures[instance->signature.value];
         auto expected_count = signature.parameters.empty() ? 0uz : signature.parameters.size() - 1uz;
-        if(expected_count != node.arguments.size()) {
+        auto const& symbol_value = result.symbols[symbol.value];
+        if(not has_valid_argument_count(symbol_value.unit_index, symbol_value.function, node.arguments.size(), signature.parameters.size(), 1uz)) {
             report(diagnostic_kind::argument_count_mismatch, node.full_span, "method argument count does not match signature");
         }
+        check_default_argument_expressions(
+            symbol_value.unit_index,
+            symbol_value.function,
+            instance->context_index,
+            signature,
+            node.arguments.size(),
+            1uz,
+            &instance->substitutions,
+            &instance->pack_substitutions
+        );
         if(not signature.parameters.empty() and not can_implicitly_convert(object, signature.parameters.front())) {
             report(diagnostic_kind::type_mismatch, callee.full_span, "method receiver type mismatch");
         }
@@ -1385,9 +1413,15 @@ auto semantic_analyzer::check_member_call(ast_arena const& ast, call_expr_syntax
     }
     auto callable = *callable_pointer;
     auto expected_count = callable.parameters.empty() ? 0uz : callable.parameters.size() - 1uz;
-    if(expected_count != node.arguments.size()) {
+    auto const& symbol_value = result.symbols[symbol.value];
+    auto signature = function_signature {
+        .parameters = callable.parameters,
+        .returns = callable.returns,
+    };
+    if(not has_valid_argument_count(symbol_value.unit_index, symbol_value.function, node.arguments.size(), callable.parameters.size(), 1uz)) {
         report(diagnostic_kind::argument_count_mismatch, node.full_span, "method argument count does not match signature");
     }
+    check_default_argument_expressions(symbol_value.unit_index, symbol_value.function, 0uz, signature, node.arguments.size(), 1uz, nullptr, nullptr);
     if(not callable.parameters.empty() and not can_implicitly_convert(object, callable.parameters.front())) {
         report(diagnostic_kind::type_mismatch, callee.full_span, "method receiver type mismatch");
     }
@@ -1482,9 +1516,20 @@ auto semantic_analyzer::check_associated_call(ast_arena const& ast, call_expr_sy
         }
         symbol = instance->symbol;
         auto const& signature = result.signatures[instance->signature.value];
-        if(signature.parameters.size() != node.arguments.size()) {
+        auto const& symbol_value = result.symbols[symbol.value];
+        if(not has_valid_argument_count(symbol_value.unit_index, symbol_value.function, node.arguments.size(), signature.parameters.size())) {
             report(diagnostic_kind::argument_count_mismatch, node.full_span, "associated function argument count does not match signature");
         }
+        check_default_argument_expressions(
+            symbol_value.unit_index,
+            symbol_value.function,
+            instance->context_index,
+            signature,
+            node.arguments.size(),
+            0uz,
+            &instance->substitutions,
+            &instance->pack_substitutions
+        );
         auto count = std::min(signature.parameters.size(), node.arguments.size());
         for(auto index = 0uz; index < count; ++index) {
             auto parameter = signature.parameters[index];
@@ -1513,9 +1558,15 @@ auto semantic_analyzer::check_associated_call(ast_arena const& ast, call_expr_sy
         return expression_info{ .type = semantic_type_ids::error };
     }
     auto callable = *callable_pointer;
-    if(callable.parameters.size() != node.arguments.size()) {
+    auto const& symbol_value = result.symbols[symbol.value];
+    auto signature = function_signature {
+        .parameters = callable.parameters,
+        .returns = callable.returns,
+    };
+    if(not has_valid_argument_count(symbol_value.unit_index, symbol_value.function, node.arguments.size(), callable.parameters.size())) {
         report(diagnostic_kind::argument_count_mismatch, node.full_span, "associated function argument count does not match signature");
     }
+    check_default_argument_expressions(symbol_value.unit_index, symbol_value.function, 0uz, signature, node.arguments.size(), 0uz, nullptr, nullptr);
     auto count = std::min(callable.parameters.size(), node.arguments.size());
     for(auto index = 0uz; index < count; ++index) {
         check_expression(ast, node.arguments[index], callable.parameters[index]);

@@ -164,6 +164,9 @@ auto check_fixture_examples() -> void
     check_fixture_example_group({ "memory/main.cp" });
     check_fixture_example_group({ "operators/main.cp" });
     check_fixture_example_group({ "ownership/main.cp" });
+    check_fixture_example_group({ "interop/main.cp" });
+    check_fixture_example_group({ "errors/main.cp" }, { "core/option.cp" });
+    check_fixture_example_group({ "fs/main.cp" }, std_io_modules);
     check_fixture_example_group({ "std/main.cp" }, std_io_modules);
 }
 

@@ -159,6 +159,42 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "extern C binary should call libc abs");
 }
 
+auto check_member_default_argument_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("member-default-argument");
+    auto source = dir / "member_default_argument.cp";
+    auto app = dir / "member_default_argument";
+    write_source(
+        source,
+R"(struct counter {
+    value: i32;
+}
+
+impl counter {
+    advance(self&, count: usize = 1 as usize) -> void
+    {
+        let index: usize = 0;
+        while(index < count) {
+            value += 1;
+            index += 1;
+        }
+    }
+}
+
+main() -> i32
+{
+    let value = counter{ .value = 0 };
+    value.advance();
+    value.advance(4 as usize);
+    return value.value;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile member calls with default arguments");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 5, "member default argument should use the declared expression");
+}
+
 auto check_emit_ll(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("ll");
@@ -440,6 +476,9 @@ auto check_fixture_examples(test_tools const& tools) -> void
         { "memory", { tools.fixture_examples / "memory" / "main.cp" }, 42 },
         { "operators", { tools.fixture_examples / "operators" / "main.cp" }, 42 },
         { "ownership", { tools.fixture_examples / "ownership" / "main.cp" }, 92 },
+        { "interop", { tools.fixture_examples / "interop" / "main.cp" }, 42 },
+        { "errors", { tools.fixture_examples / "errors" / "main.cp" }, 42 },
+        { "fs", { tools.fixture_examples / "fs" / "main.cp" }, 0 },
         { "std", { tools.fixture_examples / "std" / "main.cp" }, 118 },
     };
 
@@ -780,6 +819,37 @@ auto check_pointer_difference_binary(test_tools const& tools) -> void
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status == 0, "cp should compile pointer difference binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "pointer difference should count elements");
+}
+
+auto check_update_expression_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("update-expression");
+    auto source = dir / "update_expression.cp";
+    auto app = dir / "update_expression";
+    write_source(
+        source,
+        R"(main() -> i32
+{
+    let value = 10;
+    let prefix_inc = ++value;
+    let postfix_inc = value++;
+    let prefix_dec = --value;
+    let postfix_dec = value--;
+    let standalone = 40;
+    standalone++;
+    standalone++;
+
+    if(value != 10) {
+        return 1;
+    }
+
+    return prefix_inc + postfix_inc + prefix_dec + postfix_dec + standalone - 44;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile update expression binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "update expressions should write back and preserve prefix/postfix values");
 }
 
 auto check_decltype_ref_destructure_binary(test_tools const& tools) -> void
@@ -1551,6 +1621,939 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 40, "std map/set binary should return ordered-container checksum");
 }
 
+auto check_compiler_lab_workload_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("compiler-lab-workload");
+    auto source = dir / "compiler_lab.cp";
+    auto app = dir / "compiler_lab";
+    write_source(
+        source,
+        R"(import std;
+
+enum token_kind : u8 {
+    file_end = 0;
+    invalid = 1;
+    kw_int = 2;
+    kw_void = 3;
+    kw_if = 4;
+    kw_else = 5;
+    kw_while = 6;
+    kw_return = 7;
+    identifier = 8;
+    integer = 9;
+    lparen = 10;
+    rparen = 11;
+    lbrace = 12;
+    rbrace = 13;
+    comma = 14;
+    semicolon = 15;
+    plus = 16;
+    minus = 17;
+    star = 18;
+    slash = 19;
+    percent = 20;
+    assign = 21;
+    equal_equal = 22;
+    bang_equal = 23;
+    less = 24;
+    less_equal = 25;
+    greater = 26;
+    greater_equal = 27;
+    and_and = 28;
+    or_or = 29;
+}
+
+struct token {
+    kind: token_kind;
+    position: usize;
+}
+
+struct lexer_state {
+    input: str;
+    index: usize;
+}
+
+struct parser_state {
+    tokens: vector<token>;
+    index: usize;
+}
+
+struct quad {
+    op: char;
+    left: i32;
+    right: i32;
+    result: i32;
+}
+
+struct lr1_item {
+    rule: i32;
+    dot: i32;
+    lookahead: i32;
+}
+
+impl token {
+    token()
+    {
+        return token{ .kind = token_kind::invalid, .position = 0 as usize };
+    }
+}
+
+impl lr1_item {
+    operator <(self const&, rhs: lr1_item const&) -> bool
+    {
+        if(rule != rhs.rule) {
+            return rule < rhs.rule;
+        }
+        if(dot != rhs.dot) {
+            return dot < rhs.dot;
+        }
+        return lookahead < rhs.lookahead;
+    }
+}
+
+is_alpha(ch: char) -> bool
+{
+    return (ch >= 'a' and ch <= 'z') or (ch >= 'A' and ch <= 'Z') or ch == '_';
+}
+
+is_digit(ch: char) -> bool
+{
+    return ch >= '0' and ch <= '9';
+}
+
+is_alnum(ch: char) -> bool
+{
+    return is_alpha(ch) or is_digit(ch);
+}
+
+keyword_kind(input: str, start: usize, len: usize) -> token_kind
+{
+    if(len == 2 and input[start] == 'i' and input[start + 1] == 'f') {
+        return token_kind::kw_if;
+    }
+    if(len == 3 and input[start] == 'i' and input[start + 1] == 'n' and input[start + 2] == 't') {
+        return token_kind::kw_int;
+    }
+    if(len == 4 and input[start] == 'v' and input[start + 1] == 'o' and input[start + 2] == 'i' and input[start + 3] == 'd') {
+        return token_kind::kw_void;
+    }
+    if(len == 4 and input[start] == 'e' and input[start + 1] == 'l' and input[start + 2] == 's' and input[start + 3] == 'e') {
+        return token_kind::kw_else;
+    }
+    if(len == 5 and input[start] == 'w' and input[start + 1] == 'h' and input[start + 2] == 'i' and input[start + 3] == 'l' and input[start + 4] == 'e') {
+        return token_kind::kw_while;
+    }
+    if(len == 6 and input[start] == 'r' and input[start + 1] == 'e' and input[start + 2] == 't' and input[start + 3] == 'u' and input[start + 4] == 'r' and input[start + 5] == 'n') {
+        return token_kind::kw_return;
+    }
+    return token_kind::identifier;
+}
+
+skip_space_and_comments(state: lexer_state&) -> void
+{
+    let scanning = true;
+    while(scanning) {
+        scanning = false;
+        while(state.index < state.input.size() and (state.input[state.index] == ' ' or state.input[state.index] == '\n' or state.input[state.index] == '\t')) {
+            state.index += 1;
+        }
+        if(state.index + 1 < state.input.size() and state.input[state.index] == '/' and state.input[state.index + 1] == '/') {
+            state.index += 2;
+            while(state.index < state.input.size() and state.input[state.index] != '\n') {
+                state.index += 1;
+            }
+            scanning = true;
+        }
+        if(state.index + 1 < state.input.size() and state.input[state.index] == '/' and state.input[state.index + 1] == '*') {
+            state.index += 2;
+            while(state.index + 1 < state.input.size() and not (state.input[state.index] == '*' and state.input[state.index + 1] == '/')) {
+                state.index += 1;
+            }
+            if(state.index + 1 < state.input.size()) {
+                state.index += 2;
+            }
+            scanning = true;
+        }
+    }
+}
+
+simple_token(kind: token_kind, position: usize) -> token
+{
+    return token{ .kind = kind, .position = position };
+}
+
+next_token(state: lexer_state&) -> token
+{
+    skip_space_and_comments(ref state);
+    if(state.index >= state.input.size()) {
+        return simple_token(token_kind::file_end, state.index);
+    }
+
+    let position = state.index;
+    let ch = state.input[position];
+    if(is_alpha(ch)) {
+        state.index += 1;
+        while(state.index < state.input.size() and is_alnum(state.input[state.index])) {
+            state.index += 1;
+        }
+        return simple_token(keyword_kind(state.input, position, state.index - position), position);
+    }
+    if(is_digit(ch)) {
+        state.index += 1;
+        while(state.index < state.input.size() and is_digit(state.input[state.index])) {
+            state.index += 1;
+        }
+        return simple_token(token_kind::integer, position);
+    }
+
+    state.index += 1;
+    if(ch == '(') { return simple_token(token_kind::lparen, position); }
+    if(ch == ')') { return simple_token(token_kind::rparen, position); }
+    if(ch == '{') { return simple_token(token_kind::lbrace, position); }
+    if(ch == '}') { return simple_token(token_kind::rbrace, position); }
+    if(ch == ',') { return simple_token(token_kind::comma, position); }
+    if(ch == ';') { return simple_token(token_kind::semicolon, position); }
+    if(ch == '+') { return simple_token(token_kind::plus, position); }
+    if(ch == '-') { return simple_token(token_kind::minus, position); }
+    if(ch == '*') { return simple_token(token_kind::star, position); }
+    if(ch == '/') { return simple_token(token_kind::slash, position); }
+    if(ch == '%') { return simple_token(token_kind::percent, position); }
+    if(ch == '=' and state.index < state.input.size() and state.input[state.index] == '=') {
+        state.index += 1;
+        return simple_token(token_kind::equal_equal, position);
+    }
+    if(ch == '!' and state.index < state.input.size() and state.input[state.index] == '=') {
+        state.index += 1;
+        return simple_token(token_kind::bang_equal, position);
+    }
+    if(ch == '<' and state.index < state.input.size() and state.input[state.index] == '=') {
+        state.index += 1;
+        return simple_token(token_kind::less_equal, position);
+    }
+    if(ch == '>' and state.index < state.input.size() and state.input[state.index] == '=') {
+        state.index += 1;
+        return simple_token(token_kind::greater_equal, position);
+    }
+    if(ch == '&' and state.index < state.input.size() and state.input[state.index] == '&') {
+        state.index += 1;
+        return simple_token(token_kind::and_and, position);
+    }
+    if(ch == '|' and state.index < state.input.size() and state.input[state.index] == '|') {
+        state.index += 1;
+        return simple_token(token_kind::or_or, position);
+    }
+    if(ch == '=') { return simple_token(token_kind::assign, position); }
+    if(ch == '<') { return simple_token(token_kind::less, position); }
+    if(ch == '>') { return simple_token(token_kind::greater, position); }
+    return simple_token(token_kind::invalid, position);
+}
+
+lex_all(input: str) -> vector<token>
+{
+    let state = lexer_state{ .input = input, .index = 0 as usize };
+    let output = vector<token>{};
+    let done = false;
+    while(not done) {
+        let item = next_token(ref state);
+        output.push_back(item);
+        done = item.kind == token_kind::file_end;
+    }
+    return move output;
+}
+
+peek_kind(state: parser_state&) -> token_kind
+{
+    return state.tokens[state.index].kind;
+}
+
+accept(state: parser_state&, kind: token_kind) -> bool
+{
+    if(peek_kind(ref state) == kind) {
+        state.index += 1;
+        return true;
+    }
+    return false;
+}
+
+parse_expression_level(state: parser_state&, level: i32) -> bool
+{
+    if(level == 6) {
+        if(accept(ref state, token_kind::plus) or accept(ref state, token_kind::minus)) {
+            return parse_expression_level(ref state, 6);
+        }
+        if(accept(ref state, token_kind::integer)) {
+            return true;
+        }
+        if(accept(ref state, token_kind::identifier)) {
+            if(accept(ref state, token_kind::lparen)) {
+                if(peek_kind(ref state) != token_kind::rparen) {
+                    if(not parse_expression_level(ref state, 0)) {
+                        return false;
+                    }
+                    while(accept(ref state, token_kind::comma)) {
+                        if(not parse_expression_level(ref state, 0)) {
+                            return false;
+                        }
+                    }
+                }
+                return accept(ref state, token_kind::rparen);
+            }
+            return true;
+        }
+        if(accept(ref state, token_kind::lparen)) {
+            if(not parse_expression_level(ref state, 0)) {
+                return false;
+            }
+            return accept(ref state, token_kind::rparen);
+        }
+        return false;
+    }
+
+    if(not parse_expression_level(ref state, level + 1)) {
+        return false;
+    }
+    let scanning = true;
+    while(scanning) {
+        scanning = false;
+        if(level == 0 and accept(ref state, token_kind::or_or)) { scanning = true; }
+        if(level == 1 and accept(ref state, token_kind::and_and)) { scanning = true; }
+        if(level == 2 and (accept(ref state, token_kind::equal_equal) or accept(ref state, token_kind::bang_equal))) { scanning = true; }
+        if(level == 3 and (accept(ref state, token_kind::less) or accept(ref state, token_kind::less_equal) or accept(ref state, token_kind::greater) or accept(ref state, token_kind::greater_equal))) { scanning = true; }
+        if(level == 4 and (accept(ref state, token_kind::plus) or accept(ref state, token_kind::minus))) { scanning = true; }
+        if(level == 5 and (accept(ref state, token_kind::star) or accept(ref state, token_kind::slash) or accept(ref state, token_kind::percent))) { scanning = true; }
+        if(scanning and not parse_expression_level(ref state, level + 1)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+parse_params(state: parser_state&) -> bool
+{
+    if(peek_kind(ref state) == token_kind::rparen) {
+        return true;
+    }
+    if(not accept(ref state, token_kind::kw_int)) {
+        return false;
+    }
+    if(not accept(ref state, token_kind::identifier)) {
+        return false;
+    }
+    while(accept(ref state, token_kind::comma)) {
+        if(not accept(ref state, token_kind::kw_int)) {
+            return false;
+        }
+        if(not accept(ref state, token_kind::identifier)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+parse_construct(state: parser_state&, symbol: i32) -> bool
+{
+    if(symbol == 0) {
+        while(peek_kind(ref state) != token_kind::file_end) {
+            if(not parse_construct(ref state, 1)) {
+                return false;
+            }
+        }
+        return accept(ref state, token_kind::file_end);
+    }
+    if(symbol == 1) {
+        if(not (accept(ref state, token_kind::kw_int) or accept(ref state, token_kind::kw_void))) {
+            return false;
+        }
+        if(not accept(ref state, token_kind::identifier)) {
+            return false;
+        }
+        if(not accept(ref state, token_kind::lparen)) {
+            return false;
+        }
+        if(not parse_params(ref state)) {
+            return false;
+        }
+        if(not accept(ref state, token_kind::rparen)) {
+            return false;
+        }
+        return parse_construct(ref state, 2);
+    }
+    if(symbol == 2) {
+        if(not accept(ref state, token_kind::lbrace)) {
+            return false;
+        }
+        while(peek_kind(ref state) != token_kind::rbrace and peek_kind(ref state) != token_kind::file_end) {
+            if(not parse_construct(ref state, 3)) {
+                return false;
+            }
+        }
+        return accept(ref state, token_kind::rbrace);
+    }
+
+    if(accept(ref state, token_kind::kw_int)) {
+        if(not accept(ref state, token_kind::identifier)) {
+            return false;
+        }
+        if(accept(ref state, token_kind::assign) and not parse_expression_level(ref state, 0)) {
+            return false;
+        }
+        return accept(ref state, token_kind::semicolon);
+    }
+    if(accept(ref state, token_kind::identifier)) {
+        if(accept(ref state, token_kind::assign)) {
+            if(not parse_expression_level(ref state, 0)) {
+                return false;
+            }
+            return accept(ref state, token_kind::semicolon);
+        }
+        if(accept(ref state, token_kind::lparen)) {
+            if(peek_kind(ref state) != token_kind::rparen) {
+                if(not parse_expression_level(ref state, 0)) {
+                    return false;
+                }
+                while(accept(ref state, token_kind::comma)) {
+                    if(not parse_expression_level(ref state, 0)) {
+                        return false;
+                    }
+                }
+            }
+            return accept(ref state, token_kind::rparen) and accept(ref state, token_kind::semicolon);
+        }
+        return false;
+    }
+    if(accept(ref state, token_kind::kw_if)) {
+        if(not accept(ref state, token_kind::lparen)) { return false; }
+        if(not parse_expression_level(ref state, 0)) { return false; }
+        if(not accept(ref state, token_kind::rparen)) { return false; }
+        if(not parse_construct(ref state, 2)) { return false; }
+        if(accept(ref state, token_kind::kw_else)) {
+            return parse_construct(ref state, 2);
+        }
+        return true;
+    }
+    if(accept(ref state, token_kind::kw_while)) {
+        if(not accept(ref state, token_kind::lparen)) { return false; }
+        if(not parse_expression_level(ref state, 0)) { return false; }
+        if(not accept(ref state, token_kind::rparen)) { return false; }
+        return parse_construct(ref state, 2);
+    }
+    if(accept(ref state, token_kind::kw_return)) {
+        if(peek_kind(ref state) != token_kind::semicolon and not parse_expression_level(ref state, 0)) {
+            return false;
+        }
+        return accept(ref state, token_kind::semicolon);
+    }
+    if(peek_kind(ref state) == token_kind::lbrace) {
+        return parse_construct(ref state, 2);
+    }
+    return false;
+}
+
+parse_program(input: str) -> bool
+{
+    let tokens = lex_all(input);
+    let state = parser_state{ .tokens = move tokens, .index = 0 as usize };
+    return parse_construct(ref state, 0);
+}
+
+check_grammar_metadata() -> i32
+{
+    let stmt_first = set<i32>{};
+    stmt_first.insert(2);
+    stmt_first.insert(4);
+    stmt_first.insert(6);
+    stmt_first.insert(7);
+    stmt_first.insert(8);
+    stmt_first.insert(12);
+    if(stmt_first.size() != 6 or stmt_first.rank(8) != 4 or not stmt_first.contains(12)) {
+        return 0;
+    }
+    let expr_first = set<i32>{};
+    expr_first.insert(8);
+    expr_first.insert(9);
+    expr_first.insert(10);
+    expr_first.insert(16);
+    expr_first.insert(17);
+    return stmt_first.size() as i32 + expr_first.size() as i32;
+}
+
+check_lr1_item_sets() -> i32
+{
+    let closure = set<lr1_item>{};
+    closure.insert(lr1_item{ .rule = 3, .dot = 0, .lookahead = 15 });
+    closure.insert(lr1_item{ .rule = 1, .dot = 1, .lookahead = 0 });
+    closure.insert(lr1_item{ .rule = 1, .dot = 1, .lookahead = 13 });
+    closure.insert(lr1_item{ .rule = 1, .dot = 1, .lookahead = 13 });
+    let first = closure.nth(0 as usize);
+    if(closure.size() != 3 or first.rule != 1 or first.lookahead != 0) {
+        return 0;
+    }
+    let goto_by_symbol = map<i32, set<lr1_item>>{};
+    goto_by_symbol[8].insert(lr1_item{ .rule = 1, .dot = 2, .lookahead = 0 });
+    goto_by_symbol[8].insert(lr1_item{ .rule = 1, .dot = 2, .lookahead = 13 });
+    if(goto_by_symbol[8].size() != 2) {
+        return 0;
+    }
+    return closure.rank(lr1_item{ .rule = 3, .dot = 0, .lookahead = 15 }) as i32 + goto_by_symbol[8].size() as i32;
+}
+
+emit(quads: vector<quad>&, op: char, left: i32, right: i32) -> i32
+{
+    let id = quads.size() as i32;
+    quads.push_back(quad{ .op = op, .left = left, .right = right, .result = id });
+    return id;
+}
+
+eval_quads(quads: vector<quad>&) -> i32
+{
+    let registers = vector<i32>{quads.size(), 0};
+    let index: usize = 0;
+    while(index < quads.size()) {
+        let item = quads[index];
+        if(item.op == '+') {
+            registers[item.result as usize] = item.left + item.right;
+        } else {
+            registers[item.result as usize] = item.left * item.right;
+        }
+        index += 1;
+    }
+    return registers[0 as usize] + registers[1 as usize] - registers.size() as i32 - 1;
+}
+
+check_intermediate_code() -> i32
+{
+    let quads = vector<quad>{};
+    let left = emit(ref quads, '+', 2, 3);
+    let right = emit(ref quads, '*', 4, 5);
+    if(left != 0 or right != 1 or quads.size() != 2) {
+        return 0;
+    }
+    return eval_quads(ref quads);
+}
+
+main() -> i32
+{
+    let source = "/* miniC */ int add(int a, int b) { return a + b; } int main() { int x = 1; int y = 2; int z = add(x, y); if (z > 2) { z = z * 10; } else { z = 0; } while (z > 0) { z = z - 1; } return z; }";
+    let tokens = lex_all(source);
+    if(tokens.size() < 60 or tokens[0 as usize].kind != token_kind::kw_int or tokens[tokens.size() - 1].kind != token_kind::file_end) {
+        return 1;
+    }
+    if(not parse_program(source)) {
+        return 2;
+    }
+    if(parse_program("int main( { return 0; }")) {
+        return 3;
+    }
+    if(check_grammar_metadata() != 11) {
+        return 4;
+    }
+    if(check_lr1_item_sets() != 4) {
+        return 5;
+    }
+    if(check_intermediate_code() != 22) {
+        return 6;
+    }
+    return 42;
+}
+)"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile miniC compiler-lab workload binary");
+    test_parser::assert_true(
+        exit_code(run_status({ app.string() })) == 42,
+        "miniC compiler-lab workload should cover lexer, recursive descent LL(1), LR(1) items, and quads"
+    );
+}
+
+auto check_compiler_lab_ll1_sets_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("compiler-lab-ll1-sets");
+    auto source = dir / "ll1_sets.cp";
+    auto app = dir / "ll1_sets";
+    write_source(
+        source,
+        R"(import std;
+
+struct production {
+    lhs: i32;
+    a: i32;
+    b: i32;
+    c: i32;
+    d: i32;
+    len: i32;
+}
+
+impl production {
+    production()
+    {
+        return production{ .lhs = 0, .a = 0, .b = 0, .c = 0, .d = 0, .len = 0 };
+    }
+}
+
+symbol_at(rule: production const&, index: i32) -> i32
+{
+    if(index == 0) { return rule.a; }
+    if(index == 1) { return rule.b; }
+    if(index == 2) { return rule.c; }
+    return rule.d;
+}
+
+insert_changed(values: set<i32>&, value: i32) -> bool
+{
+    let before = values.size();
+    values.insert(value);
+    return values.size() != before;
+}
+
+add_first_symbol(first: map<i32, set<i32>>&, symbol: i32, target: set<i32>&) -> bool
+{
+    let changed = false;
+    if(symbol < 100) {
+        changed = insert_changed(ref target, symbol);
+    } else {
+        let values = first[symbol];
+        let index: usize = 0;
+        while(index < values.size()) {
+            let item = values.nth(index);
+            if(item != -1 and insert_changed(ref target, item)) {
+                changed = true;
+            }
+            index += 1;
+        }
+    }
+    return changed;
+}
+
+symbol_nullable(first: map<i32, set<i32>>&, symbol: i32) -> bool
+{
+    if(symbol < 100) {
+        return symbol == -1;
+    }
+    return first[symbol].contains(-1);
+}
+
+add_first_sequence(first: map<i32, set<i32>>&, rule: production const&, start: i32, target: set<i32>&) -> bool
+{
+    let changed = false;
+    if(start >= rule.len) {
+        return insert_changed(ref target, -1);
+    }
+    let index = start;
+    while(index < rule.len) {
+        let symbol = symbol_at(rule, index);
+        if(add_first_symbol(ref first, symbol, ref target)) {
+            changed = true;
+        }
+        if(not symbol_nullable(ref first, symbol)) {
+            return changed;
+        }
+        index += 1;
+    }
+    if(insert_changed(ref target, -1)) {
+        changed = true;
+    }
+    return changed;
+}
+
+compute_first(rules: vector<production>&) -> map<i32, set<i32>>
+{
+    let first = map<i32, set<i32>>{};
+    let changed = true;
+    while(changed) {
+        changed = false;
+        let index: usize = 0;
+        while(index < rules.size()) {
+            let rule = rules[index];
+            if(add_first_sequence(ref first, rule, 0, ref first[rule.lhs])) {
+                changed = true;
+            }
+            index += 1;
+        }
+    }
+    return move first;
+}
+
+compute_follow(rules: vector<production>&, first: map<i32, set<i32>>&) -> map<i32, set<i32>>
+{
+    let follow = map<i32, set<i32>>{};
+    follow[100].insert(0);
+    let changed = true;
+    while(changed) {
+        changed = false;
+        let rule_index: usize = 0;
+        while(rule_index < rules.size()) {
+            let rule = rules[rule_index];
+            let rhs_index = 0;
+            while(rhs_index < rule.len) {
+                let symbol = symbol_at(rule, rhs_index);
+                if(symbol >= 100) {
+                    if(add_first_sequence(ref first, rule, rhs_index + 1, ref follow[symbol])) {
+                        if(follow[symbol].contains(-1)) {
+                            follow[symbol].remove(-1);
+                        } else {
+                            changed = true;
+                        }
+                    }
+                    if(rhs_index + 1 >= rule.len or symbol_nullable(ref first, symbol_at(rule, rhs_index + 1))) {
+                        let lhs_follow = follow[rule.lhs];
+                        let index: usize = 0;
+                        while(index < lhs_follow.size()) {
+                            if(insert_changed(ref follow[symbol], lhs_follow.nth(index))) {
+                                changed = true;
+                            }
+                            index += 1;
+                        }
+                    }
+                }
+                rhs_index += 1;
+            }
+            rule_index += 1;
+        }
+    }
+    return move follow;
+}
+
+select_size(rule: production const&, first: map<i32, set<i32>>&, follow: map<i32, set<i32>>&) -> i32
+{
+    let selected = set<i32>{};
+    add_first_sequence(ref first, rule, 0, ref selected);
+    if(selected.contains(-1)) {
+        selected.remove(-1);
+        let values = follow[rule.lhs];
+        let index: usize = 0;
+        while(index < values.size()) {
+            selected.insert(values.nth(index));
+            index += 1;
+        }
+    }
+    return selected.size() as i32;
+}
+
+main() -> i32
+{
+    let rules = vector<production>{};
+    rules.push_back(production{ .lhs = 100, .a = 1, .b = 101, .c = 2, .d = 0, .len = 3 });
+    rules.push_back(production{ .lhs = 101, .a = 4, .b = 5, .c = 102, .d = 0, .len = 3 });
+    rules.push_back(production{ .lhs = 101, .a = 0, .b = 0, .c = 0, .d = 0, .len = 0 });
+    rules.push_back(production{ .lhs = 102, .a = 3, .b = 4, .c = 5, .d = 102, .len = 4 });
+    rules.push_back(production{ .lhs = 102, .a = 0, .b = 0, .c = 0, .d = 0, .len = 0 });
+
+    let first = compute_first(ref rules);
+    let follow = compute_follow(ref rules, ref first);
+    if(not first[101].contains(4) or not first[101].contains(-1)) { return 1; }
+    if(not first[102].contains(3) or not first[102].contains(-1)) { return 2; }
+    if(not follow[101].contains(2) or not follow[102].contains(2)) { return 3; }
+    return select_size(rules[1], ref first, ref follow)
+        + select_size(rules[2], ref first, ref follow)
+        + select_size(rules[3], ref first, ref follow)
+        + select_size(rules[4], ref first, ref follow)
+        + 37;
+}
+)"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile LL(1) FIRST/FOLLOW/SELECT workload");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 41, "LL(1) workload should compute expected SELECT sizes");
+}
+
+auto check_compiler_lab_semantic_scope_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("compiler-lab-semantic-scope");
+    auto source = dir / "semantic_scope.cp";
+    auto app = dir / "semantic_scope";
+    write_source(
+        source,
+        R"(import std;
+
+struct symbol {
+    ty: i32;
+    depth: i32;
+}
+
+struct scope {
+    symbols: map<i32, symbol>;
+}
+
+struct analyzer {
+    scopes: vector<scope>;
+    diagnostics: i32;
+}
+
+impl symbol {
+    symbol()
+    {
+        return symbol{ .ty = -1, .depth = -1 };
+    }
+}
+
+impl scope {
+    scope() = default;
+}
+
+impl analyzer {
+    analyzer()
+    {
+        return analyzer{ .scopes = vector<scope>{}, .diagnostics = 0 };
+    }
+
+    enter_scope(self&) -> void
+    {
+        scopes.push_back(scope{});
+    }
+
+    leave_scope(self&) -> void
+    {
+        scopes.pop_back();
+    }
+
+    declare(self&, name: i32, ty: i32) -> bool
+    {
+        let index = scopes.size() - 1;
+        if(scopes[index].symbols.contains(name)) {
+            diagnostics += 1;
+            return false;
+        }
+        scopes[index].symbols[name] = symbol{ .ty = ty, .depth = index as i32 };
+        return true;
+    }
+
+    lookup_type(self&, name: i32) -> i32
+    {
+        let index = scopes.size();
+        while(index > 0) {
+            index -= 1;
+            if(scopes[index].symbols.contains(name)) {
+                return scopes[index].symbols.at(name).ty;
+            }
+        }
+        diagnostics += 1;
+        return -1;
+    }
+
+    check_return(self&, expected: i32, actual: i32) -> void
+    {
+        if(expected != actual) {
+            diagnostics += 1;
+        }
+    }
+}
+
+main() -> i32
+{
+    let sema = analyzer{};
+    sema.enter_scope();
+    if(not sema.declare(1, 10)) { return 1; }
+    if(sema.declare(1, 10)) { return 2; }
+    sema.enter_scope();
+    if(not sema.declare(1, 20)) { return 3; }
+    if(sema.lookup_type(1) != 20) { return 4; }
+    if(sema.lookup_type(2) != -1) { return 5; }
+    sema.check_return(10, sema.lookup_type(1));
+    sema.leave_scope();
+    if(sema.lookup_type(1) != 10) { return 6; }
+    sema.check_return(10, sema.lookup_type(1));
+    if(sema.diagnostics != 3) { return 7; }
+    return 42;
+}
+)"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile semantic analyzer scope workload");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "semantic scope workload should handle shadowing and diagnostics");
+}
+
+auto check_compiler_lab_lr1_table_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("compiler-lab-lr1-table");
+    auto source = dir / "lr1_table.cp";
+    auto app = dir / "lr1_table";
+    write_source(
+        source,
+        R"(import std;
+
+struct table_key {
+    state: i32;
+    symbol: i32;
+}
+
+struct lr1_item {
+    rule: i32;
+    dot: i32;
+    lookahead: i32;
+}
+
+variant action {
+    shift(i32);
+    reduce(i32);
+    accept;
+    error;
+}
+
+impl table_key {
+    operator <(self const&, rhs: table_key const&) -> bool
+    {
+        if(state != rhs.state) {
+            return state < rhs.state;
+        }
+        return symbol < rhs.symbol;
+    }
+}
+
+impl lr1_item {
+    operator <(self const&, rhs: lr1_item const&) -> bool
+    {
+        if(rule != rhs.rule) { return rule < rhs.rule; }
+        if(dot != rhs.dot) { return dot < rhs.dot; }
+        return lookahead < rhs.lookahead;
+    }
+}
+
+score(act: action const&) -> i32
+{
+    return match act {
+        .shift(state) => state * 10,
+        .reduce(rule) => rule,
+        .accept => 100,
+        .error => -100,
+    };
+}
+
+main() -> i32
+{
+    let closure = set<lr1_item>{};
+    closure.insert(lr1_item{ .rule = 0, .dot = 0, .lookahead = 0 });
+    closure.insert(lr1_item{ .rule = 1, .dot = 0, .lookahead = 0 });
+    closure.insert(lr1_item{ .rule = 1, .dot = 0, .lookahead = 0 });
+    if(closure.size() != 2) { return 1; }
+
+    let actions = map<table_key, action>{};
+    actions.insert(table_key{ .state = 0, .symbol = 1 }, action::shift(2));
+    actions.insert(table_key{ .state = 2, .symbol = 0 }, action::reduce(1));
+    actions.insert(table_key{ .state = 1, .symbol = 0 }, action::accept);
+
+    let gotos = map<table_key, i32>{};
+    gotos.insert(table_key{ .state = 0, .symbol = 100 }, 1);
+
+    if(actions.size() != 3 or gotos.at(table_key{ .state = 0, .symbol = 100 }) != 1) {
+        return 2;
+    }
+    return score(actions.at(table_key{ .state = 0, .symbol = 1 }))
+        + score(actions.at(table_key{ .state = 2, .symbol = 0 }))
+        + score(actions.at(table_key{ .state = 1, .symbol = 0 }))
+        + closure.rank(lr1_item{ .rule = 1, .dot = 0, .lookahead = 0 }) as i32
+        + 20;
+}
+)"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile LR(1) action/goto table workload");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 142, "LR(1) table workload should preserve action and item ordering");
+}
+
 auto check_panic_assert_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("panic-assert");
@@ -1657,6 +2660,7 @@ auto main(int argc, char** argv) -> int
     check_binary_exit(tools);
     check_short_circuit_binary(tools);
     check_extern_c_binary(tools);
+    check_member_default_argument_binary(tools);
     check_emit_ll(tools);
     check_emit_obj(tools);
     check_multi_input(tools);
@@ -1679,6 +2683,7 @@ auto main(int argc, char** argv) -> int
     check_return_destructor_ir(tools);
     check_function_pointer_memory_binary(tools);
     check_pointer_difference_binary(tools);
+    check_update_expression_binary(tools);
     check_decltype_ref_destructure_binary(tools);
     check_lambda_binary(tools);
     check_nested_inferred_lambda_binary(tools);
@@ -1699,6 +2704,10 @@ auto main(int argc, char** argv) -> int
     check_operator_overload_binary(tools);
     check_std_sort_binary(tools);
     check_std_map_set_binary(tools);
+    check_compiler_lab_workload_binary(tools);
+    check_compiler_lab_ll1_sets_binary(tools);
+    check_compiler_lab_semantic_scope_binary(tools);
+    check_compiler_lab_lr1_table_binary(tools);
     check_panic_assert_binary(tools);
     check_checked_index_panic_binary(tools);
     return 0;

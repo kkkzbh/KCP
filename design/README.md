@@ -19,9 +19,17 @@
 - `examples/types/main.cp`: 类型示例，展示字面量、`array/tuple`、元组下标与解构、引用、指针和 target const
 - `examples/flow/main.cp`: 流程控制示例，展示 `while`、`do while`、范围 `for` 以及带标签的 `break/continue`
 - `examples/structs/main.cp`: 结构示例，展示 `struct/impl`、默认构造、构造函数、成员/关联函数、字段访问、块表达式和析构清理
-- `examples/operators/main.cp`: 运算符重载示例，展示 `operator +`、`operator +=` 和 `operator []`
+- `examples/operators/main.cp`: 运算符重载示例，展示 `operator +`、`operator +=`、`operator []`、`operator =` 和 `operator ()`
 - `examples/ownership/main.cp`: 所有权示例，展示表达式级 `ref` / `const ref` / `move`、`self like&` 和 `= delete`
-- `examples/concepts/main.cp`: concept 示例，展示关联类型、父 concept、默认实现和 `impl concept for type`
+- `examples/concepts/main.cp`: concept 示例，展示关联类型、父 concept 和 `impl concept for type`
+- `examples/generics/main.cp`: 泛型示例，展示泛型 `struct`、泛型成员函数、concept 约束、参数包和 `template for`
+- `examples/variants/main.cp`: variant 示例，展示 payload case、空 case、case 构造和 `match`
+- `examples/lambdas/main.cp`: Lambda 示例，展示函数类型、函数指针、表达式 lambda、块 lambda 和捕获
+- `examples/memory/main.cp`: 底层内存示例，展示 `alloc`、`construct_at`、`destroy_at`、`free` 和析构
+- `examples/std/main.cp`: 标准库综合示例，展示 `optional`、`expected`、`buffer`、`vector`、`map`、`set`、`string`、`iota` 和格式化输出
+- `examples/interop/main.cp`: ABI 互操作示例，展示强类型 `enum`、opaque alias 和 `extern "C"` 调用
+- `examples/errors/main.cp`: 错误处理示例，展示 `assert`、`panic`、`!` 和 `optional` 的可恢复失败分支
+- `examples/fs/main.cp`: 文件系统示例，展示 `std.fs` 的 `file::open`、`open_options`、写入、读取和 `span<u8>` 缓冲区
 
 ## 设计文档
 

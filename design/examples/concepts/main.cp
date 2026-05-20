@@ -73,7 +73,6 @@ sum(values: range) -> i32
 
 main() -> i32
 {
-    type value_type = range_iter::iter_item;
-    let values = range{ .begin = value_type(1), .end = value_type(5) };
+    let values = range{ .begin = 1, .end = 5 };
     return sum(values);
 }

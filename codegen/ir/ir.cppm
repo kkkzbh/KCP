@@ -172,9 +172,19 @@ export struct ir_emit_result
 
 struct function_lowerer
 {
-    function_lowerer(source_manager const& sources, parse_result const& parsed, semantic_result const& semantics, ir_module& module, std::size_t unit_index, function_id id, std::size_t context_index = 0uz) :
+    struct lowerer_state
+    {
+        std::size_t unit_index{};
+        parse_result const* parsed{};
+        std::vector<std::size_t> context_stack{};
+    };
+
+    using address_binding_state = std::pair<symbol_id, std::optional<ir_value_id>>;
+
+    function_lowerer(source_manager const& sources, std::span<parse_result const> units, semantic_result const& semantics, ir_module& module, std::size_t unit_index, function_id id, std::size_t context_index = 0uz) :
         ast_source(sources),
-        parsed(parsed),
+        units(units),
+        parsed(&units[unit_index]),
         semantics(semantics),
         module(module),
         unit_index(unit_index),
@@ -286,9 +296,32 @@ struct function_lowerer
         return context_stack.empty() ? context_index : context_stack.back();
     }
 
+    auto save_lowerer_state() const -> lowerer_state
+    {
+        return lowerer_state {
+            .unit_index = unit_index,
+            .parsed = parsed,
+            .context_stack = context_stack,
+        };
+    }
+
+    auto enter_lowerer_state(std::size_t next_unit, std::size_t next_context) -> void
+    {
+        unit_index = next_unit;
+        parsed = &units[unit_index];
+        context_stack = { next_context };
+    }
+
+    auto restore_lowerer_state(lowerer_state state) -> void
+    {
+        unit_index = state.unit_index;
+        parsed = state.parsed;
+        context_stack = std::move(state.context_stack);
+    }
+
     auto lower() -> bool
     {
-        auto const& syntax = parsed.ast.node(function_id_value);
+        auto const& syntax = parsed->ast.node(function_id_value);
         auto signature_id = signature_of(function_id_value);
         auto symbol = function_symbol_of(function_id_value);
         if(not signature_id.valid() or not symbol.valid()) {
@@ -416,7 +449,7 @@ struct function_lowerer
         if(module_name.empty() and value.name == "main") {
             return "main";
         }
-        if(parsed.ast.node(function_id_value).extern_abi) {
+        if(parsed->ast.node(function_id_value).extern_abi) {
             return value.name;
         }
         if(module_name.empty()) {
@@ -449,10 +482,10 @@ struct function_lowerer
 
     auto parsed_module_name() -> std::string
     {
-        if(not parsed.root or not parsed.root->module_header) {
+        if(not parsed->root or not parsed->root->module_header) {
             return {};
         }
-        return ast_source.module_name(parsed.root->module_header->name);
+        return ast_source.module_name(parsed->root->module_header->name);
     }
 
     auto add_block(std::string name) -> ir_block_id
@@ -551,7 +584,78 @@ struct function_lowerer
             emit_store(address, value, reference->pointee);
             return address;
         }
-        return emit_expression(argument);
+        auto value = emit_expression(argument);
+        if(not value.valid()) {
+            return {};
+        }
+        return cast_to(value, info_of(argument).read_type, parameter);
+    }
+
+    auto parameter_symbol_for_default(std::size_t context, std::size_t unit, parameter_syntax const& parameter) const -> symbol_id
+    {
+        auto symbol = semantics.parameter_binding_of(context, unit, parameter.name);
+        if(symbol.valid()) {
+            return symbol;
+        }
+        return semantics.parameter_binding_of(unit, parameter.name);
+    }
+
+    auto restore_address_bindings(std::vector<address_binding_state> const& bindings) -> void
+    {
+        for(auto binding = bindings.rbegin(); binding != bindings.rend(); ++binding) {
+            if(binding->second) {
+                addresses[binding->first] = *binding->second;
+            } else {
+                addresses.erase(binding->first);
+            }
+        }
+    }
+
+    auto emit_default_argument_for_parameter(symbol_id callee, std::size_t parameter_index, semantic_type_id parameter, std::vector<ir_value_id> const& arguments) -> ir_value_id
+    {
+        auto const& symbol = semantics.symbols[callee.value];
+        auto context = 0uz;
+        if(auto instance = semantics.function_instance_of(callee)) {
+            context = instance->context_index;
+        }
+        auto const& function_syntax = units[symbol.unit_index].ast.node(symbol.function);
+        if(parameter_index >= function_syntax.parameters.size()) {
+            return unsupported_expression("default argument is missing parameter syntax");
+        }
+        auto const& parameter_syntax = function_syntax.parameters[parameter_index];
+        if(not parameter_syntax.default_value) {
+            return unsupported_expression("default argument is missing expression");
+        }
+
+        auto old_state = save_lowerer_state();
+        auto old_bindings = std::vector<address_binding_state>{};
+
+        enter_lowerer_state(symbol.unit_index, context);
+
+        for(auto index = 0uz; index < parameter_index and index < arguments.size() and index < function_syntax.parameters.size(); ++index) {
+            auto parameter_symbol = parameter_symbol_for_default(context, unit_index, function_syntax.parameters[index]);
+            if(not parameter_symbol.valid()) {
+                continue;
+            }
+            auto found = addresses.find(parameter_symbol);
+            old_bindings.emplace_back(
+                parameter_symbol,
+                found == addresses.end()
+                    ? std::optional<ir_value_id>{}
+                    : std::optional<ir_value_id>{ found->second }
+            );
+            auto parameter_type = semantics.symbols[parameter_symbol.value].type;
+            auto address = emit_alloca(parameter_type, std::string{ ast_source.slice(function_syntax.parameters[index].name) });
+            emit_store(address, arguments[index], parameter_type);
+            bind(parameter_symbol, address);
+        }
+
+        auto value = emit_argument_for_parameter(*parameter_syntax.default_value, parameter);
+
+        restore_address_bindings(old_bindings);
+        restore_lowerer_state(std::move(old_state));
+
+        return value;
     }
 
     auto emit_element_address(ir_value_id base, ir_value_id index, semantic_type_id aggregate_type, semantic_type_id element_type) -> ir_value_id
@@ -681,7 +785,7 @@ struct function_lowerer
 
     auto emit_statement(stmt_id id) -> bool
     {
-        auto const& statement = parsed.ast.node(id);
+        auto const& statement = parsed->ast.node(id);
         return std::visit (
             overloaded {
                 [&](block_statement_syntax const& node) {
@@ -1167,7 +1271,7 @@ struct function_lowerer
 
     auto emit_expression(expr_id id) -> ir_value_id
     {
-        auto const& expression = parsed.ast.node(id);
+        auto const& expression = parsed->ast.node(id);
         auto value = std::visit (
             overloaded {
                 [&](name_expr_syntax const& node) {
@@ -1585,6 +1689,7 @@ struct function_lowerer
             });
         }
 
+        auto reaches_end = false;
         for(auto index = 0uz; index < node.arms.size(); ++index) {
             current = arm_blocks[index];
             bind_match_pattern(node.arms[index].pattern, matched, matched_type);
@@ -1597,7 +1702,13 @@ struct function_lowerer
                     .opcode = ir_opcode::branch,
                     .targets = { end_block },
                 });
+                reaches_end = true;
             }
+        }
+
+        if(not reaches_end) {
+            current = arm_blocks.back();
+            return {};
         }
 
         current = end_block;
@@ -1680,6 +1791,23 @@ struct function_lowerer
 
     auto emit_unary_expression(unary_expr_syntax const& node, expr_id id) -> ir_value_id
     {
+        if(node.operator_kind == token_kind::plus_plus or node.operator_kind == token_kind::minus_minus) {
+            auto address = emit_address(node.operand);
+            if(not address.valid()) {
+                return {};
+            }
+            auto type = info_of(id).read_type;
+            auto current_value = emit_load(address, type);
+            if(not current_value.valid()) {
+                return {};
+            }
+            auto instruction = emit_value_instruction(ir_opcode::unary, type);
+            instruction.operator_kind = node.operator_kind;
+            instruction.operands = { current_value };
+            auto updated_value = emit(std::move(instruction));
+            emit_store(address, updated_value, type);
+            return node.position == unary_position::postfix ? current_value : updated_value;
+        }
         if(node.operator_kind == token_kind::amp) {
             return emit_address(node.operand);
         }
@@ -2005,7 +2133,7 @@ struct function_lowerer
             return emit_builtin_call(node, builtin);
         }
 
-        auto const& callee_syntax = parsed.ast.node(node.callee);
+        auto const& callee_syntax = parsed->ast.node(node.callee);
         auto variant_case = variant_case_of(node.callee);
         if(variant_case.valid()) {
             return emit_variant_case_value(id, variant_case, node.arguments);
@@ -2082,7 +2210,11 @@ struct function_lowerer
             if(defaults == nullptr or parameter_index >= defaults->size() or not (*defaults)[parameter_index]) {
                 return unsupported_expression("call argument is missing parameter type");
             }
-            arguments.emplace_back(emit_default_value(function->parameters[parameter_index]));
+            auto value = emit_default_argument_for_parameter(callee, parameter_index, function->parameters[parameter_index], arguments);
+            if(not value.valid()) {
+                return {};
+            }
+            arguments.emplace_back(value);
         }
         auto instruction = emit_value_instruction(ir_opcode::call, info_of(id).type);
         if(semantics.symbols[callee.value].kind == symbol_kind::function) {
@@ -2258,6 +2390,17 @@ struct function_lowerer
             }
             arguments.emplace_back(value);
         }
+        for(auto parameter_index = node.arguments.size() + 1uz; parameter_index < function->parameters.size(); ++parameter_index) {
+            auto defaults = semantics.parameter_defaults_of(callee);
+            if(defaults == nullptr or parameter_index >= defaults->size() or not (*defaults)[parameter_index]) {
+                return unsupported_expression("member call argument is missing parameter type");
+            }
+            auto value = emit_default_argument_for_parameter(callee, parameter_index, function->parameters[parameter_index], arguments);
+            if(not value.valid()) {
+                return {};
+            }
+            arguments.emplace_back(value);
+        }
 
         auto instruction = emit_value_instruction(ir_opcode::call, info_of(id).type);
         instruction.symbol = callee;
@@ -2309,7 +2452,7 @@ struct function_lowerer
 
     auto emit_address(expr_id id) -> ir_value_id
     {
-        auto const& expression = parsed.ast.node(id);
+        auto const& expression = parsed->ast.node(id);
         if(auto const* name = std::get_if<name_expr_syntax>(&expression)) {
             auto capture = lambda_capture_of(id);
             if(capture.valid()) {
@@ -2518,7 +2661,7 @@ struct function_lowerer
 
     auto constant_integer_index(expr_id id) -> std::optional<std::int64_t>
     {
-        auto const& expression = parsed.ast.node(id);
+        auto const& expression = parsed->ast.node(id);
         if(auto const* literal = std::get_if<literal_expr_syntax>(&expression)) {
             auto text = ast_source.slice(literal->full_span);
             if(text.contains('.') or text.contains('e') or text.contains('E')) {
@@ -2924,7 +3067,8 @@ struct function_lowerer
     }
 
     ast_source_view ast_source;
-    parse_result const& parsed;
+    std::span<parse_result const> units;
+    parse_result const* parsed{};
     semantic_result const& semantics;
     ir_module& module;
     std::size_t unit_index{};
@@ -2970,7 +3114,7 @@ export auto emit_ir(source_manager const& sources, std::span<parse_result const>
             if(semantics.generic_parameter_count_of(unit_index, function_id) != 0uz) {
                 continue;
             }
-            auto lowerer = function_lowerer{ sources, parsed, semantics, result.module, unit_index, function_id };
+            auto lowerer = function_lowerer{ sources, units, semantics, result.module, unit_index, function_id };
             if(not lowerer.lower()) {
                 result.error = std::move(lowerer.error);
                 return result;
@@ -2987,7 +3131,7 @@ export auto emit_ir(source_manager const& sources, std::span<parse_result const>
                 ) {
                     continue;
                 }
-                auto lowerer = function_lowerer{ sources, parsed, semantics, result.module, unit_index, function_id };
+                auto lowerer = function_lowerer{ sources, units, semantics, result.module, unit_index, function_id };
                 if(not lowerer.lower()) {
                     result.error = std::move(lowerer.error);
                     return result;
@@ -3005,7 +3149,7 @@ export auto emit_ir(source_manager const& sources, std::span<parse_result const>
                 ) {
                     continue;
                 }
-                auto lowerer = function_lowerer{ sources, parsed, semantics, result.module, unit_index, function_id };
+                auto lowerer = function_lowerer{ sources, units, semantics, result.module, unit_index, function_id };
                 if(not lowerer.lower()) {
                     result.error = std::move(lowerer.error);
                     return result;
@@ -3021,7 +3165,7 @@ export auto emit_ir(source_manager const& sources, std::span<parse_result const>
         }
         auto lowerer = function_lowerer{
             sources,
-            parsed,
+            units,
             semantics,
             result.module,
             instance.key.unit_index,

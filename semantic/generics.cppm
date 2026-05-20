@@ -482,7 +482,12 @@ auto semantic_analyzer::infer_generic_type_arguments(function_signature const& s
     auto inferred = std::map<std::uint32_t, semantic_type_id>{};
     auto count = std::min(signature.parameters.size(), arguments.size());
     for(auto index = 0uz; index < count; ++index) {
-        if(not infer_type_argument(signature.parameters[index], arguments[index].type, inferred)) {
+        auto parameter = signature.parameters[index];
+        auto argument_type = arguments[index].type;
+        if(std::holds_alternative<generic_parameter_type>(result.types.get(parameter))) {
+            argument_type = read_type(argument_type);
+        }
+        if(not infer_type_argument(parameter, argument_type, inferred)) {
             return std::nullopt;
         }
     }
@@ -1047,7 +1052,12 @@ auto semantic_analyzer::infer_function_type_arguments_for_call(symbol_id symbol,
             if(not is_dependent_type(signature->parameters[index])) {
                 continue;
             }
-            if(not infer_type_argument(signature->parameters[index], arguments[index].type, inferred)) {
+            auto parameter = signature->parameters[index];
+            auto argument_type = arguments[index].type;
+            if(std::holds_alternative<generic_parameter_type>(result.types.get(parameter))) {
+                argument_type = read_type(argument_type);
+            }
+            if(not infer_type_argument(parameter, argument_type, inferred)) {
                 report(diagnostic_kind::invalid_type_argument, span, "cannot infer generic function type arguments");
                 return std::nullopt;
             }
@@ -1060,7 +1070,11 @@ auto semantic_analyzer::infer_function_type_arguments_for_call(symbol_id symbol,
             auto pack_pattern = signature->parameters[*value_pack_parameter];
             for(auto index = fixed_parameter_count; index < arguments.size(); ++index) {
                 auto pack_element = std::optional<semantic_type_id>{};
-                if(not infer_type_argument_with_pack(pack_pattern, arguments[index].type, pack_index, inferred, pack_element)) {
+                auto argument_type = arguments[index].type;
+                if(std::holds_alternative<generic_parameter_type>(result.types.get(pack_pattern))) {
+                    argument_type = read_type(argument_type);
+                }
+                if(not infer_type_argument_with_pack(pack_pattern, argument_type, pack_index, inferred, pack_element)) {
                     report(diagnostic_kind::invalid_type_argument, span, "cannot infer generic function parameter pack");
                     return std::nullopt;
                 }

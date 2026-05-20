@@ -1,6 +1,12 @@
 import std.core.option;
 import std.core.iter;
 
+concept sized_iterator {
+    requires iterator;
+
+    remaining(self const&) -> i32;
+}
+
 struct range {
     begin: i32;
     end: i32;
@@ -26,6 +32,13 @@ impl iterator for range_iter {
     }
 }
 
+impl sized_iterator for range_iter {
+    remaining(self const&) -> i32
+    {
+        return end_value - current_value;
+    }
+}
+
 impl range {
     iter(self&) -> range_iter
     {
@@ -38,10 +51,9 @@ impl iterable for range {
     type iter_item = i32;
 }
 
-main() -> i32
+sum(values: range) -> i32
 {
     let total = 0;
-    let values = range{ .begin = 1, .end = 5 };
     let iter = values.iter();
 
     while(true) {
@@ -57,4 +69,10 @@ main() -> i32
     }
 
     return total;
+}
+
+main() -> i32
+{
+    let values = range{ .begin = 1, .end = 5 };
+    return sum(values);
 }
