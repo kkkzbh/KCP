@@ -190,7 +190,14 @@ main() -> i32
     assert_true(highlight_count(rich_highlights, rich_source, "pattern.binding", "width") == 1uz,
         "inspect should highlight match payload bindings");
 
-    auto constexpr global_source = R"(concept measurable {
+    auto constexpr global_source = R"(type public_int = i32;
+
+enum state: i32 {
+    ready = 0;
+    done = 1;
+}
+
+concept measurable {
     type item;
     size(self const&) -> i32;
 }
@@ -257,6 +264,10 @@ R"(> i32 {
         },
     });
     assert_true(global_highlights.accepted, "global highlight sample should pass semantic analysis");
+    assert_true(highlight_count(global_highlights, global_source, "type.alias.declaration", "public_int") == 1uz,
+        "inspect should distinguish top-level type aliases");
+    assert_true(highlight_count(global_highlights, global_source, "enum.case", "ready") == 1uz,
+        "inspect should distinguish enum cases");
     assert_true(highlight_count(global_highlights, global_source, "concept.declaration", "measurable") == 1uz,
         "inspect should distinguish concept declarations");
     assert_true(highlight_count(global_highlights, global_source, "associated.type.requirement", "item") == 1uz,

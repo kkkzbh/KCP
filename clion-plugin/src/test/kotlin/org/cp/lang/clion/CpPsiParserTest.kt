@@ -174,6 +174,48 @@ class CpPsiParserTest : BasePlatformTestCase() {
         assertTrue(file.collectPsiErrors().isEmpty())
     }
 
+    fun testCurrentCompilerSurfaceBuildsStructuredPsi() {
+        val file = parse(
+            """
+            export type handle = opaque i32;
+
+            enum status: i32 {
+                ok = 0;
+                fail = 1;
+            }
+
+            extern "C" puts(value: i8 const*) -> i32;
+
+            struct callable {
+                value: i32;
+            }
+
+            impl callable {
+                operator ()(self const&, value: i32) -> i32
+                {
+                    return self.value + value;
+                }
+            }
+
+            main() -> i32
+            {
+                let make = f<T>(value: T) -> T => value;
+                let never: ! = fail();
+                let owned = new callable{ .value = make<i32>(1) };
+                let marker = nullptr;
+                return status::ok as i32;
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(1, file.descendants(CpElements.TYPE_ALIAS).size)
+        assertEquals(1, file.descendants(CpElements.ENUM_DECLARATION).size)
+        assertEquals(2, file.descendants(CpElements.ENUM_CASE).size)
+        assertTrue(file.descendants(CpElements.LAMBDA_EXPRESSION).isNotEmpty())
+        assertTrue(file.descendants(CpElements.TYPE_REFERENCE).any { it.text == "!" })
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
     fun testRunMarkerOnlyAppearsOnTopLevelMain() {
         val file = parse(
             """

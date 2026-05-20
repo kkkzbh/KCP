@@ -16,6 +16,8 @@ class CpLexerContractTest {
             repoRoot.resolve("design/examples/flow/main.cp"),
             repoRoot.resolve("design/examples/operators/main.cp"),
             repoRoot.resolve("design/examples/types/main.cp"),
+            repoRoot.resolve("test/lexer/cases/valid/keywords/all_keywords.lex"),
+            repoRoot.resolve("test/lexer/cases/valid/operators/all_punctuators.lex"),
             repoRoot.resolve("test/lexer/cases/valid/trivia/block_comment.lex"),
             repoRoot.resolve("test/lexer/cases/valid/trivia/line_comment.lex"),
             repoRoot.resolve("test/lexer/cases/invalid/misc/invalid_character.lex"),

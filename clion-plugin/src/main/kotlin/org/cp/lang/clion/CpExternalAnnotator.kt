@@ -84,7 +84,7 @@ class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, CpIns
         "lambda.capture.reference" -> CpSyntaxHighlighter.LAMBDA_CAPTURE
         "type" -> CpSyntaxHighlighter.TYPE
         "type.parameter", "type.parameter.pack", "self.type" -> CpSyntaxHighlighter.TYPE_PARAMETER
-        "type.alias.declaration" -> CpSyntaxHighlighter.TYPE_ALIAS
+        "type.alias.declaration", "opaque.type.declaration" -> CpSyntaxHighlighter.TYPE_ALIAS
         "associated.type.declaration", "associated.type.requirement", "associated.type.reference" ->
             CpSyntaxHighlighter.ASSOCIATED_TYPE
         "concept.declaration", "concept.reference" -> CpSyntaxHighlighter.CONCEPT
@@ -94,8 +94,10 @@ class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, CpIns
         "loop.label", "loop.label.reference" -> CpSyntaxHighlighter.LABEL
         "field.declaration", "field.reference" -> CpSyntaxHighlighter.FIELD
         "variant.case" -> CpSyntaxHighlighter.VARIANT_CASE
+        "enum.case" -> CpSyntaxHighlighter.ENUM_CASE
         "literal", "number.literal" -> CpSyntaxHighlighter.NUMBER
         "boolean.literal" -> CpSyntaxHighlighter.BOOLEAN
+        "null.literal" -> CpSyntaxHighlighter.NULL_LITERAL
         "string.literal" -> CpSyntaxHighlighter.STRING
         "character.literal" -> CpSyntaxHighlighter.CHARACTER
         "operator" -> CpSyntaxHighlighter.OPERATOR

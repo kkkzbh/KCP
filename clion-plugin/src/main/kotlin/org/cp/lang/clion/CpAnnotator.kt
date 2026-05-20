@@ -18,6 +18,7 @@ class CpAnnotator : Annotator {
             CpElements.FIELD_DECLARATION -> annotate(element, holder, CpSyntaxHighlighter.FIELD)
             CpElements.MEMBER_NAME -> annotateMemberName(element, holder)
             CpElements.VARIANT_CASE_NAME -> annotate(element, holder, CpSyntaxHighlighter.VARIANT_CASE)
+            CpElements.ENUM_CASE_NAME -> annotate(element, holder, CpSyntaxHighlighter.ENUM_CASE)
             CpElements.MODULE_NAME, CpElements.IMPORT_NAME -> annotate(element, holder, CpSyntaxHighlighter.MODULE_NAME)
             CpElements.LOOP_LABEL -> annotate(element, holder, CpSyntaxHighlighter.LABEL)
             CpElements.CALL_EXPRESSION -> annotateCall(element, holder)

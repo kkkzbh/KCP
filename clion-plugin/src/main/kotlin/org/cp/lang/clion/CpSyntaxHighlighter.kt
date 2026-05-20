@@ -20,6 +20,7 @@ class CpSyntaxHighlighter : SyntaxHighlighter {
         CpTypes.DECLARATION_KEYWORD_TOKENS.contains(tokenType) -> DECLARATION_KEYWORD_KEYS
         CpTypes.MODULE_KEYWORD_TOKENS.contains(tokenType) -> MODULE_KEYWORD_KEYS
         CpTypes.BOOLEAN_LITERAL_TOKENS.contains(tokenType) -> BOOLEAN_KEYS
+        CpTypes.NULL_LITERAL_TOKENS.contains(tokenType) -> NULL_KEYS
         tokenType == CpTypes.KW_AS || tokenType == CpTypes.KW_AND ||
             tokenType == CpTypes.KW_OR || tokenType == CpTypes.KW_NOT -> OPERATOR_KEYS
         tokenType == CpTypes.IDENTIFIER -> IDENTIFIER_KEYS
@@ -43,6 +44,8 @@ class CpSyntaxHighlighter : SyntaxHighlighter {
             TextAttributesKey.createTextAttributesKey("CP.MODULE_KEYWORD", DefaultLanguageHighlighterColors.KEYWORD)
         val BOOLEAN: TextAttributesKey =
             TextAttributesKey.createTextAttributesKey("CP.BOOLEAN", DefaultLanguageHighlighterColors.KEYWORD)
+        val NULL_LITERAL: TextAttributesKey =
+            TextAttributesKey.createTextAttributesKey("CP.NULL", DefaultLanguageHighlighterColors.CONSTANT)
         val IDENTIFIER: TextAttributesKey =
             TextAttributesKey.createTextAttributesKey("CP.IDENTIFIER", DefaultLanguageHighlighterColors.IDENTIFIER)
         val NUMBER: TextAttributesKey =
@@ -107,11 +110,14 @@ class CpSyntaxHighlighter : SyntaxHighlighter {
             TextAttributesKey.createTextAttributesKey("CP.FIELD", DefaultLanguageHighlighterColors.INSTANCE_FIELD)
         val VARIANT_CASE: TextAttributesKey =
             TextAttributesKey.createTextAttributesKey("CP.VARIANT_CASE", DefaultLanguageHighlighterColors.CONSTANT)
+        val ENUM_CASE: TextAttributesKey =
+            TextAttributesKey.createTextAttributesKey("CP.ENUM_CASE", DefaultLanguageHighlighterColors.CONSTANT)
 
         private val CONTROL_KEYWORD_KEYS = arrayOf(CONTROL_KEYWORD)
         private val DECLARATION_KEYWORD_KEYS = arrayOf(DECLARATION_KEYWORD)
         private val MODULE_KEYWORD_KEYS = arrayOf(MODULE_KEYWORD)
         private val BOOLEAN_KEYS = arrayOf(BOOLEAN)
+        private val NULL_KEYS = arrayOf(NULL_LITERAL)
         private val IDENTIFIER_KEYS = arrayOf(IDENTIFIER)
         private val NUMBER_KEYS = arrayOf(NUMBER)
         private val STRING_KEYS = arrayOf(STRING)

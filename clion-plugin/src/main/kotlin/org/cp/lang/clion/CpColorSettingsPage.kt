@@ -54,6 +54,7 @@ class CpColorSettingsPage : ColorSettingsPage {
             let point = vec2{ .<field>x</field> = 1, .<field>y</field> = 2 };
             let area = point.<memberFunction>length</memberFunction>();
             let event = <type>event</type>::<variantCase>key</variantCase>('a');
+            let missing = <nullLiteral>nullptr</nullLiteral>;
             let storage = <builtinFunction>alloc</builtinFunction><<type>i32</type>>(1);
             let rounded = <type>i32</type>(1.5);
             let callback: <functionType>f</functionType>(<type>i32</type>) -> <type>i32</type> =
@@ -78,6 +79,7 @@ class CpColorSettingsPage : ColorSettingsPage {
         "parameter" to CpSyntaxHighlighter.PARAMETER,
         "local" to CpSyntaxHighlighter.LOCAL_VARIABLE,
         "constant" to CpSyntaxHighlighter.LOCAL_CONSTANT,
+        "nullLiteral" to CpSyntaxHighlighter.NULL_LITERAL,
         "type" to CpSyntaxHighlighter.TYPE,
         "typeParameter" to CpSyntaxHighlighter.TYPE_PARAMETER,
         "associatedType" to CpSyntaxHighlighter.ASSOCIATED_TYPE,
@@ -87,6 +89,7 @@ class CpColorSettingsPage : ColorSettingsPage {
         "label" to CpSyntaxHighlighter.LABEL,
         "field" to CpSyntaxHighlighter.FIELD,
         "variantCase" to CpSyntaxHighlighter.VARIANT_CASE,
+        "enumCase" to CpSyntaxHighlighter.ENUM_CASE,
     )
 
     override fun getAttributeDescriptors(): Array<AttributesDescriptor> = DESCRIPTORS
@@ -122,7 +125,9 @@ class CpColorSettingsPage : ColorSettingsPage {
             AttributesDescriptor("Loop label", CpSyntaxHighlighter.LABEL),
             AttributesDescriptor("Field", CpSyntaxHighlighter.FIELD),
             AttributesDescriptor("Variant case", CpSyntaxHighlighter.VARIANT_CASE),
+            AttributesDescriptor("Enum case", CpSyntaxHighlighter.ENUM_CASE),
             AttributesDescriptor("Literal//Boolean", CpSyntaxHighlighter.BOOLEAN),
+            AttributesDescriptor("Literal//Null", CpSyntaxHighlighter.NULL_LITERAL),
             AttributesDescriptor("Literal//Number", CpSyntaxHighlighter.NUMBER),
             AttributesDescriptor("Literal//String", CpSyntaxHighlighter.STRING),
             AttributesDescriptor("Literal//Character", CpSyntaxHighlighter.CHARACTER),

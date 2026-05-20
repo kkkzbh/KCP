@@ -25,6 +25,7 @@ class CpSyntaxHighlighterTest {
             highlighter.getTokenHighlights(CpTypes.KW_IMPORT),
         )
         assertArrayEquals(arrayOf(CpSyntaxHighlighter.BOOLEAN), highlighter.getTokenHighlights(CpTypes.KW_TRUE))
+        assertArrayEquals(arrayOf(CpSyntaxHighlighter.NULL_LITERAL), highlighter.getTokenHighlights(CpTypes.KW_NULLPTR))
         assertArrayEquals(arrayOf(CpSyntaxHighlighter.IDENTIFIER), highlighter.getTokenHighlights(CpTypes.IDENTIFIER))
         assertArrayEquals(arrayOf(CpSyntaxHighlighter.NUMBER), highlighter.getTokenHighlights(CpTypes.INTEGER_LITERAL))
         assertArrayEquals(arrayOf(CpSyntaxHighlighter.STRING), highlighter.getTokenHighlights(CpTypes.STRING_LITERAL))
@@ -32,6 +33,9 @@ class CpSyntaxHighlighterTest {
         assertArrayEquals(arrayOf(CpSyntaxHighlighter.LINE_COMMENT), highlighter.getTokenHighlights(CpTypes.LINE_COMMENT))
         assertArrayEquals(arrayOf(CpSyntaxHighlighter.BLOCK_COMMENT), highlighter.getTokenHighlights(CpTypes.BLOCK_COMMENT))
         assertArrayEquals(arrayOf(CpSyntaxHighlighter.OPERATOR), highlighter.getTokenHighlights(CpTypes.PLUS_EQUAL))
+        assertArrayEquals(arrayOf(CpSyntaxHighlighter.OPERATOR), highlighter.getTokenHighlights(CpTypes.BANG))
+        assertArrayEquals(arrayOf(CpSyntaxHighlighter.OPERATOR), highlighter.getTokenHighlights(CpTypes.KW_NEW))
+        assertArrayEquals(arrayOf(CpSyntaxHighlighter.OPERATOR), highlighter.getTokenHighlights(CpTypes.KW_DELETE))
         assertArrayEquals(arrayOf(CpSyntaxHighlighter.PUNCTUATION), highlighter.getTokenHighlights(CpTypes.SEMICOLON))
         assertArrayEquals(arrayOf(CpSyntaxHighlighter.BAD_CHARACTER), highlighter.getTokenHighlights(CpTypes.INVALID))
     }

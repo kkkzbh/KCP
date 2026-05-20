@@ -274,6 +274,7 @@ private object CpFormatSpacing {
         CpElements.BLOCK,
         CpElements.BLOCK_EXPRESSION,
         CpElements.STRUCT_DECLARATION,
+        CpElements.ENUM_DECLARATION,
         CpElements.VARIANT_DECLARATION,
         CpElements.CONCEPT_DECLARATION,
         CpElements.IMPL_BLOCK,

@@ -228,6 +228,7 @@ auto is_operator_token(token_kind kind) -> bool
         case pipe_equal:
         case caret:
         case caret_equal:
+        case bang:
         case tilde:
         case less_less:
         case less_less_equal:
@@ -242,6 +243,7 @@ auto is_operator_token(token_kind kind) -> bool
         case kw_not:
         case kw_ref:
         case kw_move:
+        case kw_new:
         case kw_delete:
             return true;
         default:
@@ -259,6 +261,7 @@ auto is_literal_token(token_kind kind) -> bool
         or kind == string_literal
         or kind == kw_true
         or kind == kw_false
+        or kind == kw_nullptr
     );
 }
 
@@ -267,6 +270,10 @@ auto add_token_highlights(highlight_collector& collector, std::span<token const>
     for(auto const& token : tokens) {
         if(token.kind == token_kind::kw_true or token.kind == token_kind::kw_false) {
             collector.add("boolean.literal", token.span);
+            continue;
+        }
+        if(token.kind == token_kind::kw_nullptr) {
+            collector.add("null.literal", token.span);
             continue;
         }
         if(token.kind == token_kind::string_literal) {
@@ -293,6 +300,8 @@ auto collect_expression_highlights(highlight_collector& collector, ast_arena con
 
 auto collect_type_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, type_id id) -> void;
 
+auto collect_generic_parameter_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, std::span<generic_parameter_syntax const> parameters) -> void;
+
 auto source_text(highlight_collector& collector, source_span span) -> std::string_view
 {
     return collector.sources.slice(span);
@@ -303,6 +312,8 @@ auto collect_literal_highlight(highlight_collector& collector, source_span span)
     auto const text = source_text(collector, span);
     if(text == "true" or text == "false") {
         collector.add("boolean.literal", span);
+    } else if(text == "nullptr") {
+        collector.add("null.literal", span);
     } else if(text.starts_with("\"")) {
         collector.add("string.literal", span);
     } else if(text.starts_with("'")) {
@@ -581,10 +592,14 @@ auto collect_expression_highlights(highlight_collector& collector, ast_arena con
         [&](lambda_expr_syntax const& node) {
             auto const& function = ast.node(node.function);
             collector.add("lambda.marker", function.name);
+            collect_generic_parameter_highlights(collector, ast, checked, unit_index, function.generic_parameters);
             for(auto const& parameter : function.parameters) {
                 collector.add("parameter.declaration", parameter.name);
                 if(parameter.type) {
                     collect_type_highlights(collector, ast, checked, unit_index, *parameter.type);
+                }
+                if(parameter.default_value) {
+                    collect_expression_highlights(collector, ast, checked, unit_index, *parameter.default_value);
                 }
             }
             if(function.return_type) {
@@ -602,6 +617,9 @@ auto collect_generic_parameter_highlights(highlight_collector& collector, ast_ar
         for(auto const& concept_bound : parameter.concept_bounds) {
             collect_concept_id_highlights(collector, ast, checked, unit_index, concept_bound);
         }
+        if(parameter.default_argument) {
+            collect_type_argument_highlight(collector, ast, checked, unit_index, *parameter.default_argument);
+        }
     }
 }
 
@@ -614,11 +632,14 @@ auto collect_function_highlights(highlight_collector& collector, ast_arena const
         if(parameter.type) {
             collect_type_highlights(collector, ast, checked, unit_index, *parameter.type);
         }
+        if(parameter.default_value) {
+            collect_expression_highlights(collector, ast, checked, unit_index, *parameter.default_value);
+        }
     }
     if(function.return_type) {
         collect_type_highlights(collector, ast, checked, unit_index, *function.return_type);
     }
-    if(not function.defaulted) {
+    if(function.has_body) {
         collect_statement_highlights(collector, ast, checked, unit_index, function.body);
     }
 }
@@ -736,6 +757,15 @@ auto collect_ast_highlights(highlight_collector& collector, parse_result const& 
             collect_type_highlights(collector, parsed.ast, checked, unit_index, field.type);
         }
     }
+    for(auto id : root.enums) {
+        auto const& value = parsed.ast.node(id);
+        collector.add("type", value.name);
+        collect_type_highlights(collector, parsed.ast, checked, unit_index, value.underlying_type);
+        for(auto const& enum_case : value.cases) {
+            collector.add("enum.case", enum_case.name);
+            collect_expression_highlights(collector, parsed.ast, checked, unit_index, enum_case.value);
+        }
+    }
     for(auto id : root.variants) {
         auto const& value = parsed.ast.node(id);
         collector.add("type", value.name);
@@ -750,6 +780,7 @@ auto collect_ast_highlights(highlight_collector& collector, parse_result const& 
     for(auto id : root.concepts) {
         auto const& value = parsed.ast.node(id);
         collector.add("concept.declaration", value.name);
+        collect_generic_parameter_highlights(collector, parsed.ast, checked, unit_index, value.generic_parameters);
         for(auto const& item : value.items) {
             std::visit(overloaded {
                 [&](concept_requires_syntax const& requirement) {
@@ -796,6 +827,9 @@ auto collect_ast_highlights(highlight_collector& collector, parse_result const& 
                         if(parameter.type) {
                             collect_type_highlights(collector, parsed.ast, checked, unit_index, *parameter.type);
                         }
+                        if(parameter.default_value) {
+                            collect_expression_highlights(collector, parsed.ast, checked, unit_index, *parameter.default_value);
+                        }
                     }
                     if(function.return_type) {
                         collect_type_highlights(collector, parsed.ast, checked, unit_index, *function.return_type);
@@ -804,8 +838,16 @@ auto collect_ast_highlights(highlight_collector& collector, parse_result const& 
             }, item);
         }
     }
+    for(auto id : root.type_aliases) {
+        auto const& value = parsed.ast.node(id);
+        collector.add(value.opaque ? "opaque.type.declaration" : "type.alias.declaration", value.name);
+        if(value.value) {
+            collect_type_highlights(collector, parsed.ast, checked, unit_index, *value.value);
+        }
+    }
     for(auto id : root.impls) {
         auto const& value = parsed.ast.node(id);
+        collect_generic_parameter_highlights(collector, parsed.ast, checked, unit_index, value.generic_parameters);
         collect_type_highlights(collector, parsed.ast, checked, unit_index, value.type);
         for(auto const& alias : value.type_aliases) {
             collector.add("associated.type.declaration", alias.name);
@@ -820,6 +862,7 @@ auto collect_ast_highlights(highlight_collector& collector, parse_result const& 
     }
     for(auto id : root.concept_impls) {
         auto const& value = parsed.ast.node(id);
+        collect_generic_parameter_highlights(collector, parsed.ast, checked, unit_index, value.generic_parameters);
         collect_concept_id_highlights(collector, parsed.ast, checked, unit_index, value.concept_name);
         collect_type_highlights(collector, parsed.ast, checked, unit_index, value.target_type);
         for(auto const& alias : value.type_aliases) {

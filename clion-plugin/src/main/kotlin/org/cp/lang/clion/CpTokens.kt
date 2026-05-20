@@ -32,19 +32,21 @@ object CpTypes {
     @JvmField val KW_EXPORT = token("kw_export")
     @JvmField val KW_MODULE = token("kw_module")
     @JvmField val KW_STRUCT = token("kw_struct")
+    @JvmField val KW_ENUM = token("kw_enum")
     @JvmField val KW_IMPL = token("kw_impl")
     @JvmField val KW_CONCEPT = token("kw_concept")
     @JvmField val KW_OPERATOR = token("kw_operator")
-    @JvmField val KW_TRAIT = token("kw_trait")
     @JvmField val KW_AS = token("kw_as")
     @JvmField val KW_TRUE = token("kw_true")
     @JvmField val KW_FALSE = token("kw_false")
+    @JvmField val KW_NULLPTR = token("kw_nullptr")
     @JvmField val KW_AND = token("kw_and")
     @JvmField val KW_OR = token("kw_or")
     @JvmField val KW_NOT = token("kw_not")
     @JvmField val KW_REF = token("kw_ref")
     @JvmField val KW_MOVE = token("kw_move")
     @JvmField val KW_LIKE = token("kw_like")
+    @JvmField val KW_NEW = token("kw_new")
     @JvmField val KW_DELETE = token("kw_delete")
 
     @JvmField val L_PAREN = token("l_paren")
@@ -82,6 +84,7 @@ object CpTypes {
     @JvmField val PIPE_EQUAL = token("pipe_equal")
     @JvmField val CARET = token("caret")
     @JvmField val CARET_EQUAL = token("caret_equal")
+    @JvmField val BANG = token("bang")
     @JvmField val TILDE = token("tilde")
     @JvmField val LESS_LESS = token("less_less")
     @JvmField val LESS_LESS_EQUAL = token("less_less_equal")
@@ -94,8 +97,9 @@ object CpTypes {
     @JvmField
     val KEYWORD_TOKENS: TokenSet = TokenSet.create(
         KW_LET, KW_CONST, KW_IF, KW_ELSE, KW_WHILE, KW_DO, KW_FOR, KW_BREAK, KW_CONTINUE, KW_RETURN,
-        KW_IMPORT, KW_EXPORT, KW_MODULE, KW_STRUCT, KW_IMPL, KW_CONCEPT, KW_OPERATOR, KW_TRAIT,
-        KW_AS, KW_TRUE, KW_FALSE, KW_AND, KW_OR, KW_NOT, KW_REF, KW_MOVE, KW_LIKE, KW_DELETE,
+        KW_IMPORT, KW_EXPORT, KW_MODULE, KW_STRUCT, KW_ENUM, KW_IMPL, KW_CONCEPT, KW_OPERATOR,
+        KW_AS, KW_TRUE, KW_FALSE, KW_NULLPTR, KW_AND, KW_OR, KW_NOT, KW_REF, KW_MOVE, KW_LIKE,
+        KW_NEW, KW_DELETE,
     )
 
     @JvmField
@@ -105,7 +109,7 @@ object CpTypes {
 
     @JvmField
     val DECLARATION_KEYWORD_TOKENS: TokenSet = TokenSet.create(
-        KW_LET, KW_CONST, KW_STRUCT, KW_IMPL, KW_CONCEPT, KW_OPERATOR, KW_TRAIT, KW_DELETE,
+        KW_LET, KW_CONST, KW_STRUCT, KW_ENUM, KW_IMPL, KW_CONCEPT, KW_OPERATOR,
     )
 
     @JvmField
@@ -113,6 +117,9 @@ object CpTypes {
 
     @JvmField
     val BOOLEAN_LITERAL_TOKENS: TokenSet = TokenSet.create(KW_TRUE, KW_FALSE)
+
+    @JvmField
+    val NULL_LITERAL_TOKENS: TokenSet = TokenSet.create(KW_NULLPTR)
 
     @JvmField
     val COMMENT_TOKENS: TokenSet = TokenSet.create(LINE_COMMENT, BLOCK_COMMENT)
@@ -127,16 +134,16 @@ object CpTypes {
         SLASH_EQUAL, PERCENT, PERCENT_EQUAL, EQUAL, EQUAL_EQUAL, BANG_EQUAL, LESS, LESS_EQUAL,
         GREATER, GREATER_EQUAL, AMP, AMP_EQUAL, PIPE, PIPE_EQUAL, CARET, CARET_EQUAL, TILDE,
         LESS_LESS, LESS_LESS_EQUAL, GREATER_GREATER, GREATER_GREATER_EQUAL, PLUS_PLUS,
-        MINUS_MINUS, QUESTION,
+        MINUS_MINUS, QUESTION, BANG,
     )
 
     @JvmField
     val OPERATOR_TOKENS: TokenSet = TokenSet.create(
         ARROW, PLUS, PLUS_EQUAL, MINUS, MINUS_EQUAL, STAR, STAR_EQUAL, SLASH, SLASH_EQUAL,
         PERCENT, PERCENT_EQUAL, EQUAL, EQUAL_EQUAL, BANG_EQUAL, LESS, LESS_EQUAL, GREATER,
-        GREATER_EQUAL, AMP, AMP_EQUAL, PIPE, PIPE_EQUAL, CARET, CARET_EQUAL, TILDE, LESS_LESS,
-        LESS_LESS_EQUAL, GREATER_GREATER, GREATER_GREATER_EQUAL, PLUS_PLUS, MINUS_MINUS,
-        QUESTION, KW_AS, KW_AND, KW_OR, KW_NOT, KW_REF, KW_MOVE,
+        GREATER_EQUAL, AMP, AMP_EQUAL, PIPE, PIPE_EQUAL, CARET, CARET_EQUAL, BANG, TILDE,
+        LESS_LESS, LESS_LESS_EQUAL, GREATER_GREATER, GREATER_GREATER_EQUAL, PLUS_PLUS,
+        MINUS_MINUS, QUESTION, KW_AS, KW_AND, KW_OR, KW_NOT, KW_REF, KW_MOVE, KW_NEW, KW_DELETE,
     )
 
     @JvmField
@@ -160,19 +167,21 @@ object CpTypes {
         "export" to KW_EXPORT,
         "module" to KW_MODULE,
         "struct" to KW_STRUCT,
+        "enum" to KW_ENUM,
         "impl" to KW_IMPL,
         "concept" to KW_CONCEPT,
         "operator" to KW_OPERATOR,
-        "trait" to KW_TRAIT,
         "as" to KW_AS,
         "true" to KW_TRUE,
         "false" to KW_FALSE,
+        "nullptr" to KW_NULLPTR,
         "and" to KW_AND,
         "or" to KW_OR,
         "not" to KW_NOT,
         "ref" to KW_REF,
         "move" to KW_MOVE,
         "like" to KW_LIKE,
+        "new" to KW_NEW,
         "delete" to KW_DELETE,
     )
 
@@ -218,6 +227,7 @@ object CpTypes {
         "&" to AMP,
         "|" to PIPE,
         "^" to CARET,
+        "!" to BANG,
         "~" to TILDE,
         "?" to QUESTION,
     )
@@ -226,7 +236,7 @@ object CpTypes {
 }
 
 object CpTrivia {
-    val recoveryDelimiters: Set<Char> = " \t\r\n(){}[],:;.+-*/%<>=&|^~?\"'".toSet()
+    val recoveryDelimiters: Set<Char> = " \t\r\n(){}[],:;.+-*/%<>=&|^~!?\"'".toSet()
 
     fun isIdentifierStart(ch: Char): Boolean = ch == '_' || ch in 'a'..'z' || ch in 'A'..'Z'
 

@@ -47,6 +47,10 @@ private class CpBuilder(
                 parseStructDeclaration()
                 true
             }
+            at(CpTypes.KW_ENUM) -> {
+                parseEnumDeclaration()
+                true
+            }
             contextual("variant") -> {
                 parseVariantDeclaration()
                 true
@@ -55,12 +59,20 @@ private class CpBuilder(
                 parseConceptDeclaration()
                 true
             }
+            contextual("type") -> {
+                parseTypeAlias(CpElements.TYPE_ALIAS)
+                true
+            }
             at(CpTypes.KW_IMPL) && !exported -> {
                 parseImplBlock()
                 true
             }
             at(CpTypes.KW_OPERATOR) -> {
                 parseOperatorFunction(CpElements.FUNCTION)
+                true
+            }
+            contextual("extern") -> {
+                parseExternFunction(CpElements.FUNCTION)
                 true
             }
             at(CpTypes.IDENTIFIER) -> {
@@ -134,6 +146,34 @@ private class CpBuilder(
         marker.done(CpElements.STRUCT_FIELD)
     }
 
+    private fun parseEnumDeclaration() {
+        val marker = builder.mark()
+        expect(CpTypes.KW_ENUM, "expected 'enum'")
+        markIdentifier(CpElements.TYPE_NAME, "expected enum name")
+        expect(CpTypes.COLON, "expected ':'")
+        parseType()
+        if (!expect(CpTypes.L_BRACE, "expected '{'")) {
+            marker.done(CpElements.ENUM_DECLARATION)
+            return
+        }
+        while (!builder.eof() && !at(CpTypes.R_BRACE)) {
+            val offset = builder.currentOffset
+            parseEnumCase()
+            recoverIfStalled(offset)
+        }
+        expect(CpTypes.R_BRACE, "expected '}'")
+        marker.done(CpElements.ENUM_DECLARATION)
+    }
+
+    private fun parseEnumCase() {
+        val marker = builder.mark()
+        markIdentifier(CpElements.ENUM_CASE_NAME, "expected enum case name")
+        expect(CpTypes.EQUAL, "expected '='")
+        parseExpression()
+        expect(CpTypes.SEMICOLON, "expected ';'")
+        marker.done(CpElements.ENUM_CASE)
+    }
+
     private fun parseVariantDeclaration() {
         val marker = builder.mark()
         expectContextual("variant")
@@ -174,6 +214,9 @@ private class CpBuilder(
         val marker = builder.mark()
         expect(CpTypes.KW_CONCEPT, "expected 'concept'")
         markIdentifier(CpElements.TYPE_NAME, "expected concept name")
+        if (at(CpTypes.LESS)) {
+            parseGenericParameterList()
+        }
         if (!expect(CpTypes.L_BRACE, "expected '{'")) {
             marker.done(CpElements.CONCEPT_DECLARATION)
             return
@@ -193,7 +236,11 @@ private class CpBuilder(
 
     private fun parseFunctionRequirement() {
         val marker = builder.mark()
-        markIdentifier(CpElements.FUNCTION_NAME, "expected function name")
+        if (at(CpTypes.KW_OPERATOR)) {
+            parseOperatorFunctionName()
+        } else {
+            markIdentifier(CpElements.FUNCTION_NAME, "expected function name")
+        }
         expect(CpTypes.L_PAREN, "expected '('")
         parseParameterList()
         expect(CpTypes.R_PAREN, "expected ')'")
@@ -211,6 +258,9 @@ private class CpBuilder(
     private fun parseImplBlock() {
         val marker = builder.mark()
         expect(CpTypes.KW_IMPL, "expected 'impl'")
+        if (at(CpTypes.LESS)) {
+            parseGenericParameterList()
+        }
         parseType()
         if (consume(CpTypes.KW_FOR)) {
             parseType()
@@ -252,6 +302,28 @@ private class CpBuilder(
         parseFunctionTail(marker, type)
     }
 
+    private fun parseExternFunction(type: IElementType) {
+        val marker = builder.mark()
+        expectContextual("extern")
+        if (at(CpTypes.STRING_LITERAL)) {
+            advance()
+        } else {
+            expect(CpTypes.STRING_LITERAL, "expected extern ABI string")
+        }
+        markIdentifier(CpElements.FUNCTION_NAME, "expected function name")
+        if (at(CpTypes.LESS)) {
+            parseGenericParameterList()
+        }
+        expect(CpTypes.L_PAREN, "expected '('")
+        parseParameterList()
+        expect(CpTypes.R_PAREN, "expected ')'")
+        if (consume(CpTypes.ARROW)) {
+            parseType()
+        }
+        expect(CpTypes.SEMICOLON, "expected ';'")
+        marker.done(type)
+    }
+
     private fun parseOperatorFunction(type: IElementType) {
         val marker = builder.mark()
         parseOperatorFunctionName()
@@ -268,6 +340,10 @@ private class CpBuilder(
     private fun parseOverloadOperatorName() {
         if (consume(CpTypes.L_BRACKET)) {
             expect(CpTypes.R_BRACKET, "expected ']'")
+            return
+        }
+        if (consume(CpTypes.L_PAREN)) {
+            expect(CpTypes.R_PAREN, "expected ')'")
             return
         }
         val current = token()
@@ -288,6 +364,9 @@ private class CpBuilder(
         expect(CpTypes.L_PAREN, "expected '('")
         parseParameterList()
         expect(CpTypes.R_PAREN, "expected ')'")
+        if (consume(CpTypes.ARROW)) {
+            parseType()
+        }
         if (consume(CpTypes.EQUAL)) {
             if (!consume(CpTypes.KW_DELETE)) {
                 expectContextual("default")
@@ -295,9 +374,6 @@ private class CpBuilder(
             expect(CpTypes.SEMICOLON, "expected ';'")
             marker.done(type)
             return
-        }
-        if (consume(CpTypes.ARROW)) {
-            parseType()
         }
         if (contextual("requires")) {
             parseRequiresClauseUntil(CpTypes.L_BRACE)
@@ -324,12 +400,22 @@ private class CpBuilder(
         markIdentifier(CpElements.GENERIC_PARAMETER_NAME, "expected generic parameter")
         consumeEllipsis()
         if (consume(CpTypes.COLON)) {
-            expectIdentifier("expected concept bound")
+            parseConceptId()
             while (consume(CpTypes.KW_AND)) {
-                expectIdentifier("expected concept bound")
+                parseConceptId()
             }
         }
+        if (consume(CpTypes.EQUAL)) {
+            parseTypeArgument()
+        }
         marker.done(CpElements.GENERIC_PARAMETER)
+    }
+
+    private fun parseConceptId() {
+        markIdentifier(CpElements.TYPE_NAME, "expected concept bound")
+        if (at(CpTypes.LESS)) {
+            parseTypeArgumentList()
+        }
     }
 
     private fun parseRequiresClauseUntil(end: IElementType) {
@@ -385,6 +471,9 @@ private class CpBuilder(
         expect(CpTypes.COLON, "expected ':'")
         parseType()
         consumeEllipsis()
+        if (consume(CpTypes.EQUAL)) {
+            parseExpression()
+        }
         marker.done(CpElements.PARAMETER)
     }
 
@@ -394,6 +483,13 @@ private class CpBuilder(
         }
         if (contextual("decltype") && lookAhead(1) == CpTypes.L_PAREN) {
             return parseDecltype()
+        }
+        if (at(CpTypes.BANG)) {
+            val marker = builder.mark()
+            advance()
+            parseTypeSuffix()
+            marker.done(CpElements.TYPE_REFERENCE)
+            return true
         }
         if (at(CpTypes.L_BRACKET)) {
             return parseArrayType()
@@ -448,10 +544,12 @@ private class CpBuilder(
     }
 
     private fun parseTypeSuffix() {
-        consume(CpTypes.KW_CONST) || consume(CpTypes.KW_LIKE) || consume(CpTypes.KW_MOVE)
+        consume(CpTypes.KW_CONST) || consume(CpTypes.KW_LIKE)
         while (consume(CpTypes.STAR)) {
         }
-        consume(CpTypes.AMP)
+        if (!consume(CpTypes.AMP) && consume(CpTypes.KW_MOVE)) {
+            expect(CpTypes.AMP, "expected '&'")
+        }
     }
 
     private fun parseTypeLengthArgument() {
@@ -519,7 +617,7 @@ private class CpBuilder(
         val marker = builder.mark()
         when {
             at(CpTypes.INTEGER_LITERAL) -> advance()
-            at(CpTypes.IDENTIFIER) -> parseType()
+            startsType() -> parseType()
             else -> builder.error("expected type argument")
         }
         marker.done(CpElements.TYPE_ARGUMENT)
@@ -617,6 +715,7 @@ private class CpBuilder(
         expectContextual("type")
         markIdentifier(CpElements.TYPE_NAME, "expected type alias name")
         if (consume(CpTypes.EQUAL)) {
+            consumeContextual("opaque")
             parseType()
         }
         expect(CpTypes.SEMICOLON, "expected ';'")
@@ -876,6 +975,7 @@ private class CpBuilder(
             looksLikeLambdaExpression() -> parseLambdaExpression()
             looksLikeTypeInitializer() -> parseStructInitExpression()
             looksLikeAssociatedNameExpression() -> parseAssociatedNameExpression()
+            at(CpTypes.KW_NEW) -> parseNewExpression()
             at(CpTypes.IDENTIFIER) -> {
                 val marker = builder.mark()
                 advance()
@@ -900,6 +1000,15 @@ private class CpBuilder(
                 null
             }
         }
+    }
+
+    private fun parseNewExpression(): PsiBuilder.Marker {
+        val marker = builder.mark()
+        expect(CpTypes.KW_NEW, "expected 'new'")
+        parseType()
+        parseStructInitializerList()
+        marker.done(CpElements.STRUCT_INIT_EXPRESSION)
+        return marker
     }
 
     private fun parseAssociatedNameExpression(): PsiBuilder.Marker {
@@ -990,6 +1099,9 @@ private class CpBuilder(
     private fun parseLambdaExpression(): PsiBuilder.Marker {
         val marker = builder.mark()
         expectContextual("f")
+        if (at(CpTypes.LESS)) {
+            parseGenericParameterList()
+        }
         expect(CpTypes.L_PAREN, "expected '('")
         parseLambdaParameterList()
         expect(CpTypes.R_PAREN, "expected ')'")
@@ -1021,6 +1133,10 @@ private class CpBuilder(
         markIdentifier(CpElements.PARAMETER_NAME, "expected parameter name")
         if (consume(CpTypes.COLON)) {
             parseType()
+            consumeEllipsis()
+        }
+        if (consume(CpTypes.EQUAL)) {
+            parseExpression()
         }
         marker.done(CpElements.PARAMETER)
     }
@@ -1089,21 +1205,50 @@ private class CpBuilder(
         at(CpTypes.IDENTIFIER) ||
             contextual("match") ||
             isLiteral(token()) ||
+            at(CpTypes.KW_NEW) ||
             at(CpTypes.L_PAREN) ||
             at(CpTypes.L_BRACKET) ||
             at(CpTypes.L_BRACE) ||
             isPrefixOperator(token())
 
+    private fun startsType(): Boolean =
+        at(CpTypes.IDENTIFIER) ||
+            at(CpTypes.BANG) ||
+            at(CpTypes.L_BRACKET) ||
+            at(CpTypes.L_PAREN)
+
     private fun looksLikeFunctionType(): Boolean =
         contextual("f") && (lookAhead(1) == CpTypes.L_PAREN || (lookAhead(1) == CpTypes.STAR && lookAhead(2) == CpTypes.L_PAREN))
 
     private fun looksLikeLambdaExpression(): Boolean {
-        if (!contextual("f") || lookAhead(1) != CpTypes.L_PAREN) {
+        if (!contextual("f")) {
             return false
         }
 
+        var start = 1
+        if (lookAhead(start) == CpTypes.LESS) {
+            var angleDepth = 0
+            while (true) {
+                when (lookAhead(start) ?: return false) {
+                    CpTypes.LESS -> angleDepth += 1
+                    CpTypes.GREATER -> angleDepth -= 1
+                    CpTypes.GREATER_GREATER -> angleDepth -= 2
+                    CpTypes.GREATER_GREATER_EQUAL -> return false
+                }
+                start += 1
+                if (angleDepth == 0) {
+                    break
+                }
+                if (angleDepth < 0) {
+                    return false
+                }
+            }
+        }
+        if (lookAhead(start) != CpTypes.L_PAREN) {
+            return false
+        }
         var depth = 0
-        var index = 1
+        var index = start
         while (true) {
             when (lookAhead(index) ?: return false) {
                 CpTypes.L_PAREN -> depth += 1
@@ -1182,6 +1327,17 @@ private class CpBuilder(
             if (lookAhead(index) == CpTypes.LESS) {
                 return false
             }
+        }
+        if (lookAhead(index) == CpTypes.KW_CONST || lookAhead(index) == CpTypes.KW_LIKE) {
+            index += 1
+        }
+        while (lookAhead(index) == CpTypes.STAR) {
+            index += 1
+        }
+        if (lookAhead(index) == CpTypes.AMP) {
+            index += 1
+        } else if (lookAhead(index) == CpTypes.KW_MOVE && lookAhead(index + 1) == CpTypes.AMP) {
+            index += 2
         }
         return lookAhead(index) == nextType
     }
@@ -1275,10 +1431,13 @@ private class CpBuilder(
     private fun startsTopLevelItem(): Boolean =
         at(CpTypes.IDENTIFIER) ||
             at(CpTypes.KW_STRUCT) ||
+            at(CpTypes.KW_ENUM) ||
             contextual("variant") ||
             at(CpTypes.KW_CONCEPT) ||
             at(CpTypes.KW_IMPL) ||
             at(CpTypes.KW_OPERATOR) ||
+            contextual("type") ||
+            contextual("extern") ||
             at(CpTypes.KW_EXPORT)
 
     private fun synchronizeStatement() {
@@ -1362,6 +1521,7 @@ private class CpBuilder(
             CpTypes.STRING_LITERAL,
             CpTypes.KW_TRUE,
             CpTypes.KW_FALSE,
+            CpTypes.KW_NULLPTR,
         )
 
         private val OVERLOAD_OPERATOR_TOKENS = setOf(
