@@ -131,6 +131,29 @@ auto check_if_control_flow() -> void
     test_parser::assert_true(emitted.ir.contains("br i1"), "LLVM IR should contain a conditional branch");
 }
 
+auto check_short_circuit_control_flow() -> void
+{
+    auto sources = source_manager{};
+    auto parsed = parse_source(
+        sources,
+        "short_circuit.cp",
+        R"(answer(flag: bool, pointer: i32*) -> bool
+{
+    return (flag and *pointer == 1) or flag;
+})");
+    auto checked = analyze_single(sources, parsed);
+    test_parser::assert_true(checked.accepted(), "short-circuit source should pass semantic analysis");
+
+    auto ir = emit_ir(sources, parsed, checked);
+    test_parser::assert_true(ir.accepted, ir.error.empty() ? "IR emission should pass" : ir.error);
+    auto text = dump_ir(ir.module);
+    test_parser::assert_true(text.contains("cond_branch"), "MIR dump should lower short-circuit operators with branches");
+
+    auto emitted = emit_llvm_ir(ir.module);
+    test_parser::assert_true(emitted.verified, emitted.error.empty() ? "LLVM module should verify" : emitted.error);
+    test_parser::assert_true(emitted.ir.contains("br i1"), "LLVM IR should branch for short-circuit operators");
+}
+
 auto check_aggregate_literals() -> void
 {
     auto sources = source_manager{};
@@ -465,6 +488,7 @@ auto main() -> int
     check_locals_assignment_and_call();
     check_extern_c_codegen();
     check_if_control_flow();
+    check_short_circuit_control_flow();
     check_aggregate_literals();
     check_array_index_operations();
     check_range_for_control_flow();

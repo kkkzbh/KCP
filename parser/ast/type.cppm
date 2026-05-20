@@ -52,6 +52,7 @@ export struct type_syntax
     type_id function_return{};
     bool is_decltype{};
     expr_id decltype_expression{};
+    bool is_never_type{};
     bool is_array_type{};
     type_id array_element{};
     type_argument_syntax array_length{};

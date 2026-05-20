@@ -259,7 +259,7 @@ auto semantic_analyzer::infer_type_argument(semantic_type_id pattern, semantic_t
 {
     auto const& pattern_kind = result.types.get(pattern);
     if(auto const* generic = std::get_if<generic_parameter_type>(&pattern_kind)) {
-        auto concrete = read_type(argument);
+        auto concrete = argument;
         auto found = inferred.find(generic->index);
         if(found == inferred.end()) {
             inferred.emplace(generic->index, concrete);
@@ -289,8 +289,8 @@ auto semantic_analyzer::infer_type_argument(semantic_type_id pattern, semantic_t
     if(auto const* pattern_pointer = std::get_if<pointer_type>(&pattern_kind)) {
         auto const* argument_pointer = std::get_if<pointer_type>(&argument_kind);
         return argument_pointer != nullptr
-               and pattern_pointer->is_const == argument_pointer->is_const
-               and pattern_pointer->is_like == argument_pointer->is_like
+               and (pattern_pointer->is_const or pattern_pointer->is_like or not argument_pointer->is_const)
+               and (pattern_pointer->is_like or pattern_pointer->is_like == argument_pointer->is_like)
                and infer_type_argument(pattern_pointer->pointee, argument_pointer->pointee, inferred);
     }
     if(auto const* pattern_array = std::get_if<array_type>(&pattern_kind)) {
@@ -364,7 +364,7 @@ auto semantic_analyzer::infer_type_argument_with_pack(semantic_type_id pattern, 
     auto const& pattern_kind = result.types.get(pattern);
     if(auto const* generic = std::get_if<generic_parameter_type>(&pattern_kind)) {
         if(pack_index and generic->index == *pack_index) {
-            auto concrete = read_type(argument);
+            auto concrete = argument;
             if(not pack_element) {
                 pack_element = concrete;
                 return true;
@@ -383,8 +383,8 @@ auto semantic_analyzer::infer_type_argument_with_pack(semantic_type_id pattern, 
     if(auto const* pattern_pointer = std::get_if<pointer_type>(&pattern_kind)) {
         auto const* argument_pointer = std::get_if<pointer_type>(&argument_kind);
         return argument_pointer != nullptr
-               and pattern_pointer->is_const == argument_pointer->is_const
-               and pattern_pointer->is_like == argument_pointer->is_like
+               and (pattern_pointer->is_const or pattern_pointer->is_like or not argument_pointer->is_const)
+               and (pattern_pointer->is_like or pattern_pointer->is_like == argument_pointer->is_like)
                and infer_type_argument_with_pack(pattern_pointer->pointee, argument_pointer->pointee, pack_index, inferred, pack_element);
     }
     if(auto const* pattern_array = std::get_if<array_type>(&pattern_kind)) {
@@ -589,6 +589,99 @@ auto semantic_analyzer::validate_function_pack_shape(std::size_t unit_index, fun
     }
 }
 
+auto semantic_analyzer::record_function_parameter_defaults(std::size_t context_index, std::size_t unit_index, function_id id) -> void
+{
+    auto const& function = units[unit_index].ast.node(id);
+    auto defaults = (
+        function.parameters
+        | std::views::transform([](parameter_syntax const& parameter) { return static_cast<bool>(parameter.default_value); })
+        | std::ranges::to<std::vector<bool>>()
+    );
+    result.function_parameter_defaults[semantic_node_key{context_index, unit_index, id}] = std::move(defaults);
+}
+
+auto semantic_analyzer::validate_parameter_defaults(std::size_t unit_index, function_id id) -> void
+{
+    auto const& function = units[unit_index].ast.node(id);
+    auto seen_default = false;
+    for(auto const& parameter : function.parameters) {
+        if(parameter.default_value) {
+            seen_default = true;
+            if(function.kind == function_syntax_kind::lambda) {
+                report(diagnostic_kind::invalid_type_argument, parameter.full_span, "lambda parameter default values are not supported");
+            }
+            if(parameter.is_pack) {
+                report(diagnostic_kind::invalid_type_argument, parameter.full_span, "parameter pack cannot have a default value");
+            }
+            if(parameter.is_self_receiver) {
+                report(diagnostic_kind::invalid_self_parameter, parameter.full_span, "self receiver cannot have a default value");
+            }
+            continue;
+        }
+        if(seen_default) {
+            report(diagnostic_kind::invalid_type_argument, parameter.full_span, "parameter without a default value cannot follow a defaulted parameter");
+        }
+    }
+}
+
+auto semantic_analyzer::required_parameter_count(std::size_t unit_index, function_id id, std::size_t parameter_offset) const -> std::size_t
+{
+    auto const& function = units[unit_index].ast.node(id);
+    auto count = function.parameters.size();
+    while(count > parameter_offset and function.parameters[count - 1uz].default_value) {
+        --count;
+    }
+    return count - parameter_offset;
+}
+
+auto semantic_analyzer::has_valid_argument_count(std::size_t unit_index, function_id id, std::size_t provided, std::size_t available, std::size_t parameter_offset) const -> bool
+{
+    auto required = required_parameter_count(unit_index, id, parameter_offset);
+    auto exposed = available >= parameter_offset ? available - parameter_offset : 0uz;
+    return provided >= required and provided <= exposed;
+}
+
+auto semantic_analyzer::check_default_argument_expressions(
+    std::size_t unit_index,
+    function_id id,
+    std::size_t context_index,
+    function_signature const& signature,
+    std::size_t provided,
+    std::size_t parameter_offset,
+    std::map<std::string, semantic_type_id> const* substitutions,
+    std::map<std::string, std::vector<semantic_type_id>> const* pack_substitutions
+) -> void
+{
+    auto const& function = units[unit_index].ast.node(id);
+    auto old_context = active_context_index;
+    auto old_unit_index = active_unit_index;
+    auto old_unit = active_unit;
+    auto old_ast = active_ast;
+    auto old_substitutions = active_type_substitutions;
+    auto old_pack_substitutions = active_type_pack_substitutions;
+
+    active_context_index = context_index;
+    active_unit_index = unit_index;
+    active_unit = &units[unit_index];
+    active_ast = &active_unit->ast;
+    active_type_substitutions = substitutions;
+    active_type_pack_substitutions = pack_substitutions;
+
+    for(auto index = provided + parameter_offset; index < signature.parameters.size() and index < function.parameters.size(); ++index) {
+        auto const& parameter = function.parameters[index];
+        if(parameter.default_value) {
+            check_expression(*active_ast, *parameter.default_value, signature.parameters[index]);
+        }
+    }
+
+    active_type_pack_substitutions = old_pack_substitutions;
+    active_type_substitutions = old_substitutions;
+    active_ast = old_ast;
+    active_unit = old_unit;
+    active_unit_index = old_unit_index;
+    active_context_index = old_context;
+}
+
 auto semantic_analyzer::validate_function_type_arguments(std::size_t unit_index, function_id id, std::vector<semantic_type_id> const& type_arguments, source_span span) -> bool
 {
     auto const& function = units[unit_index].ast.node(id);
@@ -611,6 +704,15 @@ auto semantic_analyzer::validate_function_type_arguments(std::size_t unit_index,
 
     auto diagnostic_count = diagnostics.size();
     auto implicit_count = function_implicit_generic_count(unit_index, id);
+    auto const& ast = units[unit_index].ast;
+    auto substitutions = function_substitution_map(unit_index, id, type_arguments);
+    auto pack_substitutions = function_type_pack_substitution_map(unit_index, id, type_arguments);
+    auto old_unit_index = active_unit_index;
+    auto old_substitutions = active_type_substitutions;
+    auto old_pack_substitutions = active_type_pack_substitutions;
+    active_unit_index = unit_index;
+    active_type_substitutions = &substitutions;
+    active_type_pack_substitutions = &pack_substitutions;
     for(auto index = 0uz; index < function.generic_parameters.size(); ++index) {
         auto const& parameter = function.generic_parameters[index];
         auto argument_index = implicit_count + index;
@@ -661,15 +763,6 @@ auto semantic_analyzer::validate_function_type_arguments(std::size_t unit_index,
         }
     }
 
-    auto const& ast = units[unit_index].ast;
-    auto substitutions = function_substitution_map(unit_index, id, type_arguments);
-    auto pack_substitutions = function_type_pack_substitution_map(unit_index, id, type_arguments);
-    auto old_unit_index = active_unit_index;
-    auto old_substitutions = active_type_substitutions;
-    auto old_pack_substitutions = active_type_pack_substitutions;
-    active_unit_index = unit_index;
-    active_type_substitutions = &substitutions;
-    active_type_pack_substitutions = &pack_substitutions;
     if(auto impl_requires = function_impl_requires.find(function_key(unit_index, id)); impl_requires != function_impl_requires.end()) {
         validate_requires_clause(unit_index, ast, impl_requires->second);
     }
@@ -705,6 +798,7 @@ auto semantic_analyzer::substitute_type_for_instance(semantic_type_id type, std:
             [&](unit_type const&) { return type; },
             [&](error_type const&) { return type; },
             [&](inferred_type const&) { return type; },
+            [&](never_type const&) { return type; },
             [&](builtin_type const&) { return type; },
             [&](generic_parameter_type const& value) {
                 if(pack_index and value.index == *pack_index) {
@@ -742,8 +836,16 @@ auto semantic_analyzer::substitute_type_for_instance(semantic_type_id type, std:
                 return result.types.intern(tuple_type{ std::move(elements) });
             },
             [&](reference_type const& value) {
+                auto pointee = substitute_type_for_instance(value.pointee, pack_index, type_arguments, pack_element, span);
+                if(auto const* inner = std::get_if<reference_type>(&result.types.get(pointee))) {
+                    return result.types.intern(reference_type {
+                        inner->pointee,
+                        value.is_const or inner->is_const,
+                        value.reference_kind,
+                    });
+                }
                 return result.types.intern(reference_type {
-                    substitute_type_for_instance(value.pointee, pack_index, type_arguments, pack_element, span),
+                    pointee,
                     value.is_const,
                     value.reference_kind,
                 });
@@ -779,6 +881,8 @@ auto semantic_analyzer::substitute_type_for_instance(semantic_type_id type, std:
                     .arguments = std::move(arguments),
                 });
             },
+            [&](enum_type const&) { return type; },
+            [&](opaque_type const&) { return type; },
             [&](variant_type const& value) {
                 auto arguments = (
                     value.arguments
@@ -889,6 +993,7 @@ auto semantic_analyzer::instantiate_function(std::size_t unit_index, function_id
 
     result.function_signatures.emplace(semantic_node_key{context_index, unit_index, id}, signature_id);
     result.function_symbols.emplace(semantic_node_key{context_index, unit_index, id}, instance_symbol);
+    record_function_parameter_defaults(context_index, unit_index, id);
     result.function_instances.emplace_back(
         key,
         context_index,
@@ -931,7 +1036,7 @@ auto semantic_analyzer::infer_function_type_arguments_for_call(symbol_id symbol,
         auto value_pack_parameter = function_value_pack_parameter_index(value.unit_index, value.function);
         auto fixed_parameter_count = value_pack_parameter.value_or(signature->parameters.size());
         if(
-            (not value_pack_parameter and signature->parameters.size() != arguments.size())
+            (not value_pack_parameter and not has_valid_argument_count(value.unit_index, value.function, arguments.size(), signature->parameters.size()))
             or (value_pack_parameter and arguments.size() < fixed_parameter_count)
         ) {
             report(diagnostic_kind::argument_count_mismatch, span, "generic call argument count does not match function signature");
@@ -966,13 +1071,21 @@ auto semantic_analyzer::infer_function_type_arguments_for_call(symbol_id symbol,
 
     auto implicit_count = function_implicit_generic_count(value.unit_index, value.function);
     auto explicit_count = function_explicit_generic_count(value.unit_index, value.function);
+    auto const& function = units[value.unit_index].ast.node(value.function);
     if(not explicit_arguments.empty()) {
         auto explicit_pack_index = pack_index and *pack_index >= implicit_count
             ? std::optional<std::size_t>{ *pack_index - implicit_count }
             : std::nullopt;
+        auto minimum_explicit_count = explicit_count;
+        for(auto index = 0uz; index < function.generic_parameters.size(); ++index) {
+            if(function.generic_parameters[index].default_argument) {
+                minimum_explicit_count = index;
+                break;
+            }
+        }
         auto valid_explicit_count = explicit_pack_index
             ? explicit_arguments.size() >= *explicit_pack_index
-            : explicit_arguments.size() == explicit_count;
+            : explicit_arguments.size() >= minimum_explicit_count and explicit_arguments.size() <= explicit_count;
         if(not valid_explicit_count) {
             report(
                 diagnostic_kind::invalid_type_argument,
@@ -1002,6 +1115,35 @@ auto semantic_analyzer::infer_function_type_arguments_for_call(symbol_id symbol,
             return std::nullopt;
         }
         type_arguments[index] = type;
+    }
+
+    for(auto index = implicit_count; index < type_arguments.size() and index - implicit_count < function.generic_parameters.size(); ++index) {
+        if(type_arguments[index].valid()) {
+            continue;
+        }
+        auto const& parameter = function.generic_parameters[index - implicit_count];
+        if(not parameter.default_argument) {
+            continue;
+        }
+
+        auto substitutions = std::map<std::string, semantic_type_id>{};
+        for(auto substitution_index = 0uz; substitution_index < index and substitution_index < names.size(); ++substitution_index) {
+            if(type_arguments[substitution_index].valid()) {
+                substitutions.emplace(names[substitution_index], type_arguments[substitution_index]);
+            }
+        }
+        auto old_unit_index = active_unit_index;
+        auto old_substitutions = active_type_substitutions;
+        active_unit_index = value.unit_index;
+        active_type_substitutions = &substitutions;
+        type_arguments[index] = lower_generic_type_argument(
+            units[value.unit_index].ast,
+            *parameter.default_argument,
+            parameter.parameter_kind,
+            span
+        );
+        active_type_substitutions = old_substitutions;
+        active_unit_index = old_unit_index;
     }
 
     auto fixed_argument_count = pack_index ? *pack_index : type_arguments.size();
@@ -1081,7 +1223,9 @@ auto semantic_analyzer::check_generic_function_call(ast_arena const& ast, call_e
     }
 
     auto const& symbol = result.symbols[template_symbol->value];
-    auto signature_id = result.signature_of(symbol.unit_index, symbol.function);
+    auto source_unit = symbol.unit_index;
+    auto source_function = symbol.function;
+    auto signature_id = result.signature_of(source_unit, source_function);
     if(not signature_id.valid()) {
         return expression_info{ .type = semantic_type_ids::error };
     }
@@ -1095,13 +1239,132 @@ auto semantic_analyzer::check_generic_function_call(ast_arena const& ast, call_e
             return expression_info{ .type = semantic_type_ids::error };
         }
 
-        auto const* instance = instantiate_function(symbol.unit_index, symbol.function, *type_arguments, node.full_span);
+        if(function_pack_generic_index(source_unit, source_function)) {
+            auto arguments = std::vector<expression_info>{};
+            arguments.reserve(node.arguments.size());
+            for(auto argument : node.arguments) {
+                arguments.emplace_back(check_expression(ast, argument, std::nullopt));
+            }
+            auto const* instance = instantiate_function_symbol(
+                *template_symbol,
+                std::nullopt,
+                arguments,
+                std::move(*type_arguments),
+                node.full_span
+            );
+            if(instance == nullptr) {
+                return expression_info{ .type = semantic_type_ids::error };
+            }
+
+            auto signature = result.signatures[instance->signature.value];
+            auto valid_count = (
+                function_value_pack_parameter_index(source_unit, source_function)
+                    ? signature.parameters.size() == node.arguments.size()
+                    : has_valid_argument_count(source_unit, source_function, node.arguments.size(), signature.parameters.size())
+            );
+            if(not valid_count) {
+                report(
+                    diagnostic_kind::argument_count_mismatch,
+                    node.full_span,
+                    "generic call argument count does not match function signature"
+                );
+                return expression_info{ .type = semantic_type_ids::error };
+            }
+            check_default_argument_expressions(
+                source_unit,
+                source_function,
+                instance->context_index,
+                signature,
+                node.arguments.size(),
+                0uz,
+                &instance->substitutions,
+                &instance->pack_substitutions
+            );
+
+            for(auto index = 0uz; index < node.arguments.size(); ++index) {
+                if(not can_implicitly_convert(arguments[index], signature.parameters[index])) {
+                    report(
+                        diagnostic_kind::type_mismatch,
+                        ast.span(node.arguments[index]),
+                        "call argument does not match generic function instance"
+                    );
+                    continue;
+                }
+                if(read_type(arguments[index].type) != read_type(signature.parameters[index])) {
+                    result.expression_conversions[node_key(node.arguments[index])] = signature.parameters[index];
+                }
+            }
+
+            result.expression_symbols[node_key(node.callee)] = instance->symbol;
+            record_expression(
+                node.callee,
+                active_unit_index,
+                semantic_expression_info {
+                    .type = result.symbols[instance->symbol.value].type,
+                    .read_type = result.symbols[instance->symbol.value].type,
+                    .is_lvalue = false,
+                    .is_const = false,
+                }
+            );
+            return expression_for_return_type(signature.returns);
+        }
+
+        auto explicit_arguments = std::move(*type_arguments);
+        auto const& function = units[source_unit].ast.node(source_function);
+        auto minimum_explicit_count = function.generic_parameters.size();
+        for(auto index = 0uz; index < function.generic_parameters.size(); ++index) {
+            if(function.generic_parameters[index].default_argument) {
+                minimum_explicit_count = index;
+                break;
+            }
+        }
+        if(explicit_arguments.size() < minimum_explicit_count or explicit_arguments.size() > function.generic_parameters.size()) {
+            report(
+                diagnostic_kind::invalid_type_argument,
+                node.full_span,
+                std::format("generic call expects {} explicit type argument(s)", function.generic_parameters.size())
+            );
+            return expression_info{ .type = semantic_type_ids::error };
+        }
+        for(auto index = explicit_arguments.size(); index < function.generic_parameters.size(); ++index) {
+            auto const& parameter = function.generic_parameters[index];
+            if(not parameter.default_argument) {
+                report(diagnostic_kind::invalid_type_argument, node.full_span, "cannot infer generic function type arguments");
+                return expression_info{ .type = semantic_type_ids::error };
+            }
+            auto substitutions = std::map<std::string, semantic_type_id>{};
+            for(auto substitution_index = 0uz; substitution_index < index; ++substitution_index) {
+                substitutions.emplace(
+                    std::string{ ast_source.identifier(function.generic_parameters[substitution_index].name) },
+                    explicit_arguments[substitution_index]
+                );
+            }
+            auto old_unit_index = active_unit_index;
+            auto old_substitutions = active_type_substitutions;
+            active_unit_index = source_unit;
+            active_type_substitutions = &substitutions;
+            explicit_arguments.emplace_back(lower_generic_type_argument(
+                units[source_unit].ast,
+                *parameter.default_argument,
+                parameter.parameter_kind,
+                node.full_span
+            ));
+            active_type_substitutions = old_substitutions;
+            active_unit_index = old_unit_index;
+        }
+
+        auto const* instance = instantiate_function(source_unit, source_function, std::move(explicit_arguments), node.full_span);
         if(instance == nullptr) {
             return expression_info{ .type = semantic_type_ids::error };
         }
 
         auto signature = result.signatures[instance->signature.value];
-        if(signature.parameters.size() != node.arguments.size()) {
+        auto valid_count = (
+            function_value_pack_parameter_index(source_unit, source_function)
+                ? signature.parameters.size() == node.arguments.size()
+                : has_valid_argument_count(source_unit, source_function, node.arguments.size(), signature.parameters.size())
+        );
+        if(not valid_count) {
             report(
                 diagnostic_kind::argument_count_mismatch,
                 node.full_span,
@@ -1109,6 +1372,16 @@ auto semantic_analyzer::check_generic_function_call(ast_arena const& ast, call_e
             );
             return expression_info{ .type = semantic_type_ids::error };
         }
+        check_default_argument_expressions(
+            source_unit,
+            source_function,
+            instance->context_index,
+            signature,
+            node.arguments.size(),
+            0uz,
+            &instance->substitutions,
+            &instance->pack_substitutions
+        );
 
         for(auto index = 0uz; index < node.arguments.size(); ++index) {
             auto argument = check_expression(ast, node.arguments[index], signature.parameters[index]);
@@ -1154,7 +1427,12 @@ auto semantic_analyzer::check_generic_function_call(ast_arena const& ast, call_e
     }
 
     auto signature = result.signatures[instance->signature.value];
-    if(signature.parameters.size() != node.arguments.size()) {
+    auto valid_count = (
+        function_value_pack_parameter_index(source_unit, source_function)
+            ? signature.parameters.size() == node.arguments.size()
+            : has_valid_argument_count(source_unit, source_function, node.arguments.size(), signature.parameters.size())
+    );
+    if(not valid_count) {
         report(
             diagnostic_kind::argument_count_mismatch,
             node.full_span,
@@ -1162,6 +1440,16 @@ auto semantic_analyzer::check_generic_function_call(ast_arena const& ast, call_e
         );
         return expression_info{ .type = semantic_type_ids::error };
     }
+    check_default_argument_expressions(
+        source_unit,
+        source_function,
+        instance->context_index,
+        signature,
+        node.arguments.size(),
+        0uz,
+        &instance->substitutions,
+        &instance->pack_substitutions
+    );
 
     for(auto index = 0uz; index < node.arguments.size(); ++index) {
         if(not can_implicitly_convert(arguments[index], signature.parameters[index])) {

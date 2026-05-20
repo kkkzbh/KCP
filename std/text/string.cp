@@ -1,10 +1,9 @@
-export module std.string;
+export module std.text.string;
 
-import std.buffer;
-import std.detail.runtime;
-import std.option;
-import std.str;
-export import std.iter;
+import std.memory.buffer;
+import std.core.option;
+import std.text.str;
+export import std.core.iter;
 
 export struct string {
     storage: buffer<char>;
@@ -115,28 +114,19 @@ impl string {
 
     operator [](self like&, index: usize) -> char like&
     {
-        if(index >= len) {
-            cp_bounds_fail();
-        }
-
+        assert(index < len, "string index out of bounds");
         return ref *(storage.data() + index);
     }
 
     front(self like&) -> char like&
     {
-        if(len == 0) {
-            cp_bounds_fail();
-        }
-
+        assert(len != 0, "string front on empty string");
         return ref *storage.data();
     }
 
     back(self like&) -> char like&
     {
-        if(len == 0) {
-            cp_bounds_fail();
-        }
-
+        assert(len != 0, "string back on empty string");
         return ref *(storage.data() + len - 1);
     }
 
@@ -177,10 +167,7 @@ impl string {
 
     pop_back(self&) -> void
     {
-        if(len == 0) {
-            cp_bounds_fail();
-        }
-
+        assert(len != 0, "string pop_back on empty string");
         len -= 1;
         terminate();
     }

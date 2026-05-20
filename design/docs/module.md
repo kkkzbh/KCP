@@ -74,7 +74,7 @@ export add_one(x: i32) -> i32
 ```cp
 import math;
 import math.core;
-export import std.option;
+export import std.core.option;
 ```
 
 规则：
@@ -98,13 +98,13 @@ main()
 ```cp
 export module std;
 
-export import std.option;
+export import std.core.option;
 ```
 
 上例表示：
 
-- 当前模块 `std` 可以直接使用 `std.option` 导出的名字。
-- 导入 `std` 的其它模块也能看见 `std.option` 经由 `std` 重导出的名字。
+- 当前模块 `std` 可以直接使用 `std.core.option` 导出的名字。
+- 导入 `std` 的其它模块也能看见 `std.core.option` 经由 `std` 重导出的名字。
 - `export import` 不导出目标模块的非导出声明。
 
 匿名模块不能使用 `export import`，因为它没有可被其它模块导入的模块名。

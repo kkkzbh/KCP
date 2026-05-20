@@ -1,4 +1,4 @@
-export module std.option;
+export module std.core.option;
 
 export variant optional<T> {
     none;
@@ -19,6 +19,14 @@ impl optional<T> {
         return match self {
             .some(value) => value,
             .none => fallback,
+        };
+    }
+
+    operator *(self like&) -> T like&
+    {
+        return match self {
+            .some(value) => ref value,
+            .none => panic("optional dereference on none"),
         };
     }
 }

@@ -106,6 +106,7 @@ OverloadableOperator
                   | ComparisonOperator
                   | AssignmentOperator
                   | SubscriptOperator
+                  | CallOperator
 
 UnaryOperator    -> "+" | "-" | "~"
 BinaryOperator   -> "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>"
@@ -116,9 +117,10 @@ AssignmentOperator
                   | "&=" | "|=" | "^=" | "<<=" | ">>="
 SubscriptOperator
                  -> "[]"
+CallOperator    -> "()"
 ```
 
-实际词法中 `operator` 和后面的运算符 token 可以有空白；文档统一写成 `operator +`、`operator []`。
+实际词法中 `operator` 和后面的运算符 token 可以有空白；文档统一写成 `operator +`、`operator []`、`operator ()`。
 
 成员 operator 写在固有 `impl` 中，挂到当前类型命名空间：
 
@@ -132,6 +134,11 @@ impl vec2 {
     operator ==(self const&, rhs: this const&) -> bool
     {
         return x == rhs.x and y == rhs.y;
+    }
+
+    operator ()(self const&, scale: i32) -> i32
+    {
+        return x * scale + y;
     }
 }
 ```
@@ -161,6 +168,7 @@ operator +(left: vec2 const&, right: vec2 const&) -> vec2
 - 二元运算 `left op right` 先尝试内建规则；内建规则不成立时，依次查找 `left` 类型命名空间、`right` 类型命名空间、当前可见顶层 `operator op`。
 - 赋值 `left = right` 和复合赋值 `left op= right` 先检查 `left` 必须是可写左值；然后查找 `left` 类型命名空间中的对应 operator；找不到时再查当前可见顶层 operator；仍然找不到时才使用允许的内建赋值或报错。
 - 下标 `value[index]` 先尝试内建 `[T; N]`、`str` 和指针规则；内建规则不成立时，查找 `value` 类型命名空间中的 `operator []`；找不到时再查当前可见顶层 `operator []`。元组字段使用 `.0` / `.1`，不参与 `operator []`。
+- 调用 `callee(args...)` 先按普通函数、函数值、lambda 和闭包调用检查；这些规则不成立时，查找 `callee` 类型命名空间中的 `operator ()`，调用参数序列为 `callee, args...`。
 - 某一级查找中如果存在同 operator 声明，但没有可行候选，直接报告参数不匹配或二义性，不继续回退到后续层级。
 
 候选选择使用小型重载规则：
@@ -170,7 +178,9 @@ operator +(left: vec2 const&, right: vec2 const&) -> vec2
 3. 非模板候选优先于需要实例化后才确定的泛型候选。
 4. 如果最高优先级仍有多个候选，报二义性错误。
 
-不支持 C++ 完整重载体系中的默认参数、用户自定义隐式转换、模板偏序和 ADL。顶层 operator 只从当前模块和 `import` 引入的可见声明中查找。
+不支持 C++ 完整重载体系中的用户自定义隐式转换、模板偏序和 ADL。顶层 operator 只从当前模块和 `import` 引入的可见声明中查找。
+
+`operator ()` 不参与 UFCS，只能通过调用表达式触发；不能写成普通成员调用或顶层函数调用来绕过调用语法。
 
 ## 赋值与复合赋值
 

@@ -1,4 +1,4 @@
-export module std.buffer;
+export module std.memory.buffer;
 
 export struct buffer<T> {
     ptr: T*;

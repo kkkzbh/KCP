@@ -1,6 +1,6 @@
 # 泛型
 
-本文档记录泛型设计，覆盖泛型函数、函数级整数 const 参数、泛型 `struct`、泛型 `variant`、泛型固有 `impl`、泛型 concept `impl`、参数包、`template for` 展开以及 `requires` 约束。泛型 `concept`、表达式级 const generic 和模板特化不属于本文档。
+本文档记录泛型设计，覆盖泛型函数、函数级整数 const 参数、泛型 `struct`、泛型 `variant`、泛型 `concept`、泛型固有 `impl`、泛型 concept `impl`、默认泛型参数、参数包、`template for` 展开以及 `requires` 约束。
 
 函数泛型采用偏现代 C++ 的强模板模型：无约束泛型也可以在函数体内使用依赖于类型参数的操作；`concept` 和 `requires` 是可选约束机制，用于提前表达能力要求、改善诊断、约束公共 API 和辅助重载选择。
 
@@ -38,23 +38,37 @@ GenericStruct
 GenericVariant
     -> export? variant identifier GenericParameterList? { VariantCase* }
 
+GenericConcept
+    -> export? concept identifier GenericParameterList? { ConceptItem* }
+
 InherentImpl
-    -> impl TypePattern RequiresClause? { ImplItem* }
+    -> impl GenericParameterList? TypePattern RequiresClause? { ImplItem* }
 
 ConceptImpl
-    -> impl ConceptName for TypePattern RequiresClause? { ConceptImplItem* }
+    -> impl GenericParameterList? ConceptId for TypePattern RequiresClause? { ConceptImplItem* }
 
 GenericParameterList
     -> < GenericParameter ( , GenericParameter )* >
 
 GenericParameter
-    -> identifier
-     | identifier : ConceptBoundList
+    -> identifier GenericDefault?
+     | identifier : IntegerGenericKind GenericDefault?
+     | identifier : ConceptBoundList GenericDefault?
      | identifier ...
      | identifier ... : ConceptBoundList
 
+IntegerGenericKind
+    -> usize
+     | isize
+
+GenericDefault
+    -> = TypeArgument
+
+ConceptId
+    -> identifier TypeArgumentList?
+
 ConceptBoundList
-    -> identifier ( and identifier )*
+    -> ConceptId ( and ConceptId )*
 
 RequiresClause
     -> requires RequiresConstraintExpr
@@ -116,6 +130,58 @@ print<T...>(values: T...)
 ```
 
 `T...` 表示零个或多个类型参数，`values: T...` 表示与 `T...` 等长的值参数包。参数包规则见“参数包与 template for”。
+
+泛型参数可以带默认实参：
+
+```cp
+struct pair<T, U = T> {
+    first: T;
+    second: U;
+}
+
+concept partial_eq<Rhs = this> {
+    equals(self const&, rhs: Rhs const&) -> bool;
+}
+```
+
+默认实参按声明顺序求值，可以引用前面已经声明的泛型参数。调用或使用类型构造器时，显式实参按前缀匹配，缺省位置由默认实参补齐：
+
+```cp
+let same: pair<i32> = pair<i32>{ .first = 1, .second = 2 };
+let mixed: pair<i32, bool> = pair<i32, bool>{ .first = 1, .second = true };
+```
+
+函数参数也可以带默认值。默认值只能用于尾部参数，调用时只能省略尾部实参：
+
+```cp
+sort<T: mutable_object, Compare: strict_weak_order<T> = less<T>>(values: span<T>, compare: Compare = Compare{}) -> void
+{
+    // ...
+}
+
+sort(values);                 // compare 使用 Compare{}
+sort(values, greater<i32>{});  // 显式降序比较器
+```
+
+函数默认表达式在泛型实参确定后检查，因此 `Compare{}` 会在 `Compare` 被推导或由默认泛型实参补齐后再按参数类型检查。默认表达式可以引用前面已经声明的泛型参数和值参数。
+
+`this` 可以出现在 concept 泛型参数默认值中，表示当前被检查或被实现的类型。因此：
+
+```cp
+T: partial_eq
+impl partial_eq for i32
+impl partial_eq for box<T>
+```
+
+分别按上下文展开为：
+
+```text
+T: partial_eq<T>
+impl partial_eq<i32> for i32
+impl partial_eq<box<T>> for box<T>
+```
+
+标准库和编译器可以提供内建 concept。`mutable_object` 是第一版内建 concept，由类型系统判断是否为可写对象类型；用户不写 `impl mutable_object for T`。它用于 `sort`、`swap` 这类必须写入元素的泛型算法。
 
 ## 无约束泛型
 
@@ -224,7 +290,7 @@ T implements comparable
 T implements movable
 ```
 
-这里采用 `T: concept`，不采用 `concept<T>`。当前语言中的 `concept` 是无模板设计，它描述某个类型具备的静态能力，而不是一个以类型为参数的模板谓词。
+这里采用 `T: concept` 作为能力约束写法。约束中的 concept 可以带泛型实参；如果省略实参，则按 concept 声明中的默认泛型参数补齐。
 
 内联约束适合短约束。它等价于把同样的 concept 要求写进 `requires`：
 
@@ -279,6 +345,26 @@ requires
 - 简单的一两个 concept 约束写在 `<T: concept>` 中。
 - 类型相等、多个类型参数之间的关系、较长约束写进 `requires`。
 - `requires` 使用 `and` 连接约束项，允许用括号组合子表达式，不支持 `or` 和 C++ 风格的任意布尔表达式模板。
+
+## 泛型 concept
+
+`concept` 名之后可以出现泛型参数列表。泛型 concept 描述“当前类型和其它类型之间”的静态关系：
+
+```cp
+concept partial_eq<Rhs = this> {
+    equals(self const&, rhs: Rhs const&) -> bool;
+}
+```
+
+`Rhs = this` 让同类型比较成为默认约束，异类型比较仍可以显式写出右侧类型：
+
+```cp
+requires
+    T: partial_eq
+    and T: partial_eq<str>
+```
+
+在 concept 声明体内，泛型参数的作用域覆盖 `requires`、关联类型、函数要求和默认函数实现。`this` 表示当前实现类型；当 concept 被用于 `T: partial_eq`、`impl partial_eq for i32` 或 `impl partial_eq for box<T>` 时，`this` 分别绑定到 `T`、`i32` 和 `box<T>`。
 
 ## 参数包与 template for
 
@@ -471,10 +557,10 @@ value_or<T>(value: optional<T>, fallback: T) -> T
 
 ## 泛型 impl
 
-`impl` 不单独声明 `impl<T>` 形式的泛型参数。目标类型模式中出现的自由类型变量自动绑定为该 `impl` 的泛型参数：
+`impl` 使用 `impl<...>` 声明自己的泛型参数，随后在目标类型模式中使用这些参数：
 
 ```cp
-impl vector<T> {
+impl<T> vector<T> {
     len(self const&) -> usize
     {
         return size;
@@ -482,33 +568,19 @@ impl vector<T> {
 }
 ```
 
-上例中，`T` 从 `vector<T>` 中引入，作用域覆盖：
+上例中，`T` 来自 `impl<T>`，作用域覆盖：
 
 - `impl` 级 `requires` 子句。
 - `impl` 块内的成员函数、关联函数、构造函数和析构函数签名。
 - `impl` 块内的函数体。
 - `impl` 块内的 `type` 类型别名。
 
-也就是说，推荐语法是：
-
-```cp
-impl vector<T> {
-}
-```
-
-而不是：
-
-```cp
-impl<T> vector<T> {
-}
-```
-
-`impl<T> vector<T>` 形式不作为核心语法。这样避免在同一个位置重复声明类型参数，并把 `impl` 的泛型来源固定为“被实现的目标类型模式”。
+`impl X<T> for Y<T>` 这种写法中的两个 `T` 只有在 `impl<T>` 中声明后才表示同一个泛型参数；完整写法是 `impl<T> X<T> for Y<T>`。`impl` 头部是泛型作用域的入口，后续的目标类型模式、concept 实参和 `requires` 都引用这个作用域。
 
 `impl` 级 `requires` 是条件实现。只有当具体类型实参满足约束时，这个 `impl` 块里的项才参与成员查找和关联项查找：
 
 ```cp
-impl vector<T>
+impl<T> vector<T>
 requires
     T: movable
 {
@@ -531,7 +603,7 @@ for every T:
 函数级 `requires` 只控制单个成员函数是否参与候选：
 
 ```cp
-impl vector<T> {
+impl<T> vector<T> {
     contains(self const&, value: T const&) -> bool
     requires
         T: comparable
@@ -548,7 +620,7 @@ impl vector<T> {
 `impl` 内部可以定义自己的泛型函数。成员函数泛型参数的作用域只覆盖该函数，不覆盖整个 `impl`：
 
 ```cp
-impl vector<T> {
+impl<T> vector<T> {
     convert_all<U>(self const&) -> vector<U>
     requires
         T: convertible_to<U>
@@ -558,12 +630,12 @@ impl vector<T> {
 }
 ```
 
-这里 `T` 来自 `impl vector<T>`，`U` 来自 `convert_all<U>`。
+这里 `T` 来自 `impl<T>`，`U` 来自 `convert_all<U>`。
 
 泛型 `impl` 中的构造函数和析构函数仍然使用类型构造器名，不写类型实参：
 
 ```cp
-impl vector<T> {
+impl<T> vector<T> {
     vector()
     {
         return vector<T>{};
@@ -577,10 +649,10 @@ impl vector<T> {
 
 ## 泛型 concept impl
 
-`impl concept for TypePattern` 同样从目标类型模式绑定自由类型变量，并可使用 `requires` 表达条件实现：
+`impl<...> ConceptId for TypePattern` 为一族类型提供 concept 证明，并可使用 `requires` 表达条件实现：
 
 ```cp
-impl comparable for vector<T>
+impl<T> comparable for vector<T>
 requires
     T: comparable
 {
@@ -598,17 +670,36 @@ if T implements comparable:
     vector<T> implements comparable
 ```
 
-这类实现只为匹配目标类型模式的类型族提供 concept 证明。不支持以裸类型参数作为目标的 blanket impl，例如：
+泛型 concept 的实参写在 concept 名后。省略时按 concept 声明中的默认泛型参数补齐：
 
 ```cp
-impl debug for T
+concept partial_eq<Rhs = this> {
+    equals(self const&, rhs: Rhs const&) -> bool;
+}
+
+impl<T> partial_eq for box<T>
 requires
-    T: printable
+    T: partial_eq
 {
+    equals(self const&, rhs: box<T> const&) -> bool
+    {
+        return value.equals(rhs.value);
+    }
 }
 ```
 
-因为这种写法会对所有类型实例产生全局实现事实，冲突检查和候选选择规则需要更完整的重叠 impl 设计。
+这里 `impl<T> partial_eq for box<T>` 等价于 `impl<T> partial_eq<box<T>> for box<T>`，因为 `partial_eq` 的 `Rhs` 默认值是 `this`。
+
+异类型关系可以显式写出 concept 实参：
+
+```cp
+impl partial_eq<str> for string_like {
+    equals(self const&, rhs: str const&) -> bool
+    {
+        return true;
+    }
+}
+```
 
 ## 与 concept 的关系
 
@@ -650,7 +741,7 @@ min<T: comparable>(left: T, right: T) -> T
 concept comparable          描述能力
 impl comparable for i32     证明 i32 有这个能力
 T: comparable               要求泛型参数 T 有这个能力
-impl comparable for vector<T> requires T: comparable
+impl<T> comparable for vector<T> requires T: comparable
                             条件证明 vector<T> 有这个能力
 ```
 
@@ -672,9 +763,8 @@ let other = add(1.0, 2.0);  // 推导 T = f64，等价于 add<f64>(1.0, 2.0)
 
 没有函数重载，因此推导不参与重载排序。编译器先根据函数名找到唯一函数声明，再决定使用显式类型实参还是执行推导：
 
-- 如果调用点写了显式泛型实参，必须写满全部泛型参数，例如 `add<i32>(1, 2)` 或 `first<i32, 4>(values)`。
-- 如果调用点没有写显式泛型实参，则全部泛型参数都必须从普通实参推导出来。
-- 不支持部分显式类型实参，例如 `pair<i32>(1, 2.0)`。
+- 如果调用点写了显式泛型实参，它们按泛型参数列表前缀匹配；剩余参数由默认实参补齐。
+- 如果调用点没有写显式泛型实参，编译器先从普通实参推导泛型参数，再用默认实参补齐仍未确定的参数。
 - 不从返回类型、变量声明类型或其他上下文反推类型参数。
 
 推导过程把形参类型当作模式，把实参表达式的已知类型当作目标类型：
@@ -817,28 +907,14 @@ main() -> i32
 - 依赖 UFCS 调用实例化时检查
 - 函数类型实参推导：从普通实参推导，支持嵌套类型模式
 - 泛型 `struct`：`struct vector<T>`
+- 默认泛型参数：`struct pair<T, U = T>`
 - 带整数 const 参数的泛型 `struct`：`struct buffer<T, N: usize>`
 - 泛型 `variant`：`variant optional<T>`
-- 泛型固有 `impl`：`impl vector<T>`
-- `impl` 级条件约束：`impl vector<T> requires T: movable`
+- 泛型 `concept`：`concept partial_eq<Rhs = this>`
+- 泛型 concept 默认参数中的 `this` 绑定
+- 泛型固有 `impl`：`impl<T> vector<T>`
+- `impl` 级条件约束：`impl<T> vector<T> requires T: movable`
 - 成员泛型函数：`convert_all<U>(...)`
-- 泛型 concept `impl`：`impl comparable for vector<T> requires T: comparable`
+- 泛型 concept `impl`：`impl<T> comparable for vector<T> requires T: comparable`
+- 显式 concept 实参：`impl partial_eq<str> for string_like`
 - 单态化代码生成
-
-泛型不支持：
-
-- 函数重载
-- 部分显式类型实参
-- 从返回类型或上下文反推类型参数
-- `concept<T>` 形式的参数化 concept
-- 泛型 `concept`
-- 以裸类型参数为目标的 blanket impl，例如 `impl debug for T`
-- 模板特化
-- SFINAE
-- 表达式级 const generic
-- `sizeof...`、参数包随机索引和 fold expression
-- 非末尾值参数包
-- 多值参数包同步推导
-- 生命周期参数
-- 运行时 `dyn concept`
-- `or` 约束和依赖 `or` 的复杂布尔约束表达式，例如 `(A or B) and C`

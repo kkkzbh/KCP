@@ -31,6 +31,18 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
         return info.explicit_borrow ? info.type : read_type(info.type);
     }
 
+    if(syntax.is_never_type) {
+        if(
+            syntax.is_const
+            or syntax.is_like
+            or not syntax.suffix_operators.empty()
+        ) {
+            report(diagnostic_kind::invalid_type_argument, syntax.full_span, "! cannot be qualified");
+            return semantic_type_ids::error;
+        }
+        return semantic_type_ids::never;
+    }
+
     if(syntax.is_array_type) {
         auto lowered = lower_array_type(ast, syntax);
         for(auto suffix : syntax.suffix_operators) {
@@ -159,7 +171,29 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
         lowered = lower_tuple_type(ast, syntax);
     } else if(auto symbol = resolve_type_symbol(active_unit_index, name)) {
         auto const& value = result.symbols[symbol->value];
-        if(value.variant_index < result.variants.size() and result.variants[value.variant_index].symbol == *symbol) {
+        if(value.enum_index < result.enums.size() and result.enums[value.enum_index].symbol == *symbol) {
+            if(not syntax.arguments.empty()) {
+                report (
+                    diagnostic_kind::invalid_type_argument,
+                    syntax.full_span,
+                    "enum type does not take arguments"
+                );
+                lowered = semantic_type_ids::error;
+            } else {
+                lowered = value.type;
+            }
+        } else if(value.opaque_index < result.opaque_aliases.size() and result.opaque_aliases[value.opaque_index].symbol == *symbol) {
+            if(not syntax.arguments.empty()) {
+                report (
+                    diagnostic_kind::invalid_type_argument,
+                    syntax.full_span,
+                    "opaque type does not take arguments"
+                );
+                lowered = semantic_type_ids::error;
+            } else {
+                lowered = value.type;
+            }
+        } else if(value.variant_index < result.variants.size() and result.variants[value.variant_index].symbol == *symbol) {
             auto const& variant = result.variants[value.variant_index];
             auto const& variant_ast = units[variant.unit_index].ast;
             auto const& variant_syntax = variant_ast.node(variant.syntax);
@@ -205,7 +239,7 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
                     .arguments = std::move(arguments),
                 });
             }
-        } else {
+        } else if(value.struct_index < result.structs.size()) {
             auto const& item = result.structs[value.struct_index];
             auto const& item_ast = units[item.unit_index].ast;
             auto const& item_syntax = item_ast.node(item.syntax);
@@ -282,6 +316,17 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
                     .arguments = std::move(arguments),
                 });
             }
+        } else {
+            if(not syntax.arguments.empty()) {
+                report (
+                    diagnostic_kind::invalid_type_argument,
+                    syntax.full_span,
+                    "type alias does not take arguments"
+                );
+                lowered = semantic_type_ids::error;
+            } else {
+                lowered = value.type;
+            }
         }
     } else {
         report (
@@ -333,6 +378,7 @@ auto semantic_analyzer::lower_return_type(ast_arena const& ast, type_id id) -> s
     auto const is_plain_named_type = (
         not syntax.is_function_type
         and not syntax.is_decltype
+        and not syntax.is_never_type
         and not syntax.is_array_type
         and not syntax.is_tuple_type
         and not syntax.is_grouped_type
@@ -385,6 +431,11 @@ auto semantic_analyzer::materialize_like_type(semantic_type_id type, bool is_con
     auto const& kind = result.types.get(type);
     if(auto const* reference = std::get_if<reference_type>(&kind)) {
         auto pointee = materialize_like_type(reference->pointee, is_const);
+        auto target_const = reference->reference_kind == reference_type::kind::like ? is_const : reference->is_const;
+        auto target_kind = reference->reference_kind == reference_type::kind::like ? reference_type::kind::regular : reference->reference_kind;
+        if(auto const* inner = std::get_if<reference_type>(&result.types.get(pointee))) {
+            return result.types.intern(reference_type{ inner->pointee, target_const or inner->is_const, target_kind });
+        }
         if(reference->reference_kind == reference_type::kind::like) {
             return result.types.intern(reference_type{ pointee, is_const });
         }
@@ -623,6 +674,7 @@ auto semantic_analyzer::is_default_initializable(semantic_type_id type) -> bool
             [](unit_type const&) { return true; },
             [](error_type const&) { return true; },
             [](inferred_type const&) { return false; },
+            [](never_type const&) { return false; },
             [](builtin_type const&) { return true; },
             [&](array_type const& value) { return is_default_initializable(value.element); },
             [&](tuple_type const& value) {
@@ -642,6 +694,8 @@ auto semantic_analyzer::is_default_initializable(semantic_type_id type) -> bool
                     return is_default_initializable(substitute_type(field.type, value.arguments));
                 });
             },
+            [](enum_type const&) { return false; },
+            [](opaque_type const&) { return true; },
             [](variant_type const&) { return false; },
         },
         kind
@@ -656,6 +710,7 @@ auto semantic_analyzer::is_dependent_type(semantic_type_id type) const -> bool
             [](unit_type const&) { return false; },
             [](error_type const&) { return false; },
             [](inferred_type const&) { return false; },
+            [](never_type const&) { return false; },
             [](builtin_type const&) { return false; },
             [&](array_type const& value) { return is_dependent_type(value.element) or is_dependent_type(value.length); },
             [&](tuple_type const& value) {
@@ -679,6 +734,8 @@ auto semantic_analyzer::is_dependent_type(semantic_type_id type) const -> bool
                     return is_dependent_type(argument);
                 });
             },
+            [](enum_type const&) { return false; },
+            [](opaque_type const&) { return false; },
             [&](variant_type const& value) {
                 return std::ranges::any_of(value.arguments, [&](auto argument) {
                     return is_dependent_type(argument);
@@ -723,6 +780,12 @@ auto semantic_analyzer::method_symbol(semantic_type_id owner, std::string_view n
     }
     if(auto variant_index = variant_index_of(type)) {
         auto const& methods = result.variants[*variant_index].methods;
+        if(auto found = methods.find(key); found != methods.end()) {
+            return found->second;
+        }
+    }
+    if(auto opaque_index = opaque_index_of(type)) {
+        auto const& methods = result.opaque_aliases[*opaque_index].methods;
         if(auto found = methods.find(key); found != methods.end()) {
             return found->second;
         }
@@ -969,6 +1032,9 @@ auto semantic_analyzer::can_qualification_convert(semantic_type_id from, semanti
 
 auto semantic_analyzer::can_implicitly_convert(expression_info const& from, semantic_type_id to) -> bool
 {
+    if(is_never(read_type(from.type))) {
+        return true;
+    }
     if(auto const* reference = std::get_if<reference_type>(&result.types.get(to))) {
         auto same_target = can_qualification_convert(read_type(from.type), reference->pointee);
         if(reference->reference_kind == reference_type::kind::move) {
@@ -977,7 +1043,10 @@ auto semantic_analyzer::can_implicitly_convert(expression_info const& from, sema
         if(reference->reference_kind == reference_type::kind::like) {
             return same_target and from.is_lvalue;
         }
-        return same_target and from.is_lvalue and not from.is_move and (reference->is_const or not from.is_const);
+        if(from.is_lvalue) {
+            return same_target and not from.is_move and (reference->is_const or not from.is_const);
+        }
+        return same_target and not from.is_move and reference->is_const;
     }
     if(from.explicit_borrow) {
         return false;
@@ -989,6 +1058,13 @@ auto semantic_analyzer::can_implicitly_convert(semantic_type_id from, semantic_t
 {
     if(from == to or is_error(from) or is_error(to)) {
         return true;
+    }
+
+    if(is_never(read_type(from))) {
+        return true;
+    }
+    if(is_never(read_type(to))) {
+        return false;
     }
 
     if(auto const* target_pointer = std::get_if<pointer_type>(&result.types.get(to))) {
@@ -1030,10 +1106,29 @@ auto semantic_analyzer::can_explicitly_convert(semantic_type_id from, semantic_t
         return true;
     }
 
-    auto source = as_builtin(read_type(from));
-    auto target = as_builtin(read_type(to));
+    auto source_value = read_type(from);
+    auto target_value = read_type(to);
+    auto source = as_builtin(source_value);
+    auto target = as_builtin(target_value);
     if(source and target) {
         return is_numeric(*source) and is_numeric(*target);
+    }
+    if(
+        std::holds_alternative<pointer_type>(result.types.get(source_value))
+        and std::holds_alternative<pointer_type>(result.types.get(target_value))
+    ) {
+        return true;
+    }
+    if(auto source_enum = enum_index_of(source_value)) {
+        return underlying_type(source_value) == target_value;
+    }
+    if(auto source_opaque = opaque_index_of(source_value)) {
+        auto const& opaque = result.opaque_aliases[*source_opaque];
+        return opaque.unit_index == active_unit_index and opaque.underlying_type == target_value;
+    }
+    if(auto target_opaque = opaque_index_of(target_value)) {
+        auto const& opaque = result.opaque_aliases[*target_opaque];
+        return opaque.unit_index == active_unit_index and opaque.underlying_type == source_value;
     }
     return false;
 }
@@ -1480,12 +1575,22 @@ auto semantic_analyzer::join_return_types(std::vector<semantic_type_id> const& v
         return semantic_type_ids::unit;
     }
 
-    auto current = read_type(values.front());
+    auto first = std::ranges::find_if(values, [&](semantic_type_id value) {
+        return not is_never(read_type(value));
+    });
+    if(first == values.end()) {
+        return semantic_type_ids::never;
+    }
+
+    auto current = read_type(*first);
     if(is_error(current) or is_inferred(current)) {
         return current;
     }
-    for(auto index = 1uz; index < values.size(); ++index) {
+    for(auto index = static_cast<std::size_t>(std::distance(values.begin(), first)) + 1uz; index < values.size(); ++index) {
         auto next = read_type(values[index]);
+        if(is_never(next)) {
+            continue;
+        }
         if(is_error(next) or is_inferred(next)) {
             return next;
         }

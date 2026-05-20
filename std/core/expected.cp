@@ -1,4 +1,4 @@
-export module std.expected;
+export module std.core.expected;
 
 export variant expected<T,E> {
     value(T);
@@ -19,6 +19,14 @@ impl expected<T,E> {
         return match self {
             .value(value) => value,
             .unexpected(error) => fallback,
+        };
+    }
+
+    operator *(self like&) -> T like&
+    {
+        return match self {
+            .value(value) => ref value,
+            .unexpected(error) => panic("expected dereference on unexpected"),
         };
     }
 }

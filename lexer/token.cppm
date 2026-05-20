@@ -30,6 +30,7 @@ export enum class token_kind
     kw_export,   ///< `export` 关键字。
     kw_module,   ///< `module` 关键字。
     kw_struct,   ///< `struct` 关键字。
+    kw_enum,     ///< `enum` 关键字。
     kw_impl,     ///< `impl` 关键字。
     kw_concept,  ///< `concept` 关键字。
     kw_operator, ///< `operator` 关键字。
@@ -70,6 +71,7 @@ export enum class token_kind
     percent_equal,         ///< 取模等号 `%=`。
     equal,                 ///< 赋值号 `=`。
     equal_equal,           ///< 相等比较 `==`。
+    bang,                  ///< never type `!`。
     bang_equal,            ///< 不等比较 `!=`。
     less,                  ///< 小于号 `<`。
     less_equal,            ///< 小于等于 `<=`。
@@ -115,6 +117,7 @@ export auto constexpr token_name_table = std::to_array<std::pair<token_kind, std
     { token_kind::kw_export, "kw_export" },
     { token_kind::kw_module, "kw_module" },
     { token_kind::kw_struct, "kw_struct" },
+    { token_kind::kw_enum, "kw_enum" },
     { token_kind::kw_impl, "kw_impl" },
     { token_kind::kw_concept, "kw_concept" },
     { token_kind::kw_operator, "kw_operator" },
@@ -154,6 +157,7 @@ export auto constexpr token_name_table = std::to_array<std::pair<token_kind, std
     { token_kind::percent_equal, "percent_equal" },
     { token_kind::equal, "equal" },
     { token_kind::equal_equal, "equal_equal" },
+    { token_kind::bang, "bang" },
     { token_kind::bang_equal, "bang_equal" },
     { token_kind::less, "less" },
     { token_kind::less_equal, "less_equal" },

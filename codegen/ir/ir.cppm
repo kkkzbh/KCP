@@ -69,7 +69,7 @@ export enum class ir_opcode : std::uint8_t
     alloc_raw,
     free_raw,
     call,
-    bounds_fail,
+    panic,
     branch,
     cond_branch,
     return_,
@@ -126,7 +126,8 @@ export struct ir_block
         auto opcode = instructions.back().opcode;
         return opcode == ir_opcode::branch
                or opcode == ir_opcode::cond_branch
-               or opcode == ir_opcode::bounds_fail
+               or (opcode == ir_opcode::call and is_never(instructions.back().type))
+               or opcode == ir_opcode::panic
                or opcode == ir_opcode::return_;
     }
 
@@ -156,6 +157,8 @@ export struct ir_module
 {
     type_arena types{};
     std::vector<semantic_struct> structs{};
+    std::vector<semantic_enum> enums{};
+    std::vector<semantic_opaque_alias> opaque_aliases{};
     std::vector<semantic_variant> variants{};
     std::vector<ir_function> functions{};
 };
@@ -401,7 +404,11 @@ struct function_lowerer
                     : (
                         value.variant_index != std::numeric_limits<std::uint32_t>::max()
                             ? module.variants[value.variant_index].name
-                            : std::string{ type_name(*as_builtin(value.owner_type)) }
+                            : (
+                                value.opaque_index != std::numeric_limits<std::uint32_t>::max()
+                                    ? module.opaque_aliases[value.opaque_index].name
+                                    : std::string{ type_name(*as_builtin(value.owner_type)) }
+                            )
                     )
             );
             return std::format("cp.{}.{}.{}.{}", owner_module, owner_name, value.name, symbol.value);
@@ -518,6 +525,35 @@ struct function_lowerer
         return emit(std::move(instruction));
     }
 
+    auto emit_field_value_address(ir_value_id base, semantic_type_id aggregate_type, semantic_field_access field) -> ir_value_id
+    {
+        auto field_type = struct_field_type(aggregate_type, field);
+        auto address = emit_field_address(base, aggregate_type, field_type, field.field_index);
+        if(is_reference(field_type)) {
+            return emit_load(address, field_type);
+        }
+        return address;
+    }
+
+    auto emit_argument_for_parameter(expr_id argument, semantic_type_id parameter) -> ir_value_id
+    {
+        if(auto const* reference = std::get_if<reference_type>(&module.types.get(parameter))) {
+            if(info_of(argument).is_lvalue) {
+                return emit_address(argument);
+            }
+
+            auto value = emit_expression(argument);
+            if(not value.valid()) {
+                return {};
+            }
+
+            auto address = emit_alloca(reference->pointee, "ref.arg.tmp");
+            emit_store(address, value, reference->pointee);
+            return address;
+        }
+        return emit_expression(argument);
+    }
+
     auto emit_element_address(ir_value_id base, ir_value_id index, semantic_type_id aggregate_type, semantic_type_id element_type) -> ir_value_id
     {
         auto instruction = emit_value_instruction(ir_opcode::element_address, element_type);
@@ -569,11 +605,21 @@ struct function_lowerer
         return emit_extract_value(value, str_field_type(index), index);
     }
 
-    auto emit_bounds_fail() -> void
+    auto emit_string_literal(std::string value) -> ir_value_id
+    {
+        auto instruction = emit_value_instruction(ir_opcode::literal, semantic_type_ids::str);
+        instruction.literal = semantic_literal_value {
+            .value = std::move(value),
+        };
+        return emit(std::move(instruction));
+    }
+
+    auto emit_panic(ir_value_id message) -> void
     {
         emit_void(ir_instruction {
-            .opcode = ir_opcode::bounds_fail,
-            .type = semantic_type_ids::unit,
+            .opcode = ir_opcode::panic,
+            .type = semantic_type_ids::never,
+            .operands = { message },
         });
     }
 
@@ -676,7 +722,7 @@ struct function_lowerer
                     }
                     auto initializer = emit_expression(node.initializer);
                     if(not initializer.valid()) {
-                        return false;
+                        return current_block().terminated();
                     }
                     emit_store(address, materialize_conversion(node.initializer, initializer), type);
                     register_cleanup(symbol, address, type);
@@ -703,7 +749,7 @@ struct function_lowerer
                             value = emit_expression(*node.value);
                         }
                         if(not value.valid()) {
-                            return false;
+                            return current_block().terminated();
                         }
                         if(not is_reference(function->returns)) {
                             value = materialize_conversion(*node.value, value);
@@ -721,7 +767,8 @@ struct function_lowerer
                     return true;
                 },
                 [&](expression_statement_syntax const& node) {
-                    return emit_expression(node.expression).valid();
+                    auto value = emit_expression(node.expression);
+                    return value.valid() or current_block().terminated();
                 },
                 [&](break_statement_syntax const& node) {
                     auto target = resolve_loop_jump(node.label, true);
@@ -807,7 +854,7 @@ struct function_lowerer
         } else {
             initializer_value = emit_expression(node.initializer);
             if(not initializer_value.valid()) {
-                return false;
+                return current_block().terminated();
             }
         }
 
@@ -1182,6 +1229,13 @@ struct function_lowerer
                     return emit_load(address, info_of(id).read_type);
                 },
                 [&](associated_name_expr_syntax const&) {
+                    auto enum_access = enum_case_of(id);
+                    if(enum_access.valid()) {
+                        auto const& enum_case = module.enums[enum_access.enum_index].cases[enum_access.case_index];
+                        auto instruction = emit_value_instruction(ir_opcode::literal, info_of(id).read_type);
+                        instruction.literal.value = enum_case.value;
+                        return emit(std::move(instruction));
+                    }
                     auto access = variant_case_of(id);
                     if(access.valid()) {
                         return emit_variant_case_value(id, access, {});
@@ -1297,11 +1351,11 @@ struct function_lowerer
             auto arguments = std::vector<ir_value_id>{};
             auto positional = positional_initializers(node);
             for(auto index = 0uz; index < positional.size(); ++index) {
-                auto value = emit_expression(positional[index]);
+                auto value = emit_argument_for_parameter(positional[index], function->parameters[index]);
                 if(not value.valid()) {
                     return {};
                 }
-                arguments.emplace_back(cast_to(value, info_of(positional[index]).read_type, function->parameters[index]));
+                arguments.emplace_back(value);
             }
             auto instruction = emit_value_instruction(ir_opcode::call, type);
             instruction.symbol = constructor;
@@ -1373,11 +1427,21 @@ struct function_lowerer
             if(not field) {
                 continue;
             }
-            auto value = emit_expression(value_id);
+            auto field_access = semantic_field_access {
+                .struct_index = struct_index,
+                .field_index = static_cast<std::uint32_t>(*field),
+            };
+            auto field_type = struct_field_type(type, field_access);
+            auto value = is_reference(field_type) ? emit_address(value_id) : emit_expression(value_id);
             if(not value.valid()) {
                 return {};
             }
-            aggregate = emit_insert_value(aggregate, materialize_conversion(value_id, value), type, *field);
+            aggregate = emit_insert_value(
+                aggregate,
+                is_reference(field_type) ? value : materialize_conversion(value_id, value),
+                type,
+                *field
+            );
         }
         return aggregate;
     }
@@ -1477,7 +1541,7 @@ struct function_lowerer
             return unsupported_expression("match expression is missing variant type");
         }
 
-        auto result_type = info_of(id).read_type;
+        auto result_type = info_of(id).type;
         auto result_address = is_unit(result_type) ? ir_value_id{} : emit_alloca(result_type, "match.result");
         auto end_block = add_block("match.end");
         auto fallback_block = end_block;
@@ -1600,12 +1664,7 @@ struct function_lowerer
                 return {};
             }
             auto self_type = read_type(semantics.symbols[self.value].type);
-            auto address = emit_field_address(
-                self_address,
-                self_type,
-                struct_field_type(self_type, field),
-                field.field_index
-            );
+            auto address = emit_field_value_address(self_address, self_type, field);
             return emit_load(address, info_of(id).read_type);
         }
         if(not symbol.valid()) {
@@ -1649,6 +1708,9 @@ struct function_lowerer
             return emit_default_value(semantic_type_ids::unit);
         }
         if(node.operator_kind == token_kind::star) {
+            if(selected_operator(id).valid()) {
+                return emit_operator_call(id, std::vector<expr_id>{ node.operand });
+            }
             auto pointer = emit_expression(node.operand);
             if(not pointer.valid()) {
                 return {};
@@ -1707,6 +1769,10 @@ struct function_lowerer
 
     auto emit_binary_expression(binary_expr_syntax const& node, expr_id id) -> ir_value_id
     {
+        if(node.operator_kind == token_kind::kw_and or node.operator_kind == token_kind::kw_or) {
+            return emit_short_circuit_binary_expression(node, id);
+        }
+
         auto left = emit_expression(node.left);
         auto right = emit_expression(node.right);
         if(not left.valid() or not right.valid()) {
@@ -1738,6 +1804,45 @@ struct function_lowerer
             cast_to(right, info_of(node.right).read_type, operand_type),
         };
         return emit(std::move(instruction));
+    }
+
+    auto emit_short_circuit_binary_expression(binary_expr_syntax const& node, expr_id id) -> ir_value_id
+    {
+        auto result_type = info_of(id).read_type;
+        auto result_address = emit_alloca(result_type, node.operator_kind == token_kind::kw_and ? "and.result" : "or.result");
+        auto left = emit_expression(node.left);
+        if(not left.valid()) {
+            return {};
+        }
+
+        auto rhs_block = add_block(node.operator_kind == token_kind::kw_and ? "and.rhs" : "or.rhs");
+        auto short_block = add_block(node.operator_kind == token_kind::kw_and ? "and.short" : "or.short");
+        auto end_block = add_block(node.operator_kind == token_kind::kw_and ? "and.end" : "or.end");
+        emit_void(ir_instruction {
+            .opcode = ir_opcode::cond_branch,
+            .operands = { left },
+            .targets = node.operator_kind == token_kind::kw_and
+                ? std::vector<ir_block_id>{ rhs_block, short_block }
+                : std::vector<ir_block_id>{ short_block, rhs_block },
+        });
+
+        current = short_block;
+        auto short_value = emit_integer_literal(result_type, node.operator_kind == token_kind::kw_and ? 0uz : 1uz);
+        emit_store(result_address, short_value, result_type);
+        emit_void(ir_instruction{ .opcode = ir_opcode::branch, .targets = { end_block } });
+
+        current = rhs_block;
+        auto right = emit_expression(node.right);
+        if(not right.valid()) {
+            return {};
+        }
+        emit_store(result_address, cast_to(right, info_of(node.right).read_type, result_type), result_type);
+        if(not current_block().terminated()) {
+            emit_void(ir_instruction{ .opcode = ir_opcode::branch, .targets = { end_block } });
+        }
+
+        current = end_block;
+        return emit_load(result_address, result_type);
     }
 
     auto pointer_arithmetic_pointee(binary_expr_syntax const& node, expr_id id) -> std::optional<semantic_type_id>
@@ -1910,6 +2015,12 @@ struct function_lowerer
             return emit_member_call_expression(*member, node, id);
         }
 
+        if(selected_operator(id).valid()) {
+            auto arguments = std::vector<expr_id>{ node.callee };
+            arguments.insert(arguments.end(), node.arguments.begin(), node.arguments.end());
+            return emit_operator_call(id, arguments);
+        }
+
         auto lambda_call = lambda_call_of(id);
         if(lambda_call.valid()) {
             return emit_closure_call_expression(node, id, lambda_call);
@@ -1960,15 +2071,18 @@ struct function_lowerer
             if(parameter_index >= function->parameters.size()) {
                 return unsupported_expression("call argument is missing parameter type");
             }
-            if(is_reference(function->parameters[parameter_index])) {
-                value = emit_address(argument);
-            } else {
-                value = emit_expression(argument);
-            }
+            value = emit_argument_for_parameter(argument, function->parameters[parameter_index]);
             if(not value.valid()) {
                 return {};
             }
             arguments.emplace_back(value);
+        }
+        for(auto parameter_index = node.arguments.size() + parameter_offset; parameter_index < function->parameters.size(); ++parameter_index) {
+            auto defaults = semantics.parameter_defaults_of(callee);
+            if(defaults == nullptr or parameter_index >= defaults->size() or not (*defaults)[parameter_index]) {
+                return unsupported_expression("call argument is missing parameter type");
+            }
+            arguments.emplace_back(emit_default_value(function->parameters[parameter_index]));
         }
         auto instruction = emit_value_instruction(ir_opcode::call, info_of(id).type);
         if(semantics.symbols[callee.value].kind == symbol_kind::function) {
@@ -1982,7 +2096,8 @@ struct function_lowerer
             instruction.aggregate_type = read_type(info_of(node.callee).type);
         }
         instruction.operands = std::move(arguments);
-        return emit(std::move(instruction));
+        auto result = emit(std::move(instruction));
+        return is_never(info_of(id).type) ? ir_value_id{} : result;
     }
 
     auto emit_closure_call_expression(call_expr_syntax const& node, expr_id id, semantic_lambda_info const& lambda) -> ir_value_id
@@ -2007,7 +2122,7 @@ struct function_lowerer
         for(auto index = 0uz; index < node.arguments.size(); ++index) {
             auto argument = node.arguments[index];
             auto parameter = lambda.callable.parameters[index];
-            auto value = is_reference(parameter) ? emit_address(argument) : emit_expression(argument);
+            auto value = emit_argument_for_parameter(argument, parameter);
             if(not value.valid()) {
                 return {};
             }
@@ -2017,13 +2132,52 @@ struct function_lowerer
         auto instruction = emit_value_instruction(ir_opcode::call, lambda.callable.returns);
         instruction.symbol = lambda.function_symbol;
         instruction.operands = std::move(arguments);
-        return emit(std::move(instruction));
+        auto result = emit(std::move(instruction));
+        return is_never(lambda.callable.returns) ? ir_value_id{} : result;
     }
 
     auto emit_builtin_call(call_expr_syntax const& node, semantic_builtin_call builtin) -> ir_value_id
     {
         using enum semantic_builtin_call_kind;
         switch(builtin.kind) {
+            case panic: {
+                auto message = emit_expression(node.arguments.front());
+                if(not message.valid()) {
+                    return {};
+                }
+                emit_panic(message);
+                return {};
+            }
+            case assert_: {
+                auto condition = emit_expression(node.arguments.front());
+                if(not condition.valid()) {
+                    return {};
+                }
+                auto fail_block = add_block("assert.fail");
+                auto ok_block = add_block("assert.ok");
+                emit_void(ir_instruction {
+                    .opcode = ir_opcode::cond_branch,
+                    .operands = { condition },
+                    .targets = { ok_block, fail_block },
+                });
+
+                current = fail_block;
+                auto message = ir_value_id{};
+                if(node.arguments.size() > 1uz) {
+                    message = emit_expression(node.arguments[1uz]);
+                } else {
+                    message = emit_string_literal("assertion failed");
+                }
+                if(not message.valid()) {
+                    return {};
+                }
+                emit_panic(message);
+                current = ok_block;
+                return emit_default_value(semantic_type_ids::unit);
+            }
+            case unreachable:
+                emit_panic(emit_string_literal("entered unreachable code"));
+                return {};
             case alloc: {
                 auto count = emit_expression(node.arguments.front());
                 if(not count.valid()) {
@@ -2098,7 +2252,7 @@ struct function_lowerer
         for(auto index = 0uz; index < node.arguments.size(); ++index) {
             auto argument = node.arguments[index];
             auto parameter = function->parameters[index + 1uz];
-            auto value = is_reference(parameter) ? emit_address(argument) : emit_expression(argument);
+            auto value = emit_argument_for_parameter(argument, parameter);
             if(not value.valid()) {
                 return {};
             }
@@ -2108,7 +2262,8 @@ struct function_lowerer
         auto instruction = emit_value_instruction(ir_opcode::call, info_of(id).type);
         instruction.symbol = callee;
         instruction.operands = std::move(arguments);
-        return emit(std::move(instruction));
+        auto result = emit(std::move(instruction));
+        return is_never(info_of(id).type) ? ir_value_id{} : result;
     }
 
     auto emit_operator_call(expr_id id, std::vector<expr_id> const& arguments) -> ir_value_id
@@ -2126,7 +2281,7 @@ struct function_lowerer
         operands.reserve(arguments.size());
         for(auto index = 0uz; index < arguments.size(); ++index) {
             auto parameter = function->parameters[index];
-            auto value = is_reference(parameter) ? emit_address(arguments[index]) : emit_expression(arguments[index]);
+            auto value = emit_argument_for_parameter(arguments[index], parameter);
             if(not value.valid()) {
                 return {};
             }
@@ -2136,7 +2291,8 @@ struct function_lowerer
         auto instruction = emit_value_instruction(ir_opcode::call, function->returns);
         instruction.symbol = symbol;
         instruction.operands = std::move(operands);
-        return emit(std::move(instruction));
+        auto result = emit(std::move(instruction));
+        return is_never(function->returns) ? ir_value_id{} : result;
     }
 
     auto emit_operator_read(expr_id id, std::vector<expr_id> const& arguments) -> ir_value_id
@@ -2168,12 +2324,7 @@ struct function_lowerer
                     return unsupported_expression("implicit field access is missing self address");
                 }
                 auto self_type = read_type(semantics.symbols[self.value].type);
-                return emit_field_address(
-                    self_address,
-                    self_type,
-                    struct_field_type(self_type, field),
-                    field.field_index
-                );
+                return emit_field_value_address(self_address, self_type, field);
             }
             if(not symbol.valid()) {
                 return unsupported_expression("address expression is missing resolved symbol");
@@ -2191,12 +2342,13 @@ struct function_lowerer
                 return {};
             }
             auto object_type = info_of(member->object).read_type;
-            return emit_field_address(
-                base,
-                object_type,
-                struct_field_type(object_type, field),
-                field.field_index
-            );
+            return emit_field_value_address(base, object_type, field);
+        }
+        if(auto const* unary = std::get_if<unary_expr_syntax>(&expression); unary and unary->operator_kind == token_kind::star and not selected_operator(id).valid()) {
+            return emit_expression(unary->operand);
+        }
+        if(auto const* grouped = std::get_if<grouped_expr_syntax>(&expression)) {
+            return emit_address(grouped->expression);
         }
         if(auto const* index = std::get_if<index_expr_syntax>(&expression)) {
             if(selected_operator(id).valid()) {
@@ -2234,6 +2386,26 @@ struct function_lowerer
             if(not object_address.valid() or not index_value.valid()) {
                 return {};
             }
+            if(auto const* array = std::get_if<array_type>(&module.types.get(object_type))) {
+                auto checked_index = cast_to(index_value, info_of(index->index).read_type, semantic_type_ids::builtin(builtin_type_kind::usize));
+                auto length = emit_integer_literal(semantic_type_ids::builtin(builtin_type_kind::usize), array_length_value(array->length).value_or(0uz));
+                auto condition = emit_value_instruction(ir_opcode::binary, semantic_type_ids::bool_);
+                condition.operator_kind = token_kind::greater_equal;
+                condition.operands = std::vector<ir_value_id>{ checked_index, length };
+                auto out_of_bounds = emit(std::move(condition));
+                auto fail_block = add_block("array.index.fail");
+                auto ok_block = add_block("array.index.ok");
+                emit_void(ir_instruction {
+                    .opcode = ir_opcode::cond_branch,
+                    .operands = { out_of_bounds },
+                    .targets = { fail_block, ok_block },
+                });
+
+                current = fail_block;
+                emit_panic(emit_string_literal("array index out of bounds"));
+                current = ok_block;
+                index_value = checked_index;
+            }
             return emit_element_address(
                 object_address,
                 index_value,
@@ -2242,6 +2414,12 @@ struct function_lowerer
             );
         }
         if(auto const* unary = std::get_if<unary_expr_syntax>(&expression)) {
+            if(selected_operator(id).valid()) {
+                if(not info_of(id).is_lvalue) {
+                    return unsupported_expression("value-returning unary operator has no address");
+                }
+                return emit_operator_call(id, std::vector<expr_id>{ unary->operand });
+            }
             if(unary->operator_kind == token_kind::star) {
                 return emit_expression(unary->operand);
             }
@@ -2254,6 +2432,12 @@ struct function_lowerer
                 return unsupported_expression("value-returning call has no address");
             }
             return emit_call_expression_raw(*call, id);
+        }
+        if(std::holds_alternative<match_expr_syntax>(expression) or std::holds_alternative<block_expr_syntax>(expression)) {
+            if(not info_of(id).is_lvalue) {
+                return unsupported_expression("value-returning expression has no address");
+            }
+            return emit_expression(id);
         }
         return unsupported_expression("expression has no address");
     }
@@ -2303,7 +2487,7 @@ struct function_lowerer
         });
 
         current = fail_block;
-        emit_bounds_fail();
+        emit_panic(emit_string_literal("string index out of bounds"));
 
         current = ok_block;
         auto pointer = emit_str_field(text, 0uz);
@@ -2434,6 +2618,11 @@ struct function_lowerer
         return std::nullopt;
     }
 
+    auto enum_case_of(expr_id id) const -> semantic_enum_case_access
+    {
+        return semantics.enum_case_of(context_index, unit_index, id);
+    }
+
     auto substitute_type(semantic_type_id type, std::vector<semantic_type_id> const& arguments) -> semantic_type_id
     {
         auto const& kind = module.types.get(type);
@@ -2442,6 +2631,7 @@ struct function_lowerer
                 [&](unit_type const&) { return type; },
                 [&](error_type const&) { return type; },
                 [&](inferred_type const&) { return type; },
+                [&](never_type const&) { return type; },
                 [&](builtin_type const&) { return type; },
                 [&](generic_parameter_type const& value) {
                     if(value.index < arguments.size()) {
@@ -2472,8 +2662,16 @@ struct function_lowerer
                     return module.types.intern(tuple_type{ std::move(elements) });
                 },
                 [&](reference_type const& value) {
+                    auto pointee = substitute_type(value.pointee, arguments);
+                    if(auto const* inner = std::get_if<reference_type>(&module.types.get(pointee))) {
+                        return module.types.intern(reference_type {
+                            inner->pointee,
+                            value.is_const or inner->is_const,
+                            value.reference_kind,
+                        });
+                    }
                     return module.types.intern(reference_type {
-                        substitute_type(value.pointee, arguments),
+                        pointee,
                         value.is_const,
                         value.reference_kind,
                     });
@@ -2497,8 +2695,8 @@ struct function_lowerer
                         .returns = substitute_type(value.returns, arguments),
                     });
                 },
-                [&](struct_type const& value) {
-                    auto substituted = (
+            [&](struct_type const& value) {
+                auto substituted = (
                         value.arguments
                         | std::views::transform([&](auto argument) {
                             return substitute_type(argument, arguments);
@@ -2506,11 +2704,13 @@ struct function_lowerer
                     );
                     return module.types.intern(struct_type {
                         .index = value.index,
-                        .arguments = std::move(substituted),
-                    });
-                },
-                [&](variant_type const& value) {
-                    auto substituted = (
+                    .arguments = std::move(substituted),
+                });
+            },
+            [&](enum_type const&) { return type; },
+            [&](opaque_type const&) { return type; },
+            [&](variant_type const& value) {
+                auto substituted = (
                         value.arguments
                         | std::views::transform([&](auto argument) {
                             return substitute_type(argument, arguments);
@@ -2747,14 +2947,15 @@ export auto emit_ir(source_manager const& sources, std::span<parse_result const>
         .module = ir_module{
             .types = semantics.types,
             .structs = semantics.structs,
+            .enums = semantics.enums,
+            .opaque_aliases = semantics.opaque_aliases,
+            .variants = semantics.variants,
         },
     };
     if(not semantics.accepted()) {
         result.error = "IR emission requires accepted semantic results";
         return result;
     }
-    result.module.variants = semantics.variants;
-
     for(auto unit_index : std::views::iota(0uz, units.size())) {
         auto const& parsed = units[unit_index];
         if(not parsed.accepted or not parsed.root) {
@@ -2861,7 +3062,7 @@ auto opcode_name(ir_opcode opcode) -> std::string_view
         case alloc_raw: return "alloc_raw";
         case free_raw: return "free_raw";
         case call: return "call";
-        case bounds_fail: return "bounds_fail";
+        case panic: return "panic";
         case branch: return "branch";
         case cond_branch: return "cond_branch";
         case return_: return "return";

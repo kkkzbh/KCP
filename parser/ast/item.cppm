@@ -19,6 +19,7 @@ export struct parameter_syntax
     bool self_is_move{};
     source_span name{};
     std::optional<type_id> type{};
+    std::optional<expr_id> default_value{};
 };
 
 export struct concept_id_syntax
@@ -128,6 +129,7 @@ export enum class overload_operator_kind : std::uint8_t
     less_less_equal,
     greater_greater_equal,
     subscript,
+    call,
 };
 
 export struct function_syntax
@@ -209,12 +211,34 @@ export struct variant_syntax
     std::vector<variant_case_syntax> cases{};
 };
 
+export struct enum_case_syntax
+{
+    auto constexpr operator==(enum_case_syntax const& other) const -> bool = default;
+
+    source_span full_span{};
+    source_span name{};
+    expr_id value{};
+};
+
+export struct enum_syntax
+{
+    auto constexpr operator==(enum_syntax const& other) const -> bool = default;
+
+    source_span full_span{};
+    bool exported{};
+    source_span name{};
+    type_id underlying_type{};
+    std::vector<enum_case_syntax> cases{};
+};
+
 export struct type_alias_syntax
 {
     auto constexpr operator==(type_alias_syntax const& other) const -> bool = default;
 
     source_span full_span{};
+    bool exported{};
     source_span name{};
+    bool opaque{};
     std::optional<type_id> value{};
 };
 
@@ -236,6 +260,7 @@ export struct concept_function_requirement_syntax
 
     source_span full_span{};
     source_span name{};
+    std::optional<overload_operator_kind> overload_operator{};
     std::vector<parameter_syntax> parameters{};
     std::optional<type_id> return_type{};
     std::optional<function_id> default_function{};
@@ -279,7 +304,9 @@ export struct translation_unit_syntax
     std::vector<import_syntax> imports{};
     std::vector<concept_id> concepts{};
     std::vector<struct_id> structs{};
+    std::vector<enum_id> enums{};
     std::vector<variant_id> variants{};
+    std::vector<type_alias_id> type_aliases{};
     std::vector<impl_id> impls{};
     std::vector<concept_impl_id> concept_impls{};
     std::vector<function_id> functions{};

@@ -55,6 +55,12 @@ auto run_stdout(std::vector<std::string> const& arguments, std::filesystem::path
     return std::system(command.c_str());
 }
 
+auto run_stderr(std::vector<std::string> const& arguments, std::filesystem::path const& output) -> int
+{
+    auto command = shell_join(arguments) + " >/dev/null 2>" + shell_quote(output.string());
+    return std::system(command.c_str());
+}
+
 auto exit_code(int status) -> int
 {
     if(status < 0) {
@@ -106,6 +112,31 @@ auto check_binary_exit(test_tools const& tools) -> void
     test_parser::assert_true(status == 0, "cp should emit a binary");
     test_parser::assert_true(std::filesystem::exists(app), "binary output should exist");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "binary should return 42");
+}
+
+auto check_short_circuit_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("short-circuit");
+    auto source = dir / "short_circuit.cp";
+    auto app = dir / "short_circuit";
+    write_source(
+        source,
+        R"(main() -> i32
+{
+    let pointer: i32* = nullptr;
+    if(pointer != nullptr and *pointer == 1) {
+        return 1;
+    }
+    if(pointer == nullptr or *pointer == 1) {
+        return 0;
+    }
+    return 2;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile short-circuit binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 0, "short-circuit binary should not evaluate the skipped operand");
 }
 
 auto check_extern_c_binary(test_tools const& tools) -> void
@@ -409,7 +440,7 @@ auto check_fixture_examples(test_tools const& tools) -> void
         { "memory", { tools.fixture_examples / "memory" / "main.cp" }, 42 },
         { "operators", { tools.fixture_examples / "operators" / "main.cp" }, 42 },
         { "ownership", { tools.fixture_examples / "ownership" / "main.cp" }, 92 },
-        { "std", { tools.fixture_examples / "std" / "main.cp" }, 75 },
+        { "std", { tools.fixture_examples / "std" / "main.cp" }, 118 },
     };
 
     for(auto const& group : groups) {
@@ -1306,6 +1337,53 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "std.io format errors should be observable");
 }
 
+auto check_file_io_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("file-io");
+    auto source = dir / "file_io.cp";
+    auto data = dir / "data.txt";
+    auto app = dir / "file_io";
+    write_source(
+        source,
+        std::format(
+R"(import std;
+
+main() -> i32
+{{
+    let path: str = "{}";
+    match file::open(path, open_options{{}}.write().create().truncate()) {{
+        .value(out) => {{
+            let written = out.write_str("cp-io");
+            if(written.value_or(0 as usize) != (5 as usize)) {{
+                return 2;
+            }}
+            out.close();
+        }},
+        .unexpected(error) => {{ return 1; }},
+    }};
+    match file::open(path, open_options{{}}.read()) {{
+        .value(input) => {{
+            let storage = buffer<u8>{{5}};
+            let read = input.read(span<u8>{{storage.data(), 5}});
+            if(read.value_or(0 as usize) != (5 as usize)) {{
+                return 3;
+            }}
+            return (*(storage.data()) as i32) - 99;
+        }},
+        .unexpected(error) => {{ return 4; }},
+    }};
+    return 9;
+}})",
+            data.string()
+        )
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile std.fs file IO binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 0, "std.fs binary should write and read file data");
+    test_parser::assert_true(read_text(data) == "cp-io", "std.fs binary should leave expected file contents");
+}
+
 auto check_operator_overload_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("operator-overload");
@@ -1372,6 +1450,198 @@ main() -> i32
     test_parser::assert_true(status == 0, "cp should compile operator overload binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "operator overload binary should return computed value");
 }
+
+auto check_std_sort_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("std-sort");
+    auto source = dir / "std_sort.cp";
+    auto app = dir / "std_sort";
+    write_source(
+        source,
+        R"(import std;
+
+main() -> i32
+{
+    let values = vector<i32>{};
+    values.push_back(20);
+    values.push_back(19);
+    values.push_back(18);
+    values.push_back(17);
+    values.push_back(16);
+    values.push_back(15);
+    values.push_back(14);
+    values.push_back(13);
+    values.push_back(12);
+    values.push_back(11);
+    values.push_back(10);
+    values.push_back(9);
+    values.push_back(8);
+    values.push_back(7);
+    values.push_back(6);
+    values.push_back(5);
+    values.push_back(4);
+    values.push_back(3);
+    values.push_back(2);
+    values.push_back(1);
+    sort(span<i32>{values.data(), values.size()});
+    if(values[0 as usize] != 1 or values[10 as usize] != 11 or values[19 as usize] != 20) {
+        return 1;
+    }
+    sort(span<i32>{values.data(), values.size()}, f(left: i32 const&, right: i32 const&) -> bool {
+        left > right
+    });
+    if(values[0 as usize] != 20 or values[10 as usize] != 10 or values[19 as usize] != 1) {
+        return 2;
+    }
+    sort(span<i32>{values.data(), values.size()}, greater<i32>{});
+    return values[0 as usize] + values[10 as usize] * 2 + values[19 as usize] * 2;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile std sort binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "std sort binary should return sorted checksum");
+}
+
+auto check_std_map_set_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("std-map-set");
+    auto source = dir / "std_map_set.cp";
+    auto app = dir / "std_map_set";
+    write_source(
+        source,
+        R"(import std;
+
+main() -> i32
+{
+    let values = map<i32, i32>{};
+    let first = values.insert(3, 30);
+    let second = values.insert(1, 10);
+    let duplicate = values.insert(3, 99);
+    values[2] = 20;
+    let found = values.find(1);
+    *found = *found + 1;
+    if(not first.inserted or not second.inserted or duplicate.inserted) {
+        return 1;
+    }
+    if(values.size() != 3 or values.at(3) != 30 or values.nth(1 as usize).value != 20) {
+        return 2;
+    }
+    if(values.rank(3) != 2 or values.remove(8) or not values.remove(1)) {
+        return 3;
+    }
+
+    let keys = set<i32>{};
+    let a = keys.insert(4);
+    let b = keys.insert(2);
+    let c = keys.insert(4);
+    if(not a.inserted or not b.inserted or c.inserted) {
+        return 4;
+    }
+    if(keys.size() != 2 or keys.nth(0 as usize) != 2 or keys.rank(4) != 1) {
+        return 5;
+    }
+
+    return values.at(2) + values.at(3) - keys.nth(0 as usize) - keys.rank(4) as i32 - values.size() as i32 - keys.size() as i32 - 3;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile std map/set binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 40, "std map/set binary should return ordered-container checksum");
+}
+
+auto check_panic_assert_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("panic-assert");
+
+    auto assert_true_source = dir / "assert_true.cp";
+    auto assert_true_app = dir / "assert_true";
+    write_source(
+        assert_true_source,
+        R"(main() -> i32
+{
+    assert(true);
+    return 42;
+})"
+    );
+    auto assert_true_status = compile(tools, { assert_true_source.string(), "-o", assert_true_app.string() });
+    test_parser::assert_true(assert_true_status == 0, "cp should compile assert(true)");
+    test_parser::assert_true(exit_code(run_status({ assert_true_app.string() })) == 42, "assert(true) should continue");
+
+    auto panic_source = dir / "panic.cp";
+    auto panic_app = dir / "panic";
+    auto panic_stderr = dir / "panic.stderr";
+    write_source(
+        panic_source,
+        R"(main() -> i32
+{
+    panic("boom");
+})"
+    );
+    auto panic_status = compile(tools, { panic_source.string(), "-o", panic_app.string() });
+    test_parser::assert_true(panic_status == 0, "cp should compile panic binary");
+    test_parser::assert_true(exit_code(run_stderr({ panic_app.string() }, panic_stderr)) != 0, "panic binary should fail");
+    test_parser::assert_true(read_text(panic_stderr).contains("panic: boom"), "panic should write message to stderr");
+
+    auto assert_false_source = dir / "assert_false.cp";
+    auto assert_false_app = dir / "assert_false";
+    auto assert_false_stderr = dir / "assert_false.stderr";
+    write_source(
+        assert_false_source,
+        R"(main() -> i32
+{
+    assert(false, "bad");
+    return 0;
+})"
+    );
+    auto assert_false_status = compile(tools, { assert_false_source.string(), "-o", assert_false_app.string() });
+    test_parser::assert_true(assert_false_status == 0, "cp should compile assert(false)");
+    test_parser::assert_true(exit_code(run_stderr({ assert_false_app.string() }, assert_false_stderr)) != 0, "assert(false) should fail");
+    test_parser::assert_true(read_text(assert_false_stderr).contains("panic: bad"), "assert(false) should write message to stderr");
+}
+
+auto check_checked_index_panic_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("checked-index");
+    auto source = dir / "checked_index.cp";
+    auto app = dir / "checked_index";
+    auto stderr_path = dir / "checked_index.stderr";
+    write_source(
+        source,
+        R"(import std;
+
+main() -> i32
+{
+    let text = string{"hi"};
+    let index = 3 as usize;
+    let ch = text[index];
+    return 0;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile checked string indexing");
+    test_parser::assert_true(exit_code(run_stderr({ app.string() }, stderr_path)) != 0, "out-of-bounds string index should panic");
+    test_parser::assert_true(read_text(stderr_path).contains("string index out of bounds"), "index panic should use contract message");
+
+    auto array_source = dir / "checked_array.cp";
+    auto array_app = dir / "checked_array";
+    auto array_stderr = dir / "checked_array.stderr";
+    write_source(
+        array_source,
+        R"(main() -> i32
+{
+    let values = [1, 2];
+    let index = 2;
+    return values[index];
+})"
+    );
+    auto array_status = compile(tools, { array_source.string(), "-o", array_app.string() });
+    test_parser::assert_true(array_status == 0, "cp should compile checked array indexing");
+    test_parser::assert_true(exit_code(run_stderr({ array_app.string() }, array_stderr)) != 0, "out-of-bounds array index should panic");
+    test_parser::assert_true(read_text(array_stderr).contains("array index out of bounds"), "array index panic should use contract message");
+}
 } // namespace
 
 auto main(int argc, char** argv) -> int
@@ -1385,6 +1655,7 @@ auto main(int argc, char** argv) -> int
     };
 
     check_binary_exit(tools);
+    check_short_circuit_binary(tools);
     check_extern_c_binary(tools);
     check_emit_ll(tools);
     check_emit_obj(tools);
@@ -1424,6 +1695,11 @@ auto main(int argc, char** argv) -> int
     check_io_print_binary(tools);
     check_io_nul_string_binary(tools);
     check_io_format_errors_binary(tools);
+    check_file_io_binary(tools);
     check_operator_overload_binary(tools);
+    check_std_sort_binary(tools);
+    check_std_map_set_binary(tools);
+    check_panic_assert_binary(tools);
+    check_checked_index_panic_binary(tools);
     return 0;
 }

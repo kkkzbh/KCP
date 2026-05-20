@@ -2,9 +2,9 @@
 
 本文档记录 cp 的核心类型规则。变量初始化写法见 [initial.md](initial.md)，结构体、构造函数、析构函数和成员函数见 [struct.md](struct.md)，所有权、借用和移动见 [ownership.md](ownership.md)，`concept` 和 `type` 类型别名语句见 [concept.md](concept.md)。
 
-类型系统包含内建标量类型、内部 `unit` 类型、数组、元组、结构体、variant、引用、指针、函数类型、函数指针、函数返回类型推导、默认初始化、显式转换、控制流条件规则和运算符类型规则。
+类型系统包含内建标量类型、内部 `unit` 类型、`!` never type、数组、元组、结构体、强类型 `enum`、opaque alias、variant、引用、指针、函数类型、函数指针、函数返回类型推导、默认初始化、显式转换、控制流条件规则和运算符类型规则。
 
-`concept`、泛型、`variant`、lambda 和闭包的专门规则分别见 [concept.md](concept.md)、[generic.md](generic.md)、[variant.md](variant.md) 和 [lambda.md](lambda.md)。
+`concept`、泛型、`enum`、opaque alias、`variant`、lambda 和闭包的专门规则分别见 [concept.md](concept.md)、[generic.md](generic.md)、[enum.md](enum.md)、[opaque_alias.md](opaque_alias.md)、[variant.md](variant.md) 和 [lambda.md](lambda.md)。
 
 ## 类型分类
 
@@ -74,7 +74,7 @@ let first = text[0];
 - 下标 `i` 必须是整数类型。
 - `s[i]` 的结果类型是 `char`。
 - `s[i]` 不是左值，不能赋值。
-- 越界行为定义为运行时错误；后端通过插入 bounds check 实现。
+- 越界行为定义为调用者违反前置条件；checked 第一版通过 `assert` 触发 panic。
 - 编译期常量下标访问字符串字面量时，如果能确定越界，语义分析可以报错。
 - 可以显式构造 `str{ .ptr = p, .len = n }`，调用者负责保证 `[p, p + n)` 指向有效只读字符序列；是否 trailing nul 不是 `str` 的不变量。
 
@@ -82,7 +82,7 @@ let first = text[0];
 
 #### string 拥有字符串
 
-`string` 是标准库提供的拥有型字符串，底层基于 `buffer<char>` 管理字符存储。它不是内建标量类型；编译器只需要理解 `str` 视图和字符串字面量，拥有、扩容和可变操作由标准库 `std.string` 实现。
+`string` 是标准库提供的拥有型字符串，底层基于 `buffer<char>` 管理字符存储。它不是内建标量类型；编译器只需要理解 `str` 视图和字符串字面量，拥有、扩容和可变操作由标准库 `std.text.string` 实现。
 
 `string` 的第一版语义：
 
@@ -92,12 +92,12 @@ let first = text[0];
 - 底层存储始终维护一个 trailing `'\0'`，因此 `data()` 可作为 C++11 风格字符串数据入口使用。
 - 不提供 `c_str()`；需要裸指针时直接使用 `data()`。
 - `as_str()` 返回借用视图 `str`，长度等于 `size()`，不拥有底层存储。
-- 下标、`front()` 和 `back()` 按当前长度检查边界，越界是运行时错误。
+- 下标、`front()` 和 `back()` 使用 `assert` 表达当前长度前置条件；checked 第一版失败时 panic。
 - `push_back()`、`pop_back()`、`resize(new_size, ch)`、`append(str)` 和 `clear()` 都保持 trailing `'\0'` 不变量。
 
 `string` 不是 `str` 的替代品：`str` 表达借用和字面量视图，`string` 表达拥有和可变缓冲区。需要传递只读文本时优先使用 `str` 参数；需要保存或修改文本时使用 `string`。
 
-### unit
+### unit 和 `!`
 
 内部存在 `unit` 类型，用于表示没有值的结果。它 lowered 到 LLVM IR 时是 `void`。
 
@@ -118,6 +118,8 @@ touch<T>(value: T) -> void
 ```
 
 `void` 只允许表达“函数没有返回值”，不能作为局部变量类型、字段类型、容器元素类型或泛型实参使用。
+
+`!` 是 never type，表示表达式不会正常产生值。`panic(...)`、`unreachable()` 和只产生发散控制流的表达式使用 `!`。`!` 可以隐式转换到任意类型；任意普通类型不能转换到 `!`。详细错误处理规则见 [error_handling.md](error_handling.md)。
 
 ### 结构化类型
 
@@ -147,6 +149,10 @@ let single: (i32,) = (1,);
 元组是异构类型。普通 `(T)` 是类型分组，普通 `(x)` 是分组表达式；一元 tuple 必须写成 `(T,)` / `(x,)`。
 
 `struct` 是名义类型。结构体规则见 [struct.md](struct.md)。
+
+`enum` 是名义整数类型。case 通过 `Type::case` 访问，不隐式转整数；规则见 [enum.md](enum.md)。
+
+`type A = opaque T` 是名义封装类型，layout/ABI 与底层 `T` 一致，但不继承底层操作；规则见 [opaque_alias.md](opaque_alias.md)。
 
 `variant` 是名义和类型，表示若干个 case 中恰好一个。variant 规则见 [variant.md](variant.md)。
 
@@ -356,7 +362,7 @@ values[1] = x + 10;
 - 如果 `a` 是可写左值，则 `a[i]` 是可写左值。
 - 如果 `a` 是 const 值或 const 引用，则 `a[i]` 只能读取，不能赋值。
 - 编译期常量下标如果不在 `[0, N)` 范围内，语义分析报错。
-- 非常量下标的越界行为定义为运行时错误；后端通过插入 bounds check 实现。
+- 非常量下标的越界行为定义为调用者违反前置条件；checked 第一版通过 `assert` 触发 panic。
 
 单独的 `a[]` 不是表达式。数组访问必须写成带下标的 `a[index]`。用户自定义类型可以通过 `operator []` 支持下标访问，见 [operator.md](operator.md)。
 

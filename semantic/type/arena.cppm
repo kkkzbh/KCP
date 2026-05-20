@@ -42,6 +42,9 @@ private:
         if(std::holds_alternative<inferred_type>(kind)) {
             return semantic_type_ids::inferred;
         }
+        if(std::holds_alternative<never_type>(kind)) {
+            return semantic_type_ids::never;
+        }
         if(auto const* builtin = std::get_if<builtin_type>(&kind)) {
             return semantic_type_ids::builtin(builtin->kind);
         }
@@ -67,6 +70,7 @@ private:
             semantic_type_kind{ unit_type{} },
             semantic_type_kind{ error_type{} },
             semantic_type_kind{ inferred_type{} },
+            semantic_type_kind{ never_type{} },
             semantic_type_kind{ builtin_type{ builtin_type_kind::bool_ } },
             semantic_type_kind{ builtin_type{ builtin_type_kind::i8 } },
             semantic_type_kind{ builtin_type{ builtin_type_kind::i16 } },

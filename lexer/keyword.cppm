@@ -49,6 +49,9 @@ auto keyword_kind(std::string_view text) -> std::optional<token_kind>
             if(text == "else"sv) {
                 return token_kind::kw_else;
             }
+            if(text == "enum"sv) {
+                return token_kind::kw_enum;
+            }
             if(text == "impl"sv) {
                 return token_kind::kw_impl;
             }

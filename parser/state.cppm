@@ -28,6 +28,8 @@ struct parser
     auto parse_overload_operator() -> std::optional<std::pair<overload_operator_kind, source_span>>;
     auto parse_struct_declaration(bool exported, std::optional<source_span> export_span) -> std::optional<struct_id>;
     auto parse_struct_field() -> std::optional<struct_field_syntax>;
+    auto parse_enum_declaration(bool exported, std::optional<source_span> export_span) -> std::optional<enum_id>;
+    auto parse_enum_case() -> std::optional<enum_case_syntax>;
     auto parse_variant_declaration(bool exported, std::optional<source_span> export_span) -> std::optional<variant_id>;
     auto parse_variant_case() -> std::optional<variant_case_syntax>;
     auto parse_impl_block() -> std::optional<impl_id>;
@@ -207,6 +209,8 @@ struct parser
                 return "'module'";
             case kw_struct:
                 return "'struct'";
+            case kw_enum:
+                return "'enum'";
             case kw_impl:
                 return "'impl'";
             case kw_concept:
@@ -445,6 +449,7 @@ struct parser
             token_kind::kw_import,
             token_kind::kw_export,
             token_kind::kw_struct,
+            token_kind::kw_enum,
             token_kind::kw_impl,
             token_kind::kw_concept,
             token_kind::identifier,
@@ -464,6 +469,7 @@ struct parser
             token_kind::semicolon,
             token_kind::kw_export,
             token_kind::kw_struct,
+            token_kind::kw_enum,
             token_kind::kw_impl,
             token_kind::kw_concept,
             token_kind::identifier,
@@ -477,10 +483,10 @@ struct parser
         }
     }
 
-    std::vector<token> tokens;
-    std::size_t index{};
-    std::deque<token> injected{};
-    ast_arena arena{};
-    diagnostic_collector diagnostics{};
-    std::vector<function_id> synthetic_functions{};
+    std::vector<token> tokens;                       // 完整 token 流，包含末尾的 EOF 哨兵。
+    std::size_t index{};                             // tokens 中的游标；injected token 优先消费。
+    std::deque<token> injected{};                    // 泛型闭合符号拆分时临时注入的 token 缓冲。
+    ast_arena arena{};                               // 本次解析生成的语法节点所有权存储。
+    diagnostic_collector diagnostics{};              // 累积解析诊断，直到生成 parse_result。
+    std::vector<function_id> synthetic_functions{};  // lambda 生成、稍后追加到翻译单元的函数。
 };

@@ -1,7 +1,7 @@
-export module std.str;
+export module std.text.str;
 
-import std.iter;
-import std.option;
+import std.core.iter;
+import std.core.option;
 
 impl str {
     size(self) -> usize

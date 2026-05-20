@@ -4,7 +4,7 @@
 
 `extern` 是上下文关键字，只在顶层函数声明或定义前具有特殊含义。ABI 字符串第一版只接受 `"C"`。
 
-第一版目标是支持标准库和 runtime 的低层互操作，例如 `std.io` 需要的 `putchar`、`puts` 或 `cp_put_char`。它不是完整 FFI 系统，也不试图一次性支持所有 C 类型、结构体布局或平台 ABI 细节。
+第一版目标是支持标准库和 runtime 的低层互操作，例如 `std.io` 的字符输出和 `std.fs` 的文件读写。它不是完整 FFI 系统，也不试图一次性支持所有 C 类型、结构体布局或平台 ABI 细节。
 
 ## 设计目标
 
@@ -128,6 +128,7 @@ isize usize
 f32 f64
 char
 T*
+opaque alias whose underlying type is C-compatible
 ```
 
 其中：
@@ -135,6 +136,7 @@ T*
 - `void` 在返回类型位置 lower 为内部 `unit`，再 lower 为 C `void`。
 - `char` 按 1 字节整数传递。
 - `T*` 只检查指针本身的 ABI；`T` 指向的对象布局仍由调用者契约负责。
+- opaque alias 在 ABI 上按底层类型传递，但类型检查中仍是名义类型。标准库用它封装文件句柄和 option bitset。
 
 第一版不允许：
 
@@ -144,6 +146,7 @@ str
 (T1, T2)
 struct by value
 variant
+enum by value, unless the value is explicitly cast to its underlying integer
 T&
 f(...) -> R
 generic extern function
@@ -153,6 +156,8 @@ impl member function
 ```
 
 这些类型需要更完整的 ABI 设计后再开放。特别是 `str` 的语言设计是运行时长度字符串视图，而不是稳定的 C `char*`；因此不能直接把 `str` 当作 C 字符串 ABI 暴露。
+
+普通 cp `struct` 第一版不承诺 C ABI layout。需要跨 C 传递结构体时，后续应单独设计 `repr(C)` 或 `extern struct`。
 
 第一版 `extern "C"` 只能用于顶层自由函数，不能用于 `impl` 内成员函数、构造函数、析构函数、lambda 或 concept requirement。
 
@@ -209,12 +214,23 @@ extern "C" cp_put_cstr(text: i8*) -> i32;
 
 这样标准库依赖的是 cp 自己的 runtime ABI，而不是不同平台 libc 的细节。
 
+`std.fs` 使用 runtime 的 `ptr + len` 路径 ABI：
+
+```cp
+extern "C" cp_file_open(path: char const*, path_len: usize, flags: u8) -> u8*;
+extern "C" cp_file_close(handle: u8*) -> i32;
+extern "C" cp_file_read(handle: u8*, data: u8*, len: usize, out_len: usize*) -> i32;
+extern "C" cp_file_write(handle: u8*, data: u8 const*, len: usize, out_len: usize*) -> i32;
+```
+
+这里 `path` 不是 C string；runtime 内部负责复制并补 trailing nul，内部 nul 路径打开失败。
+
 ## 后续 ABI 议题
 
 以下内容不属于第一版实现范围，需要单独设计：
 
 - `str` 的实际内存布局和 C 边界表示。
-- `struct` 的 C-compatible 布局声明。
+- `struct` 的 C-compatible 布局声明，例如 `repr(C)` 或 `extern struct`。
 - by-value 聚合参数和返回值的 ABI。
 - 函数指针 `f*(...) -> R` 与 C function pointer 的等价条件。
 - C 头文件导入或绑定生成。

@@ -112,6 +112,8 @@ export struct semantic_symbol
     std::size_t unit_index{};
     function_id function{};
     std::uint32_t struct_index{ std::numeric_limits<std::uint32_t>::max() };
+    std::uint32_t enum_index{ std::numeric_limits<std::uint32_t>::max() };
+    std::uint32_t opaque_index{ std::numeric_limits<std::uint32_t>::max() };
     std::uint32_t variant_index{ std::numeric_limits<std::uint32_t>::max() };
     semantic_type_id owner_type{};
     std::uint32_t concept_index{ std::numeric_limits<std::uint32_t>::max() };
@@ -188,6 +190,75 @@ export struct semantic_struct
     std::map<overload_operator_kind, std::vector<symbol_id>> operators{};
 };
 
+export struct semantic_enum_case
+{
+    semantic_enum_case() = default;
+
+    semantic_enum_case(std::string case_name, source_span case_span, std::int64_t case_value) :
+        name(std::move(case_name)),
+        span(case_span),
+        value(case_value) {}
+
+    auto constexpr operator==(semantic_enum_case const&) const -> bool = default;
+
+    std::string name{};
+    source_span span{};
+    std::int64_t value{};
+};
+
+export struct semantic_enum
+{
+    semantic_enum() = default;
+
+    semantic_enum(std::string enum_name, source_span enum_span, semantic_type_id enum_type_id, bool is_exported, std::size_t source_unit, enum_id enum_syntax, symbol_id enum_symbol) :
+        name(std::move(enum_name)),
+        span(enum_span),
+        type(enum_type_id),
+        exported(is_exported),
+        unit_index(source_unit),
+        syntax(enum_syntax),
+        symbol(enum_symbol) {}
+
+    auto constexpr operator==(semantic_enum const&) const -> bool = default;
+
+    std::string name{};
+    source_span span{};
+    semantic_type_id type{};
+    semantic_type_id underlying_type{};
+    bool exported{};
+    std::size_t unit_index{};
+    enum_id syntax{};
+    symbol_id symbol{};
+    std::vector<semantic_enum_case> cases{};
+    std::map<std::string, std::uint32_t> case_indices{};
+};
+
+export struct semantic_opaque_alias
+{
+    semantic_opaque_alias() = default;
+
+    semantic_opaque_alias(std::string alias_name, source_span alias_span, semantic_type_id alias_type_id, semantic_type_id alias_underlying_type, bool is_exported, std::size_t source_unit, symbol_id alias_symbol) :
+        name(std::move(alias_name)),
+        span(alias_span),
+        type(alias_type_id),
+        underlying_type(alias_underlying_type),
+        exported(is_exported),
+        unit_index(source_unit),
+        symbol(alias_symbol) {}
+
+    auto constexpr operator==(semantic_opaque_alias const&) const -> bool = default;
+
+    std::string name{};
+    source_span span{};
+    semantic_type_id type{};
+    semantic_type_id underlying_type{};
+    bool exported{};
+    std::size_t unit_index{};
+    symbol_id symbol{};
+    std::map<std::string, symbol_id> methods{};
+    std::map<std::string, symbol_id> associated_functions{};
+};
+
 export struct semantic_variant_case
 {
     semantic_variant_case() = default;
@@ -251,6 +322,7 @@ export struct semantic_concept_function_requirement
     std::string name{};
     source_span span{};
     std::size_t unit_index{};
+    std::optional<overload_operator_kind> overload_operator{};
     std::vector<parameter_syntax> parameters{};
     std::optional<type_id> return_type{};
     std::optional<function_id> default_function{};

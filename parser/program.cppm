@@ -50,6 +50,16 @@ auto parser::parse_translation_unit_node() -> std::optional<translation_unit_syn
             continue;
         }
 
+        if(check(token_kind::kw_enum)) {
+            auto declaration = parse_enum_declaration(exported, export_span);
+            if(not declaration) {
+                synchronize_function_list();
+                continue;
+            }
+            unit.enums.emplace_back(*declaration);
+            continue;
+        }
+
         if(check_contextual("variant")) {
             auto declaration = parse_variant_declaration(exported, export_span);
             if(not declaration) {
@@ -67,6 +77,20 @@ auto parser::parse_translation_unit_node() -> std::optional<translation_unit_syn
                 continue;
             }
             unit.concepts.emplace_back(*declaration);
+            continue;
+        }
+
+        if(check_contextual("type")) {
+            auto alias = parse_type_alias();
+            if(not alias) {
+                synchronize_function_list();
+                continue;
+            }
+            if(exported) {
+                alias->full_span = combine_spans(*export_span, alias->full_span);
+                alias->exported = true;
+            }
+            unit.type_aliases.emplace_back(arena.add(std::move(*alias)));
             continue;
         }
 
@@ -235,6 +259,7 @@ auto parser::starts_top_level_item() const -> bool
     return (
         check(token_kind::identifier)
         or check(token_kind::kw_struct)
+        or check(token_kind::kw_enum)
         or check_contextual("variant")
         or check(token_kind::kw_impl)
         or check(token_kind::kw_concept)
@@ -475,6 +500,14 @@ auto parser::parse_overload_operator() -> std::optional<std::pair<overload_opera
             }
             return std::pair{ overload_operator_kind::subscript, combine_spans(open.span, close->span) };
         }
+        case l_paren: {
+            auto open = consume();
+            auto close = expect(token_kind::r_paren);
+            if(not close) {
+                return std::nullopt;
+            }
+            return std::pair{ overload_operator_kind::call, combine_spans(open.span, close->span) };
+        }
         default:
             report_current(
                 diagnostic_kind::unexpected_token,
@@ -543,6 +576,57 @@ auto parser::parse_struct_field() -> std::optional<struct_field_syntax>
         .full_span = combine_spans(name->span, semicolon->span),
         .name = name->span,
         .type = *type,
+    };
+}
+
+auto parser::parse_enum_declaration(bool exported, std::optional<source_span> export_span) -> std::optional<enum_id>
+{
+    auto enum_kw = expect(token_kind::kw_enum);
+    auto name = expect_identifier("enum name");
+    auto colon = expect(token_kind::colon);
+    auto underlying_type = parse_expected_type();
+    auto open = expect(token_kind::l_brace);
+    if(not enum_kw or not name or not colon or not underlying_type or not open) {
+        return std::nullopt;
+    }
+
+    auto cases = std::vector<enum_case_syntax>{};
+    while(not check_any({ token_kind::r_brace, token_kind::eof })) {
+        auto enum_case = parse_enum_case();
+        if(not enum_case) {
+            synchronize_statement();
+            continue;
+        }
+        cases.emplace_back(std::move(*enum_case));
+    }
+
+    auto close = expect(token_kind::r_brace);
+    if(not close) {
+        return std::nullopt;
+    }
+
+    return arena.add(enum_syntax {
+        .full_span = combine_spans(export_span.value_or(enum_kw->span), close->span),
+        .exported = exported,
+        .name = name->span,
+        .underlying_type = *underlying_type,
+        .cases = std::move(cases),
+    });
+}
+
+auto parser::parse_enum_case() -> std::optional<enum_case_syntax>
+{
+    auto name = expect_identifier("enum case name");
+    auto equal = expect(token_kind::equal);
+    auto value = parse_expected_expression();
+    auto semicolon = expect(token_kind::semicolon);
+    if(not name or not equal or not value or not semicolon) {
+        return std::nullopt;
+    }
+    return enum_case_syntax {
+        .full_span = combine_spans(name->span, semicolon->span),
+        .name = name->span,
+        .value = *value,
     };
 }
 
@@ -957,10 +1041,26 @@ auto parser::parse_type_alias() -> std::optional<type_alias_syntax>
     auto value = std::optional<type_id>{};
     if(check(token_kind::equal)) {
         consume();
+        auto opaque = false;
+        if(check_contextual("opaque")) {
+            opaque = true;
+            consume();
+        }
         value = parse_expected_type();
         if(not value) {
             return std::nullopt;
         }
+        auto semicolon = expect(token_kind::semicolon);
+        if(not semicolon) {
+            return std::nullopt;
+        }
+        return type_alias_syntax {
+            .full_span = combine_spans(type_kw->span, semicolon->span),
+            .exported = false,
+            .name = name->span,
+            .opaque = opaque,
+            .value = value,
+        };
     }
 
     auto semicolon = expect(token_kind::semicolon);
@@ -969,14 +1069,32 @@ auto parser::parse_type_alias() -> std::optional<type_alias_syntax>
     }
     return type_alias_syntax {
         .full_span = combine_spans(type_kw->span, semicolon->span),
+        .exported = false,
         .name = name->span,
+        .opaque = false,
         .value = value,
     };
 }
 
 auto parser::parse_concept_function_requirement() -> std::optional<concept_function_requirement_syntax>
 {
-    auto name = expect_identifier("concept function name");
+    auto overload_operator = std::optional<overload_operator_kind>{};
+    auto name = std::optional<token>{};
+    if(check(token_kind::kw_operator)) {
+        auto operator_kw = consume();
+        auto parsed_operator = parse_overload_operator();
+        if(not parsed_operator) {
+            return std::nullopt;
+        }
+        overload_operator = parsed_operator->first;
+        name = token {
+            .kind = token_kind::identifier,
+            .span = combine_spans(operator_kw.span, parsed_operator->second),
+            .text = {},
+        };
+    } else {
+        name = expect_identifier("concept function name");
+    }
     auto l_paren = expect(token_kind::l_paren);
     if(not name or not l_paren) {
         return std::nullopt;
@@ -1002,6 +1120,7 @@ auto parser::parse_concept_function_requirement() -> std::optional<concept_funct
         return concept_function_requirement_syntax {
             .full_span = combine_spans(name->span, semicolon.span),
             .name = name->span,
+            .overload_operator = overload_operator,
             .parameters = std::move(*parameters),
             .return_type = return_type,
         };
@@ -1015,6 +1134,7 @@ auto parser::parse_concept_function_requirement() -> std::optional<concept_funct
     auto default_function = arena.add(function_syntax {
         .full_span = combine_spans(name->span, arena.span(*body)),
         .kind = function_syntax_kind::impl_function,
+        .overload_operator = overload_operator,
         .name = name->span,
         .parameters = *parameters,
         .return_type = return_type,
@@ -1023,6 +1143,7 @@ auto parser::parse_concept_function_requirement() -> std::optional<concept_funct
     return concept_function_requirement_syntax {
         .full_span = combine_spans(name->span, arena.span(*body)),
         .name = name->span,
+        .overload_operator = overload_operator,
         .parameters = std::move(*parameters),
         .return_type = return_type,
         .default_function = default_function,
@@ -1387,6 +1508,15 @@ auto parser::parse_parameter() -> std::optional<parameter_syntax>
         is_pack = true;
         end = *ellipsis;
     }
+    auto default_value = std::optional<expr_id>{};
+    if(check(token_kind::equal)) {
+        consume();
+        default_value = parse_expression();
+        if(not default_value) {
+            return std::nullopt;
+        }
+        end = arena.span(*default_value);
+    }
     auto full_start = const_span.value_or(name->span);
     return parameter_syntax {
         .full_span = combine_spans(full_start, end),
@@ -1394,6 +1524,7 @@ auto parser::parse_parameter() -> std::optional<parameter_syntax>
         .is_pack = is_pack,
         .name = name->span,
         .type = *type,
+        .default_value = default_value,
     };
 }
 
@@ -1460,6 +1591,15 @@ auto parser::parse_lambda_parameter() -> std::optional<parameter_syntax>
             end = *ellipsis;
         }
     }
+    auto default_value = std::optional<expr_id>{};
+    if(check(token_kind::equal)) {
+        consume();
+        default_value = parse_expression();
+        if(not default_value) {
+            return std::nullopt;
+        }
+        end = arena.span(*default_value);
+    }
 
     auto full_start = const_span.value_or(name->span);
     return parameter_syntax {
@@ -1468,6 +1608,7 @@ auto parser::parse_lambda_parameter() -> std::optional<parameter_syntax>
         .is_pack = is_pack,
         .name = name->span,
         .type = type,
+        .default_value = default_value,
     };
 }
 

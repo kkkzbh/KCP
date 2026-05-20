@@ -11,6 +11,7 @@ target_sources(semantic
             type/type.cppm
             symbol.cppm
             result.cppm
+            enums.cppm
             variants.cppm
             modules.cppm
             types.cppm

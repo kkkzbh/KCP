@@ -1,8 +1,8 @@
 export module std.io.raw;
 
 import std.detail.runtime;
-import std.iter;
-import std.str;
+import std.core.iter;
+import std.text.str;
 
 export struct output_stream {
     fd: i32;

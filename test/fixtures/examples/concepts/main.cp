@@ -1,5 +1,5 @@
-import std.option;
-import std.iter;
+import std.core.option;
+import std.core.iter;
 
 struct range {
     begin: i32;

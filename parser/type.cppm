@@ -9,6 +9,7 @@ import :state;
 auto parser::starts_type(token_kind kind) const -> bool
 {
     return kind == token_kind::identifier
+           or kind == token_kind::bang
            or kind == token_kind::l_bracket
            or kind == token_kind::l_paren;
 }
@@ -37,7 +38,14 @@ auto parser::parse_type(bool allow_associated_names) -> std::optional<type_id>
     }
 
     auto type = std::optional<type_syntax>{};
-    if(check(token_kind::l_bracket)) {
+    if(check(token_kind::bang)) {
+        auto token = consume();
+        type = type_syntax {
+            .full_span = token.span,
+            .name = token.span,
+            .is_never_type = true,
+        };
+    } else if(check(token_kind::l_bracket)) {
         type = parse_array_type();
     } else if(check(token_kind::l_paren)) {
         type = parse_tuple_or_grouped_type();

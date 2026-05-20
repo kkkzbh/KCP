@@ -19,6 +19,11 @@ export struct inferred_type
     auto constexpr operator==(inferred_type const&) const -> bool = default;
 };
 
+export struct never_type
+{
+    auto constexpr operator==(never_type const&) const -> bool = default;
+};
+
 export struct builtin_type
 {
     constexpr builtin_type() = default;
@@ -129,6 +134,20 @@ export struct struct_type
     std::vector<semantic_type_id> arguments{};
 };
 
+export struct enum_type
+{
+    auto constexpr operator==(enum_type const&) const -> bool = default;
+
+    std::uint32_t index{};
+};
+
+export struct opaque_type
+{
+    auto constexpr operator==(opaque_type const&) const -> bool = default;
+
+    std::uint32_t index{};
+};
+
 export struct variant_type
 {
     auto constexpr operator==(variant_type const&) const -> bool = default;
@@ -141,6 +160,7 @@ export using semantic_type_kind = std::variant <
     unit_type,
     error_type,
     inferred_type,
+    never_type,
     builtin_type,
     array_type,
     tuple_type,
@@ -151,5 +171,7 @@ export using semantic_type_kind = std::variant <
     integer_constant_type,
     generic_integer_parameter_type,
     struct_type,
+    enum_type,
+    opaque_type,
     variant_type
 >;

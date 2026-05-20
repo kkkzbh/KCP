@@ -37,6 +37,79 @@ def add_issue(issues: list[str], path: Path, line: int, message: str) -> None:
     issues.append(f"{path}:{line}: {message}")
 
 
+def sanitize_cpp_text(text: str) -> str:
+    result: list[str] = []
+    index = 0
+    length = len(text)
+    state = "code"
+    raw_terminator = ""
+
+    while index < length:
+        if state == "code":
+            if text.startswith('R"', index):
+                delimiter_end = text.find("(", index + 2)
+                if delimiter_end != -1:
+                    raw_delimiter = text[index + 2:delimiter_end]
+                    raw_terminator = ")" + raw_delimiter + '"'
+                    result.extend(" " for _ in range(delimiter_end + 1 - index))
+                    index = delimiter_end + 1
+                    state = "raw_string"
+                    continue
+            if text[index] == '"':
+                result.append(" ")
+                index += 1
+                state = "string"
+                continue
+            if text[index] == "'":
+                result.append(" ")
+                index += 1
+                state = "char"
+                continue
+            result.append(text[index])
+            index += 1
+            continue
+
+        if state == "raw_string":
+            if text.startswith(raw_terminator, index):
+                result.extend(" " for _ in raw_terminator)
+                index += len(raw_terminator)
+                raw_terminator = ""
+                state = "code"
+                continue
+            result.append("\n" if text[index] == "\n" else " ")
+            index += 1
+            continue
+
+        if state == "string":
+            if text[index] == "\\" and index + 1 < length:
+                result.extend(" " for _ in range(2))
+                index += 2
+                continue
+            if text[index] == '"':
+                result.append(" ")
+                index += 1
+                state = "code"
+                continue
+            result.append("\n" if text[index] == "\n" else " ")
+            index += 1
+            continue
+
+        if state == "char":
+            if text[index] == "\\" and index + 1 < length:
+                result.extend(" " for _ in range(2))
+                index += 2
+                continue
+            if text[index] == "'":
+                result.append(" ")
+                index += 1
+                state = "code"
+                continue
+            result.append("\n" if text[index] == "\n" else " ")
+            index += 1
+
+    return "".join(result)
+
+
 def check_user_class_keyword(path: Path, lines: list[str], issues: list[str]) -> None:
     pattern = re.compile(r"^\s*(?:export\s+)?class\s+[A-Za-z_]\w*")
     for number, line in enumerate(lines, 1):
@@ -172,16 +245,17 @@ def main() -> int:
             continue
 
         lines = absolute.read_text(encoding="utf-8").splitlines()
-        check_user_class_keyword(relative, lines, issues)
-        check_prefix_const_references(relative, lines, issues)
-        check_trailing_return_type(relative, lines, issues)
-        check_function_attribute_line(relative, lines, issues)
-        check_auto_specifier_order(relative, lines, issues)
-        check_bare_export_line(relative, lines, issues)
-        check_optional_has_value(relative, lines, issues)
-        check_at_access(relative, lines, issues)
-        check_construct_then_insert(relative, lines, issues)
-        check_parenthesized_object_construction(relative, lines, issues)
+        sanitized_lines = sanitize_cpp_text("\n".join(lines)).splitlines()
+        check_user_class_keyword(relative, sanitized_lines, issues)
+        check_prefix_const_references(relative, sanitized_lines, issues)
+        check_trailing_return_type(relative, sanitized_lines, issues)
+        check_function_attribute_line(relative, sanitized_lines, issues)
+        check_auto_specifier_order(relative, sanitized_lines, issues)
+        check_bare_export_line(relative, sanitized_lines, issues)
+        check_optional_has_value(relative, sanitized_lines, issues)
+        check_at_access(relative, sanitized_lines, issues)
+        check_construct_then_insert(relative, sanitized_lines, issues)
+        check_parenthesized_object_construction(relative, sanitized_lines, issues)
 
     if issues:
         print("\n".join(issues))

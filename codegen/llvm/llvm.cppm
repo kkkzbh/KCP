@@ -31,9 +31,14 @@ export struct llvm_emit_result
 
 struct llvm_type_lowerer
 {
+    llvm_type_lowerer(llvm::LLVMContext& llvm_context, ir_module const& ir) :
+        context(llvm_context),
+        module(ir),
+        types(ir.types) {}
+
     auto lower(semantic_type_id id) -> llvm::Type*
     {
-        auto const& kind = module.types.get(id);
+        auto const& kind = types.get(id);
         return std::visit(overloaded {
             [&](unit_type const&) -> llvm::Type* {
                 return llvm::Type::getVoidTy(context);
@@ -42,6 +47,9 @@ struct llvm_type_lowerer
                 return llvm::Type::getVoidTy(context);
             },
             [&](inferred_type const&) -> llvm::Type* {
+                return llvm::Type::getVoidTy(context);
+            },
+            [&](never_type const&) -> llvm::Type* {
                 return llvm::Type::getVoidTy(context);
             },
             [&](builtin_type const& type) -> llvm::Type* {
@@ -83,6 +91,12 @@ struct llvm_type_lowerer
                 }
                 return llvm::StructType::get(context, elements);
             },
+            [&](enum_type const& type) -> llvm::Type* {
+                return lower(module.enums[type.index].underlying_type);
+            },
+            [&](opaque_type const& type) -> llvm::Type* {
+                return lower(module.opaque_aliases[type.index].underlying_type);
+            },
             [&](variant_type const& type) -> llvm::Type* {
                 auto elements = std::vector<llvm::Type*>{ llvm::Type::getInt32Ty(context) };
                 auto const& variant = module.variants[type.index];
@@ -100,15 +114,16 @@ struct llvm_type_lowerer
 
     auto lower_substituted(semantic_type_id id, std::vector<semantic_type_id> const& arguments) -> llvm::Type*
     {
-        auto const& kind = module.types.get(id);
+        auto const& kind = types.get(id);
         return std::visit(overloaded {
             [&](unit_type const&) -> llvm::Type* { return lower(id); },
             [&](error_type const&) -> llvm::Type* { return lower(id); },
             [&](inferred_type const&) -> llvm::Type* { return lower(id); },
+            [&](never_type const&) -> llvm::Type* { return lower(id); },
             [&](builtin_type const&) -> llvm::Type* { return lower(id); },
             [&](generic_parameter_type const& parameter) -> llvm::Type* {
                 if(parameter.index < arguments.size()) {
-                    return lower(arguments[parameter.index]);
+                    return lower(substitute_type(arguments[parameter.index], arguments));
                 }
                 return llvm::Type::getVoidTy(context);
             },
@@ -128,28 +143,119 @@ struct llvm_type_lowerer
             [&](integer_constant_type const&) -> llvm::Type* { return llvm::Type::getVoidTy(context); },
             [&](generic_integer_parameter_type const& parameter) -> llvm::Type* {
                 if(parameter.index < arguments.size()) {
-                    return lower(arguments[parameter.index]);
+                    return lower(substitute_type(arguments[parameter.index], arguments));
                 }
                 return llvm::Type::getVoidTy(context);
             },
             [&](struct_type const& type) -> llvm::Type* {
+                auto type_arguments = substitute_type_arguments(type.arguments, arguments);
                 auto elements = std::vector<llvm::Type*>{};
                 for(auto const& field : module.structs[type.index].fields) {
-                    elements.emplace_back(lower_substituted(field.type, type.arguments));
+                    elements.emplace_back(lower_substituted(field.type, type_arguments));
                 }
                 return llvm::StructType::get(context, elements);
             },
+            [&](enum_type const& type) -> llvm::Type* {
+                return lower(module.enums[type.index].underlying_type);
+            },
+            [&](opaque_type const& type) -> llvm::Type* {
+                return lower(module.opaque_aliases[type.index].underlying_type);
+            },
             [&](variant_type const& type) -> llvm::Type* {
+                auto type_arguments = substitute_type_arguments(type.arguments, arguments);
                 auto elements = std::vector<llvm::Type*>{ llvm::Type::getInt32Ty(context) };
                 auto const& variant = module.variants[type.index];
                 for(auto const& variant_case : variant.cases) {
                     auto payloads = std::vector<llvm::Type*>{};
                     for(auto payload : variant_case.payload_types) {
-                        payloads.emplace_back(lower_substituted(payload, type.arguments));
+                        payloads.emplace_back(lower_substituted(payload, type_arguments));
                     }
                     elements.emplace_back(llvm::StructType::get(context, payloads));
                 }
                 return llvm::StructType::get(context, elements);
+            },
+        }, kind);
+    }
+
+    auto substitute_type_arguments(std::vector<semantic_type_id> const& values, std::vector<semantic_type_id> const& arguments) -> std::vector<semantic_type_id>
+    {
+        return (
+            values
+            | std::views::transform([&](auto value) { return substitute_type(value, arguments); })
+            | std::ranges::to<std::vector<semantic_type_id>>()
+        );
+    }
+
+    auto substitute_type(semantic_type_id id, std::vector<semantic_type_id> const& arguments) -> semantic_type_id
+    {
+        auto const& kind = types.get(id);
+        return std::visit(overloaded {
+            [&](unit_type const&) { return id; },
+            [&](error_type const&) { return id; },
+            [&](inferred_type const&) { return id; },
+            [&](never_type const&) { return id; },
+            [&](builtin_type const&) { return id; },
+            [&](generic_parameter_type const& parameter) {
+                if(parameter.index < arguments.size() and arguments[parameter.index] != id) {
+                    return substitute_type(arguments[parameter.index], arguments);
+                }
+                return id;
+            },
+            [&](integer_constant_type const&) { return id; },
+            [&](generic_integer_parameter_type const& parameter) {
+                if(parameter.index < arguments.size() and arguments[parameter.index] != id) {
+                    return substitute_type(arguments[parameter.index], arguments);
+                }
+                return id;
+            },
+            [&](array_type const& value) {
+                return types.intern(array_type {
+                    .element = substitute_type(value.element, arguments),
+                    .length = substitute_integer(value.length, arguments),
+                });
+            },
+            [&](tuple_type const& value) {
+                auto elements = substitute_type_arguments(value.elements, arguments);
+                return types.intern(tuple_type{ std::move(elements) });
+            },
+            [&](reference_type const& value) {
+                auto pointee = substitute_type(value.pointee, arguments);
+                if(auto const* inner = std::get_if<reference_type>(&types.get(pointee))) {
+                    return types.intern(reference_type {
+                        inner->pointee,
+                        value.is_const or inner->is_const,
+                        value.reference_kind,
+                    });
+                }
+                return types.intern(reference_type{ pointee, value.is_const, value.reference_kind });
+            },
+            [&](pointer_type const& value) {
+                return types.intern(pointer_type {
+                    substitute_type(value.pointee, arguments),
+                    value.is_const,
+                    value.is_like,
+                });
+            },
+            [&](function_type const& value) {
+                auto parameters = substitute_type_arguments(value.parameters, arguments);
+                return types.intern(function_type {
+                    .parameters = std::move(parameters),
+                    .returns = substitute_type(value.returns, arguments),
+                });
+            },
+            [&](struct_type const& value) {
+                return types.intern(struct_type {
+                    .index = value.index,
+                    .arguments = substitute_type_arguments(value.arguments, arguments),
+                });
+            },
+            [&](enum_type const&) { return id; },
+            [&](opaque_type const&) { return id; },
+            [&](variant_type const& value) {
+                return types.intern(variant_type {
+                    .index = value.index,
+                    .arguments = substitute_type_arguments(value.arguments, arguments),
+                });
             },
         }, kind);
     }
@@ -240,6 +346,7 @@ struct llvm_type_lowerer
 
     llvm::LLVMContext& context;
     ir_module const& module;
+    type_arena types;
 };
 
 struct llvm_module_lowerer
@@ -289,6 +396,9 @@ struct llvm_module_lowerer
                 function.name,
                 llvm_module
             );
+            if(is_never(function.returns)) {
+                llvm_function->addFnAttr(llvm::Attribute::NoReturn);
+            }
             functions.emplace(function.symbol, llvm_function);
         }
     }
@@ -396,10 +506,14 @@ struct llvm_module_lowerer
             case call:
                 bind_call(instruction);
                 break;
-            case bounds_fail:
-                builder.CreateCall(cp_bounds_fail_function(), {});
+            case panic: {
+                auto message = value(instruction.operands.front());
+                auto pointer = builder.CreateExtractValue(message, { 0u });
+                auto length = builder.CreateExtractValue(message, { 1u });
+                builder.CreateCall(cp_panic_function(), { pointer, length });
                 builder.CreateUnreachable();
                 break;
+            }
             case branch:
                 builder.CreateBr(blocks[instruction.targets.front().value]);
                 break;
@@ -573,6 +687,10 @@ struct llvm_module_lowerer
             }
         }
         auto call = builder.CreateCall(signature, callee, arguments);
+        if(is_never(instruction.type)) {
+            builder.CreateUnreachable();
+            return;
+        }
         if(instruction.result.valid() and not call->getType()->isVoidTy()) {
             bind(instruction.result, call);
         }
@@ -619,19 +737,26 @@ struct llvm_module_lowerer
         );
     }
 
-    auto cp_bounds_fail_function() -> llvm::Function*
+    auto cp_panic_function() -> llvm::Function*
     {
-        if(auto function = llvm_module.getFunction("cp_bounds_fail")) {
+        if(auto function = llvm_module.getFunction("cp_panic")) {
             return function;
         }
 
-        auto function_type = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false);
-        return llvm::Function::Create(
+        auto pointer = llvm::PointerType::get(context, 0);
+        auto function_type = llvm::FunctionType::get(
+            llvm::Type::getVoidTy(context),
+            { pointer, llvm::Type::getInt64Ty(context) },
+            false
+        );
+        auto function = llvm::Function::Create(
             function_type,
             llvm::Function::ExternalLinkage,
-            "cp_bounds_fail",
+            "cp_panic",
             llvm_module
         );
+        function->addFnAttr(llvm::Attribute::NoReturn);
+        return function;
     }
 
     auto type_size(semantic_type_id id) -> std::uint64_t
@@ -642,6 +767,7 @@ struct llvm_module_lowerer
                 [](unit_type const&) -> std::uint64_t { return 0; },
                 [](error_type const&) -> std::uint64_t { return 0; },
                 [](inferred_type const&) -> std::uint64_t { return 0; },
+                [](never_type const&) -> std::uint64_t { return 0; },
                 [&](builtin_type const& type) { return builtin_size(type.kind); },
                 [&](array_type const& type) { return type_size(type.element) * types.array_length_value(type.length); },
                 [&](tuple_type const& type) -> std::uint64_t {
@@ -671,6 +797,12 @@ struct llvm_module_lowerer
                         total += type_size_substituted(field.type, type.arguments);
                     }
                     return align_to(total, alignment);
+                },
+                [&](enum_type const& type) -> std::uint64_t {
+                    return type_size(ir.enums[type.index].underlying_type);
+                },
+                [&](opaque_type const& type) -> std::uint64_t {
+                    return type_size(ir.opaque_aliases[type.index].underlying_type);
                 },
                 [&](variant_type const& type) -> std::uint64_t {
                     auto total = std::uint64_t{4};
@@ -725,6 +857,7 @@ struct llvm_module_lowerer
                 [](unit_type const&) -> std::uint64_t { return 1; },
                 [](error_type const&) -> std::uint64_t { return 1; },
                 [](inferred_type const&) -> std::uint64_t { return 1; },
+                [](never_type const&) -> std::uint64_t { return 1; },
                 [&](builtin_type const& type) { return builtin_align(type.kind); },
                 [&](array_type const& type) { return type_align(type.element); },
                 [&](tuple_type const& type) -> std::uint64_t {
@@ -746,6 +879,12 @@ struct llvm_module_lowerer
                         result = std::max(result, type_align_substituted(field.type, type.arguments));
                     }
                     return result;
+                },
+                [&](enum_type const& type) -> std::uint64_t {
+                    return type_align(ir.enums[type.index].underlying_type);
+                },
+                [&](opaque_type const& type) -> std::uint64_t {
+                    return type_align(ir.opaque_aliases[type.index].underlying_type);
                 },
                 [&](variant_type const& type) -> std::uint64_t {
                     auto result = 4uz;

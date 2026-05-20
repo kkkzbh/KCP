@@ -88,7 +88,7 @@ impl vec2 {
 
 `impl` 的物理文件位置不重要。只要 `impl` 所在文件参与同一次编译输入，且该位置能解析到目标结构体类型，`impl` 中的构造函数、析构函数、成员函数和关联函数就挂到对应结构体类型下。使用者能看见该结构体类型时，就可以使用这些挂到类型上的项，不需要单独导入 `impl` 所在文件。
 
-泛型类型的 `impl` 使用目标类型模式引入泛型参数，例如 `impl vector<T>`；`impl` 级 `requires` 约束和成员泛型函数规则见 [generic.md](generic.md)。
+泛型类型的 `impl` 使用 `impl<...>` 声明泛型参数，例如 `impl<T> vector<T>`；`impl` 级 `requires` 约束和成员泛型函数规则见 [generic.md](generic.md)。
 
 ## 构造函数
 
@@ -277,7 +277,7 @@ UFCS 不递归展开。实现时应直接查询自由函数表和成员函数表
 成员函数体内的隐式 `self` 成员调用只在自由函数未命中时触发：
 
 ```cp
-impl vector<T> {
+impl<T> vector<T> {
     push_back(self&, value: T) -> void
     {
         ensure_capacity(size() + 1);

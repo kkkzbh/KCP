@@ -191,6 +191,13 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
     }
 
     check_statement(function.body, returns);
+    if(is_never(signature.returns) and statement_can_complete_normally(function.body)) {
+        report(
+            diagnostic_kind::return_type_mismatch,
+            function.full_span,
+            "function returning ! can complete normally"
+        );
+    }
     restore_state();
 }
 
@@ -538,6 +545,60 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
             },
             [&](expression_statement_syntax const& node) {
                 check_expression(*active_ast, node.expression, std::nullopt);
+            },
+        },
+        statement
+    );
+}
+
+auto semantic_analyzer::statement_can_complete_normally(stmt_id id) const -> bool
+{
+    auto const& statement = active_ast->node(id);
+    return std::visit (
+        overloaded {
+            [&](block_statement_syntax const& node) {
+                for(auto child : node.statements) {
+                    if(not statement_can_complete_normally(child)) {
+                        return false;
+                    }
+                }
+                return true;
+            },
+            [](declaration_statement_syntax const&) {
+                return true;
+            },
+            [](type_alias_statement_syntax const&) {
+                return true;
+            },
+            [&](if_statement_syntax const& node) {
+                return not node.else_branch
+                       or statement_can_complete_normally(node.then_branch)
+                       or statement_can_complete_normally(*node.else_branch);
+            },
+            [](while_statement_syntax const&) {
+                return true;
+            },
+            [](do_while_statement_syntax const&) {
+                return true;
+            },
+            [](for_statement_syntax const&) {
+                return true;
+            },
+            [](template_for_statement_syntax const&) {
+                return true;
+            },
+            [](break_statement_syntax const&) {
+                return false;
+            },
+            [](continue_statement_syntax const&) {
+                return false;
+            },
+            [](return_statement_syntax const&) {
+                return false;
+            },
+            [&](expression_statement_syntax const& node) {
+                auto found = result.expression_infos.find(node_key(node.expression));
+                return found == result.expression_infos.end() or not is_never(read_type(found->second.type));
             },
         },
         statement

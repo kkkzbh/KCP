@@ -14,7 +14,9 @@ concept ast_arena_syntax_node = (
     or std::same_as<std::remove_cvref_t<Node>, statement_syntax>
     or std::same_as<std::remove_cvref_t<Node>, type_syntax>
     or std::same_as<std::remove_cvref_t<Node>, function_syntax>
+    or std::same_as<std::remove_cvref_t<Node>, type_alias_syntax>
     or std::same_as<std::remove_cvref_t<Node>, struct_syntax>
+    or std::same_as<std::remove_cvref_t<Node>, enum_syntax>
     or std::same_as<std::remove_cvref_t<Node>, variant_syntax>
     or std::same_as<std::remove_cvref_t<Node>, impl_syntax>
     or std::same_as<std::remove_cvref_t<Node>, concept_syntax>
@@ -27,7 +29,9 @@ concept ast_arena_id = (
     or std::same_as<std::remove_cvref_t<Id>, stmt_id>
     or std::same_as<std::remove_cvref_t<Id>, type_id>
     or std::same_as<std::remove_cvref_t<Id>, function_id>
+    or std::same_as<std::remove_cvref_t<Id>, type_alias_id>
     or std::same_as<std::remove_cvref_t<Id>, struct_id>
+    or std::same_as<std::remove_cvref_t<Id>, enum_id>
     or std::same_as<std::remove_cvref_t<Id>, variant_id>
     or std::same_as<std::remove_cvref_t<Id>, impl_id>
     or std::same_as<std::remove_cvref_t<Id>, concept_id>
@@ -57,9 +61,17 @@ export struct ast_arena
             auto id = function_id{static_cast<std::uint32_t>(functions.size())};
             functions.emplace_back(std::move(node));
             return id;
+        } else if constexpr(std::same_as<syntax_node, type_alias_syntax>) {
+            auto id = type_alias_id{static_cast<std::uint32_t>(type_aliases.size())};
+            type_aliases.emplace_back(std::move(node));
+            return id;
         } else if constexpr(std::same_as<syntax_node, struct_syntax>) {
             auto id = struct_id{static_cast<std::uint32_t>(structs.size())};
             structs.emplace_back(std::move(node));
+            return id;
+        } else if constexpr(std::same_as<syntax_node, enum_syntax>) {
+            auto id = enum_id{static_cast<std::uint32_t>(enums.size())};
+            enums.emplace_back(std::move(node));
             return id;
         } else if constexpr(std::same_as<syntax_node, variant_syntax>) {
             auto id = variant_id{static_cast<std::uint32_t>(variants.size())};
@@ -93,8 +105,12 @@ export struct ast_arena
             return (self.types[id.value]);
         } else if constexpr(std::same_as<id_type, function_id>) {
             return (self.functions[id.value]);
+        } else if constexpr(std::same_as<id_type, type_alias_id>) {
+            return (self.type_aliases[id.value]);
         } else if constexpr(std::same_as<id_type, struct_id>) {
             return (self.structs[id.value]);
+        } else if constexpr(std::same_as<id_type, enum_id>) {
+            return (self.enums[id.value]);
         } else if constexpr(std::same_as<id_type, variant_id>) {
             return (self.variants[id.value]);
         } else if constexpr(std::same_as<id_type, impl_id>) {
@@ -124,7 +140,9 @@ export struct ast_arena
     std::vector<statement_syntax> statements{};
     std::vector<type_syntax> types{};
     std::vector<function_syntax> functions{};
+    std::vector<type_alias_syntax> type_aliases{};
     std::vector<struct_syntax> structs{};
+    std::vector<enum_syntax> enums{};
     std::vector<variant_syntax> variants{};
     std::vector<impl_syntax> impls{};
     std::vector<concept_syntax> concepts{};

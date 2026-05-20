@@ -349,6 +349,7 @@ auto semantic_analyzer::infer_expression_type(ast_arena const& ast, expr_id id, 
                 auto matched = infer_expression_type(ast, node.value, std::nullopt);
                 auto variant_index = variant_index_of(matched.type);
                 auto result_type = std::optional<semantic_type_id>{};
+                auto has_never_arm = false;
                 for(auto const& arm : node.arms) {
                     return_scopes.emplace_back();
                     if(variant_index) {
@@ -370,12 +371,17 @@ auto semantic_analyzer::infer_expression_type(ast_arena const& ast, expr_id id, 
                         }
                     }
                     auto branch = infer_expression_type(ast, arm.value, result_type);
-                    if(not result_type) {
+                    if(is_never(read_type(branch.type))) {
+                        has_never_arm = true;
+                        return_scopes.pop_back();
+                        continue;
+                    }
+                    if(not result_type or is_never(read_type(*result_type))) {
                         result_type = branch.type;
                     }
                     return_scopes.pop_back();
                 }
-                return expression_info{ .type = result_type.value_or(semantic_type_ids::unit) };
+                return expression_info{ .type = result_type.value_or(has_never_arm ? semantic_type_ids::never : semantic_type_ids::unit) };
             },
             [&](lambda_expr_syntax const& node) {
                 return infer_lambda_expression(node, expected);
@@ -559,6 +565,18 @@ auto semantic_analyzer::infer_call_expression(ast_arena const& ast, call_expr_sy
             };
         }
         if(name == "free" or name == "construct_at" or name == "destroy_at") {
+            for(auto argument : node.arguments) {
+                infer_expression_type(ast, argument, std::nullopt);
+            }
+            return expression_info{ .type = semantic_type_ids::unit };
+        }
+        if(name == "panic" or name == "unreachable") {
+            for(auto argument : node.arguments) {
+                infer_expression_type(ast, argument, std::nullopt);
+            }
+            return expression_info{ .type = semantic_type_ids::never };
+        }
+        if(name == "assert") {
             for(auto argument : node.arguments) {
                 infer_expression_type(ast, argument, std::nullopt);
             }

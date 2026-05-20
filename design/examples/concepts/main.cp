@@ -1,5 +1,5 @@
-import std.option;
-import std.iter;
+import std.core.option;
+import std.core.iter;
 
 concept sized_iterator {
     requires iterator;

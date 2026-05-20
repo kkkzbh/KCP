@@ -120,6 +120,7 @@ auto semantic_analyzer::substitute_type(semantic_type_id type, std::vector<seman
             [&](unit_type const&) { return type; },
             [&](error_type const&) { return type; },
             [&](inferred_type const&) { return type; },
+            [&](never_type const&) { return type; },
             [&](builtin_type const&) { return type; },
             [&](generic_parameter_type const& value) {
                 if(value.index < arguments.size()) {
@@ -150,8 +151,16 @@ auto semantic_analyzer::substitute_type(semantic_type_id type, std::vector<seman
                 return result.types.intern(tuple_type{ std::move(elements) });
             },
             [&](reference_type const& value) {
+                auto pointee = substitute_type(value.pointee, arguments);
+                if(auto const* inner = std::get_if<reference_type>(&result.types.get(pointee))) {
+                    return result.types.intern(reference_type {
+                        inner->pointee,
+                        value.is_const or inner->is_const,
+                        value.reference_kind,
+                    });
+                }
                 return result.types.intern(reference_type {
-                    substitute_type(value.pointee, arguments),
+                    pointee,
                     value.is_const,
                     value.reference_kind,
                 });
@@ -187,6 +196,8 @@ auto semantic_analyzer::substitute_type(semantic_type_id type, std::vector<seman
                     .arguments = std::move(substituted),
                 });
             },
+            [&](enum_type const&) { return type; },
+            [&](opaque_type const&) { return type; },
             [&](variant_type const& value) {
                 auto substituted = (
                     value.arguments

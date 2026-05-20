@@ -1,26 +1,25 @@
-export module std.span;
+export module std.memory.span;
 
-import std.iter;
-import std.option;
-import std.detail.runtime;
+import std.core.iter;
+import std.core.option;
 
 export struct span<T> {
-    ptr: T const*;
+    ptr: T*;
     len: usize;
 }
 
 export struct span_iter<T> {
-    current: T const*;
-    end: T const*;
+    current: T*;
+    end: T*;
 }
 
 impl span<T> {
-    span(ptr: T const*, len: usize)
+    span(ptr: T*, len: usize)
     {
         return span<T>{ .ptr = ptr, .len = len };
     }
 
-    data(self const&) -> T const*
+    data(self like&) -> T like*
     {
         return ptr;
     }
@@ -35,34 +34,31 @@ impl span<T> {
         return len == 0;
     }
 
-    operator [](self const&, index: usize) -> T const&
+    operator [](self like&, index: usize) -> T like&
     {
-        if(index >= len) {
-            cp_bounds_fail();
-        }
-
-        return const ref ptr[index];
+        assert(index < len, "span index out of bounds");
+        return ref ptr[index];
     }
 }
 
 impl iterator for span_iter<T> {
-    type iter_item = T const&;
+    type iter_item = T&;
 
-    next(self&) -> optional<T const&>
+    next(self&) -> optional<T&>
     {
         if(current >= end) {
-            return optional<T const&>::none;
+            return optional<T&>::none;
         }
 
         let item = current;
         current = current + 1;
-        return optional<T const&>::some(const ref *item);
+        return optional<T&>::some(ref *item);
     }
 }
 
 impl iterable for span<T> {
     type iter_type = span_iter<T>;
-    type iter_item = T const&;
+    type iter_item = T&;
 
     iter(self&) -> span_iter<T>
     {

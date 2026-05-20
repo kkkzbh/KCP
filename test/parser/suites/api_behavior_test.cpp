@@ -85,6 +85,59 @@ main()
         ast_source.module_name(module_parsed.root->imports.front().name) == "std.io",
         "ast_source_view should normalize import names");
 
+    auto const never_source = sources.add_source (
+        "api_never.cp",
+        R"(panic(message: str) -> !
+{
+}
+
+fail() -> !
+{
+    panic("x");
+}
+
+main()
+{
+    let value: i32 = match optional<i32>::none {
+        .some(item) => item,
+        .none => panic("none"),
+    };
+})");
+    auto never_parsed = parse_source(sources, never_source);
+    test_parser::assert_true(never_parsed.accepted, "never type source should parse");
+    auto const& panic_decl = first_function(never_parsed);
+    test_parser::assert_true(static_cast<bool>(panic_decl.return_type), "panic declaration should keep return type");
+    test_parser::assert_true(
+        never_parsed.ast.node(*panic_decl.return_type).is_never_type,
+        "panic return type should be parsed as never");
+
+    auto const enum_source = sources.add_source (
+        "api_enum_opaque.cp",
+        R"(export module fs;
+
+export enum open_flag : u8 {
+    read = 1 << 0;
+    write = 1 << 1;
+}
+
+export type file_handle = opaque u8*;
+
+main()
+{
+    let flag = open_flag::read;
+})");
+    auto enum_parsed = parse_source(sources, enum_source);
+    test_parser::assert_true(enum_parsed.accepted, "enum and opaque type source should parse");
+    test_parser::assert_true(enum_parsed.root->enums.size() == 1, "translation unit should keep enum declarations");
+    auto const& enum_decl = enum_parsed.ast.node(enum_parsed.root->enums.front());
+    test_parser::assert_true(ast_source.identifier(enum_decl.name) == "open_flag", "enum should preserve its name");
+    test_parser::assert_true(enum_decl.exported, "export enum should preserve export marker");
+    test_parser::assert_true(enum_decl.cases.size() == 2, "enum should preserve cases");
+    test_parser::assert_true(enum_parsed.root->type_aliases.size() == 1, "translation unit should keep top-level type aliases");
+    auto const& opaque_alias = enum_parsed.ast.node(enum_parsed.root->type_aliases.front());
+    test_parser::assert_true(opaque_alias.exported, "export type should preserve export marker");
+    test_parser::assert_true(opaque_alias.opaque, "opaque type alias should preserve opaque marker");
+
     auto const extern_source = sources.add_source (
         "api_extern.cp",
         R"(extern "C" putchar(ch: i32) -> i32;
@@ -187,6 +240,43 @@ main()
 	    test_parser::assert_true(match.arms.size() == 2, "match expression should preserve arms");
     auto const& some_pattern = as<match_case_pattern_syntax>(match.arms.front().pattern);
     test_parser::assert_true(some_pattern.bindings.size() == 1, "match case pattern should preserve bindings");
+
+    auto const generic_concept_source = sources.add_source (
+        "api_generic_concept.cp",
+        R"(concept partial_eq<Rhs = this> {
+    equals(self const&, rhs: Rhs const&) -> bool;
+}
+
+struct box<T> {
+    value: T;
+}
+
+impl<T> partial_eq for box<T>
+requires T: partial_eq
+{
+    equals(self const&, rhs: box<T> const&) -> bool
+    {
+        return value.equals(rhs.value);
+    }
+}
+
+impl partial_eq<str> for string_like {
+}
+)"
+    );
+    auto generic_concept_parsed = parse_source(sources, generic_concept_source);
+    test_parser::assert_true(generic_concept_parsed.accepted, "generic concept source should parse");
+    auto const& generic_concept = generic_concept_parsed.ast.node(generic_concept_parsed.root->concepts.front());
+    test_parser::assert_true(generic_concept.generic_parameters.size() == 1, "concept should preserve generic parameters");
+    test_parser::assert_true(
+        generic_concept.generic_parameters.front().default_argument != std::nullopt,
+        "concept generic parameter should preserve its default argument");
+    auto const& generic_impl = generic_concept_parsed.ast.node(generic_concept_parsed.root->concept_impls.front());
+    test_parser::assert_true(generic_impl.generic_parameters.size() == 1, "concept impl should preserve explicit generic parameters");
+    test_parser::assert_true(generic_impl.concept_name.arguments.empty(), "concept impl should preserve omitted concept arguments");
+    auto const& explicit_impl = generic_concept_parsed.ast.node(generic_concept_parsed.root->concept_impls.back());
+    test_parser::assert_true(explicit_impl.concept_name.arguments.size() == 1, "concept impl should preserve explicit concept arguments");
+    test_parser::assert_true(explicit_impl.generic_parameters.empty(), "non-generic concept impl should allow an omitted impl parameter list");
 
     auto const pack_source = sources.add_source (
         "api_template_for_pack.cp",
@@ -727,6 +817,11 @@ impl vec2 {
     {
         return x;
     }
+
+    operator ()(self const&, scale: i32 = 1) -> i32
+    {
+        return x * scale + y;
+    }
 })");
     auto operators = parse_source(sources, operator_source);
     test_parser::assert_true(operators.accepted, "operator declaration source should parse");
@@ -739,6 +834,34 @@ impl vec2 {
     test_parser::assert_true (
         impl_operator.overload_operator == overload_operator_kind::subscript,
         "impl operator [] should record subscript overload kind");
+    auto const& call_operator = operators.ast.node(operators.ast.node(operators.root->impls.front()).functions[1]);
+    test_parser::assert_true (
+        call_operator.overload_operator == overload_operator_kind::call,
+        "impl operator () should record call overload kind");
+    test_parser::assert_true (
+        static_cast<bool>(call_operator.parameters[1].default_value),
+        "operator parameters should record default expressions");
+
+    auto const default_parameter_source = sources.add_source (
+        "api_default_parameter.cp",
+        R"(sort<T: mutable_object, Compare: strict_weak_order<T> = less<T>>(values: span<T>, compare: Compare = Compare{})
+{
+    sort(values);
+    sort(values, greater<i32>{});
+}
+
+concept strict_weak_order<T> {
+    operator ()(self const&, left: T const&, right: T const&) -> bool;
+})");
+    auto default_parameters = parse_source(sources, default_parameter_source);
+    test_parser::assert_true(default_parameters.accepted, "default parameter and call operator source should parse");
+    auto const& sort_function = default_parameters.ast.node(default_parameters.root->functions.front());
+    test_parser::assert_true(static_cast<bool>(sort_function.parameters[1].default_value), "function parameter should record default expression");
+    auto const& concept_item = default_parameters.ast.node(default_parameters.root->concepts.front());
+    auto const& requirement = as<concept_function_requirement_syntax>(concept_item.items.front());
+    test_parser::assert_true (
+        requirement.overload_operator == overload_operator_kind::call,
+        "concept function requirement should record operator ()");
 
     auto const ownership_source = sources.add_source (
         "api_ownership.cp",

@@ -38,6 +38,7 @@ auto main() -> int
             {"not", token_kind::kw_not},
             {"ref", token_kind::kw_ref},
             {"else", token_kind::kw_else},
+            {"enum", token_kind::kw_enum},
             {"impl", token_kind::kw_impl},
             {"like", token_kind::kw_like},
             {"move", token_kind::kw_move},

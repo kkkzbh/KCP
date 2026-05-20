@@ -198,6 +198,9 @@ private:
     auto collect_concept_items(std::size_t unit_index, ast_arena const& ast, concept_id id) -> void;
     auto collect_struct_declaration(std::size_t unit_index, ast_arena const& ast, struct_id id) -> void;
     auto collect_struct_fields(std::size_t unit_index, ast_arena const& ast, struct_id id) -> void;
+    auto collect_enum_declaration(std::size_t unit_index, ast_arena const& ast, enum_id id) -> void;
+    auto collect_enum_cases(std::size_t unit_index, ast_arena const& ast, enum_id id) -> void;
+    auto collect_type_alias_declaration(std::size_t unit_index, ast_arena const& ast, type_alias_id id) -> void;
     auto collect_variant_declaration(std::size_t unit_index, ast_arena const& ast, variant_id id) -> void;
     auto collect_variant_cases(std::size_t unit_index, ast_arena const& ast, variant_id id) -> void;
     auto resolve_imports() -> void;
@@ -218,6 +221,9 @@ private:
     auto target_implements(std::size_t unit_index, ast_arena const& ast, concept_id_syntax const& concept_ref, semantic_type_id target_type) -> bool;
     auto target_implements(symbol_id concept_symbol, semantic_type_id target_type) -> bool;
     auto target_implements(symbol_id concept_symbol, std::vector<semantic_type_id> const& concept_arguments, semantic_type_id target_type) -> bool;
+    auto target_implements_builtin_concept(std::string_view concept_name, std::vector<semantic_type_id> const& concept_arguments, semantic_type_id target_type) -> std::optional<bool>;
+    auto is_mutable_object_type(semantic_type_id type) const -> bool;
+    auto is_strict_weak_order_type(semantic_type_id type, semantic_type_id value_type, source_span span) -> bool;
     auto concept_impl_applies(semantic_concept_impl const& impl, semantic_type_id target_type)
         -> std::optional<std::vector<semantic_type_id>>;
     auto concept_impl_applies(semantic_concept_impl const& impl, std::vector<semantic_type_id> const& concept_arguments, semantic_type_id target_type)
@@ -251,6 +257,11 @@ private:
     auto concrete_destructor_symbol(semantic_type_id type, source_span span) -> symbol_id;
     auto function_has_source_body(symbol_id symbol) const -> bool;
     auto function_is_deleted(symbol_id symbol) const -> bool;
+    auto record_function_parameter_defaults(std::size_t context_index, std::size_t unit_index, function_id id) -> void;
+    auto validate_parameter_defaults(std::size_t unit_index, function_id id) -> void;
+    auto required_parameter_count(std::size_t unit_index, function_id id, std::size_t parameter_offset = 0uz) const -> std::size_t;
+    auto has_valid_argument_count(std::size_t unit_index, function_id id, std::size_t provided, std::size_t available, std::size_t parameter_offset = 0uz) const -> bool;
+    auto check_default_argument_expressions(std::size_t unit_index, function_id id, std::size_t context_index, function_signature const& signature, std::size_t provided, std::size_t parameter_offset, std::map<std::string, semantic_type_id> const* substitutions, std::map<std::string, std::vector<semantic_type_id>> const* pack_substitutions) -> void;
 
     auto lower_type(ast_arena const& ast, type_id id) -> semantic_type_id;
     auto lower_return_type(ast_arena const& ast, type_id id) -> semantic_type_id;
@@ -264,6 +275,9 @@ private:
     auto resolve_exported_concept_symbol(std::string_view module_name, std::string_view name, std::set<std::string>& visiting) const -> std::optional<symbol_id>;
     auto associated_type(semantic_type_id owner, std::string_view name) -> std::optional<semantic_type_id>;
     auto struct_index_of(semantic_type_id type) const -> std::optional<std::uint32_t>;
+    auto enum_index_of(semantic_type_id type) const -> std::optional<std::uint32_t>;
+    auto opaque_index_of(semantic_type_id type) const -> std::optional<std::uint32_t>;
+    auto underlying_type(semantic_type_id type) const -> semantic_type_id;
     auto variant_index_of(semantic_type_id type) const -> std::optional<std::uint32_t>;
     auto struct_named(std::size_t unit_index, std::string_view name) const -> std::optional<std::uint32_t>;
     auto field_index(std::uint32_t struct_index, std::string_view name) const -> std::optional<std::uint32_t>;
@@ -370,6 +384,7 @@ private:
     auto push_loop(loop_label label = {}) -> void;
     auto pop_loop() -> void;
     auto check_statement(stmt_id id, return_state& returns) -> void;
+    auto statement_can_complete_normally(stmt_id id) const -> bool;
     auto check_template_for_statement(template_for_statement_syntax const& node, stmt_id id, return_state& returns)
         -> void;
     auto check_condition(expr_id condition) -> void;
@@ -422,6 +437,7 @@ private:
     auto parse_float_literal(std::string_view text) -> double;
     auto parse_char_literal(std::string_view text) -> char;
     auto parse_string_literal(std::string_view text) -> std::string;
+    auto constant_integer_expression(ast_arena const& ast, expr_id id) -> std::optional<std::int64_t>;
     auto str_field_index(std::string_view name) const -> std::optional<std::uint32_t>;
     auto str_field_type(std::uint32_t index) -> semantic_type_id;
 

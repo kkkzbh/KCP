@@ -2,12 +2,12 @@
 
 本文档记录 `concept` 的设计。`concept` 表示编译期能力约束，不引入运行时多态、虚表或 `dyn` 机制。
 
-目标是给结构体和普通类型提供静态协议能力：关联类型、函数要求、默认关联类型、默认函数实现，以及父 concept 约束。
+目标是给结构体和普通类型提供静态协议能力：关联类型、函数要求、默认关联类型、默认函数实现、父 concept 约束，以及带默认参数的泛型 concept。
 
 ## 语法总览
 
 ```text
-ConceptDecl        -> export? concept identifier { ConceptItem* }
+ConceptDecl        -> export? concept identifier GenericParameterList? { ConceptItem* }
 ConceptItem        -> RequiresDecl
                     | AssociatedTypeRequirement
                     | AssociatedTypeDefault
@@ -21,10 +21,11 @@ RequiresConstraintExpr
 RequiresAnd        -> RequiresPrimary ( and RequiresPrimary )*
 RequiresPrimary    -> RequiresConstraint
                     | ( RequiresConstraintExpr )
-RequiresConstraint -> identifier
+RequiresConstraint -> ConceptId
                     | Type : ConceptBoundList
                     | Type == Type
-ConceptBoundList   -> identifier ( and identifier )*
+ConceptId          -> identifier TypeArgumentList?
+ConceptBoundList   -> ConceptId ( and ConceptId )*
 
 AssociatedTypeRequirement
                    -> type identifier ;
@@ -40,7 +41,7 @@ SelfReceiver       -> self
                     | self const &
                     | self move &
 
-ConceptImpl        -> impl ConceptName for TypePattern RequiresClause? { ConceptImplItem* }
+ConceptImpl        -> impl GenericParameterList? ConceptId for TypePattern RequiresClause? { ConceptImplItem* }
 ConceptImplItem    -> AssociatedTypeBinding
                     | Function
 AssociatedTypeBinding
@@ -77,6 +78,45 @@ export concept iterator {
 - 第一个参数可以写作特殊接收者参数 `self`、`self&`、`self like&`、`self const&` 或 `self move&`，分别表示当前类型、当前类型可写引用、receiver-const 传播引用、当前类型 const 引用和当前类型移动引用。`self like&` 会驱动签名中的 `T like*`、`T like&` 等类型转发 constness；`self move&` 的规则见 [ownership.md](ownership.md)。
 - `this` 表示当前实现类型，只能出现在类型位置，并且只在 `concept`、固有 `impl` 和对应 `impl concept for T` 上下文中有效。
 - `concept` 体内可以直接使用当前 concept 的关联类型名，例如 `iter_item`，不要求写 `this::iter_item`。
+
+## 泛型 Concept
+
+`concept` 可以声明泛型参数，用来描述当前实现类型与其它类型之间的静态关系：
+
+```cp
+concept partial_eq<Rhs = this> {
+    equals(self const&, rhs: Rhs const&) -> bool;
+}
+```
+
+泛型参数的作用域覆盖整个 concept 体，包括 `requires`、关联类型、函数要求和默认函数实现。默认泛型参数按声明顺序求值，可以引用前面已经声明的参数。
+
+`this` 可以作为 concept 泛型参数默认值，表示当前被检查或被实现的类型：
+
+```cp
+T: partial_eq
+impl partial_eq for i32
+impl partial_eq for box<T>
+```
+
+上面三处分别等价于：
+
+```text
+T: partial_eq<T>
+impl partial_eq<i32> for i32
+impl partial_eq<box<T>> for box<T>
+```
+
+需要表达异类型关系时，显式写出 concept 实参：
+
+```cp
+impl partial_eq<str> for string_like {
+    equals(self const&, rhs: str const&) -> bool
+    {
+        return true;
+    }
+}
+```
 
 ## 父 Concept
 
@@ -155,7 +195,7 @@ impl sized_iterator for cursor {
 
 ## Concept 实现
 
-`impl concept_name for type_name` 为某个具体类型实现 concept。泛型 concept `impl` 可以写作 `impl concept_name for vector<T> requires ...`，目标类型模式和条件实现规则见 [generic.md](generic.md)。`impl` 本身不是可导出的顶层名字，不写 `export impl`，也不通过 `import` 单独引入。
+`impl concept_name for type_name` 为某个具体类型实现 concept。泛型 concept `impl` 使用 `impl<...>` 声明泛型参数，例如 `impl<T> iterator for vector_iter<T> requires ...`；目标类型模式和条件实现规则见 [generic.md](generic.md)。`impl` 本身不是可导出的顶层名字，不写 `export impl`，也不通过 `import` 单独引入。
 
 ```cp
 struct range_iter {
@@ -186,6 +226,8 @@ impl iterator for range_iter {
 - `impl` 的物理文件位置不重要；只要该文件参与同一次编译输入，合法的 concept impl 就作为全局实现事实参与检查。
 - 同一次编译输入中，不允许存在两个相同的 `impl concept_name for type_name`。
 - 泛型 concept `impl` 的 `requires` 约束不满足时，该 `impl` 不为对应具体类型提供 concept 证明。
+- concept 名后可以带显式实参，例如 `impl partial_eq<str> for string_like`。
+- concept 实参省略时，按 concept 声明中的默认泛型参数补齐。
 - 无默认的关联类型必须由 `type name = Type;` 实现。
 - 有默认的关联类型可以省略；省略时使用 concept 中的默认类型。
 - 无默认的函数必须由函数定义实现。
@@ -380,18 +422,15 @@ impl parser for int_parser {
 `concept` 支持：
 
 - concept 声明和 concept 依赖。
+- 泛型 concept：`concept partial_eq<Rhs = this>`。
+- concept 默认泛型参数中的 `this` 绑定。
 - concept `requires` 使用 `and` 连接父 concept、类型 concept 约束和类型相等约束。
 - `type name = Type;` 类型别名语句。
 - concept 关联类型要求与默认关联类型。
 - concept 函数要求与默认函数。
 - `impl concept for Type`。
+- `impl<...> concept for TypePattern` 条件实现。
+- 显式 concept 实参：`impl partial_eq<str> for string_like`。
 - 扁平 `T::` 命名空间和冲突检查。
-
-`concept` 不支持：
-
-- 运行时多态、虚表、`dyn concept`。
-- 以裸类型参数为目标的 blanket impl，例如 `impl debug for T`。
-- concept 参数化。
-- 函数重载。
 
 UFCS 的普通调用、成员调用和泛型依赖调用规则分别见 [struct.md](struct.md) 和 [generic.md](generic.md)。concept 默认函数体中的成员调用也遵循同一套 UFCS 规则；如果默认函数体依赖 `this` 的具体实现，则在对应实现类型上重新检查。

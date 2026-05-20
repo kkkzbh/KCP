@@ -28,8 +28,9 @@ export namespace semantic_type_ids {
 auto constexpr unit = semantic_type_id{ 0 };
 auto constexpr error = semantic_type_id{ 1 };
 auto constexpr inferred = semantic_type_id{ 2 };
+auto constexpr never = semantic_type_id{ 3 };
 
-auto constexpr builtin_offset = 3u;
+auto constexpr builtin_offset = 4u;
 auto constexpr builtin_count = static_cast<std::uint32_t>(builtin_type_count);
 auto constexpr fixed_count = builtin_offset + builtin_count;
 
@@ -59,6 +60,11 @@ export auto constexpr is_inferred(semantic_type_id id) -> bool
 export auto constexpr is_unit(semantic_type_id id) -> bool
 {
     return id == semantic_type_ids::unit;
+}
+
+export auto constexpr is_never(semantic_type_id id) -> bool
+{
+    return id == semantic_type_ids::never;
 }
 
 export auto constexpr is_nullptr(semantic_type_id id) -> bool

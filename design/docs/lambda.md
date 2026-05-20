@@ -270,7 +270,7 @@ apply_raw(value: i32, cb: f*(i32) -> i32) -> i32 {
 }
 ```
 
-有捕获 lambda 不能传给 `f(...) -> R` 或 `f*(...) -> R` 参数。它需要由类型推导、泛型参数或 `callable` concept 接收。
+有捕获 lambda 不能传给 `f(...) -> R` 或 `f*(...) -> R` 参数。它需要由类型推导、泛型参数或可调用对象协议接收。
 
 ```cp
 let bias = 10;
@@ -282,13 +282,13 @@ let closure = f(x: i32) {
 // apply(1, closure); // error if apply expects f(i32) -> i32
 ```
 
-`callable` concept 可以让泛型函数接收普通函数、无捕获 lambda 和有捕获闭包：
+泛型函数可以通过 `operator()` / `invocable` 风格的 concept 接收普通函数、无捕获 lambda 和有捕获闭包。lambda/闭包语义上满足调用表达式协议，因此可作为 comparator、projection 这类泛型算法对象使用：
 
 ```cp
-map<F>(values: [i32; 4], callback: F)
-requires F: callable
+apply<F>(value: i32, callback: F) -> i32
+requires F: invocable<i32, i32>
 {
-    // ...
+    return callback(value);
 }
 ```
 
@@ -302,6 +302,7 @@ Lambda 支持：
 - 无捕获 lambda 可绑定为函数类型或函数指针类型。
 - 有捕获 lambda 生成匿名闭包类型。
 - 有捕获 lambda 不能绑定为函数类型或函数指针类型。
+- 有捕获 lambda 可通过泛型参数传递，并用调用表达式 `callback(args...)` 调用。
 - lambda `{ ... }` body 同时支持 `return` 和尾表达式。
 - lambda `=> expr` 表达式体。
 - 参数名可出现在函数类型中，但不参与类型等价。
@@ -311,5 +312,4 @@ Lambda 不支持：
 - 显式捕获列表。
 - 捕获生命周期完整证明。
 - 闭包类型的命名、结构反射或稳定 ABI。
-- 闭包到 `callable` concept 的完整标准库协议。
 - 函数重载和函数类型参与重载排序。

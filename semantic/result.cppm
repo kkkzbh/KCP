@@ -142,6 +142,21 @@ export struct semantic_variant_case_access
     std::uint32_t case_index{};
 };
 
+export struct semantic_enum_case_access
+{
+    auto constexpr operator==(semantic_enum_case_access const&) const -> bool = default;
+
+    auto constexpr valid() const -> bool
+    {
+        return enum_index != invalid_index;
+    }
+
+    auto constexpr static invalid_index = std::numeric_limits<std::uint32_t>::max();
+
+    std::uint32_t enum_index{ invalid_index };
+    std::uint32_t case_index{};
+};
+
 export struct semantic_literal_value
 {
     auto constexpr operator==(semantic_literal_value const&) const -> bool = default;
@@ -157,6 +172,9 @@ export enum class semantic_builtin_call_kind : std::uint8_t
     destroy_at,
     new_object,
     delete_object,
+    panic,
+    assert_,
+    unreachable,
 };
 
 export struct semantic_builtin_call
@@ -532,6 +550,16 @@ export struct semantic_result
         return lookup_result_entry(expression_variant_cases, context, unit, id);
     }
 
+    auto enum_case_of(std::size_t unit, expr_id id) const -> semantic_enum_case_access
+    {
+        return lookup_result_entry(expression_enum_cases, unit, id);
+    }
+
+    auto enum_case_of(std::size_t context, std::size_t unit, expr_id id) const -> semantic_enum_case_access
+    {
+        return lookup_result_entry(expression_enum_cases, context, unit, id);
+    }
+
     auto lambda_of(std::size_t unit, function_id id) const -> semantic_lambda_info
     {
         return lookup_result_entry(lambda_infos, unit, id);
@@ -634,9 +662,32 @@ export struct semantic_result
         return found->second;
     }
 
+    auto parameter_defaults_of(symbol_id symbol) const -> std::vector<bool> const*
+    {
+        if(not symbol.valid()) {
+            return nullptr;
+        }
+        auto const& value = symbols[symbol.value];
+        auto context = 0uz;
+        if(auto instance = function_instance_of(symbol)) {
+            context = instance->context_index;
+        }
+        auto found = function_parameter_defaults.find(semantic_node_key{context, value.unit_index, value.function});
+        if(found != function_parameter_defaults.end()) {
+            return &found->second;
+        }
+        found = function_parameter_defaults.find(semantic_node_key{0uz, value.unit_index, value.function});
+        if(found == function_parameter_defaults.end()) {
+            return nullptr;
+        }
+        return &found->second;
+    }
+
     type_arena types{};
     std::vector<semantic_symbol> symbols{};
     std::vector<semantic_struct> structs{};
+    std::vector<semantic_enum> enums{};
+    std::vector<semantic_opaque_alias> opaque_aliases{};
     std::vector<semantic_variant> variants{};
     std::vector<semantic_concept> concepts{};
     std::vector<semantic_concept_impl> concept_impls{};
@@ -650,6 +701,7 @@ export struct semantic_result
     std::map<semantic_node_key, symbol_id> expression_symbols{};
     std::map<semantic_node_key, symbol_id> expression_operators{};
     std::map<semantic_node_key, function_signature_id> function_signatures{};
+    std::map<semantic_node_key, std::vector<bool>> function_parameter_defaults{};
     std::map<semantic_node_key, symbol_id> statement_bindings{};
     std::map<semantic_parameter_key, symbol_id> local_bindings{};
     std::map<semantic_node_key, symbol_id> function_symbols{};
@@ -661,6 +713,7 @@ export struct semantic_result
     std::map<semantic_node_key, semantic_builtin_call> builtin_calls{};
     std::map<semantic_node_key, semantic_field_access> expression_fields{};
     std::map<semantic_node_key, semantic_variant_case_access> expression_variant_cases{};
+    std::map<semantic_node_key, semantic_enum_case_access> expression_enum_cases{};
     std::map<semantic_node_key, semantic_lambda_info> lambda_infos{};
     std::map<semantic_node_key, semantic_lambda_info> lambda_call_infos{};
     std::map<std::uint32_t, semantic_node_key> closure_lambda_infos{};

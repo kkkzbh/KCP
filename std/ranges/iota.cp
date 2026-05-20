@@ -1,7 +1,7 @@
 export module std.ranges.iota;
 
-import std.iter;
-import std.option;
+import std.core.iter;
+import std.core.option;
 
 export struct iota_iter {
     current: i32;

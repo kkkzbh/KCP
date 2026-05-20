@@ -117,7 +117,7 @@ auto lexer::lex_punctuation(token_flags flags) -> std::optional<token>
             if(cursor_.peek_char(1) == '=') {
                 return make_token(token_kind::bang_equal, 2);
             }
-            return std::nullopt;
+            return make_token(token_kind::bang, 1);
         case '~':
             return make_token(token_kind::tilde, 1);
         case '?':

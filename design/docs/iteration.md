@@ -6,10 +6,10 @@
 
 ## 基础类型
 
-迭代结束使用标准库 `std.option` 中的泛型 `variant` 表示：
+迭代结束使用标准库 `std.core.option` 中的泛型 `variant` 表示：
 
 ```cp
-export module std.option;
+export module std.core.option;
 
 export variant optional<T> {
     none;
@@ -29,9 +29,9 @@ let item = optional<i32>::some(1);
 `iterator` 表示有状态游标。调用 `next` 会推进游标，并返回本次产生的元素或结束标记。
 
 ```cp
-export module std.iter;
+export module std.core.iter;
 
-import std.option;
+import std.core.option;
 
 export concept iterator {
     type iter_item;
@@ -77,7 +77,7 @@ impl iterator for range_iter {
 `iterable` 表示一个值可以产生 iterator。它通常由容器、范围对象或视图实现。
 
 ```cp
-export module std.iter;
+export module std.core.iter;
 
 export concept iterable {
     type iter_type;

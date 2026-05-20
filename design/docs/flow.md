@@ -130,3 +130,4 @@ return value;
 - `return value;` 的值必须能转换到当前函数返回类型。
 - `return;` 只允许用于 `unit` 返回。
 - 在块表达式中写 `return` 时，仍然从所在函数返回，不是从块表达式返回。
+- 函数声明返回 `!` 时，函数体不能有正常完成路径；`return;` 不合法，`return value;` 只有在 `value` 本身类型为 `!` 时合法。

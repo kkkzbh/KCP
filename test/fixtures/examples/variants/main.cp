@@ -1,4 +1,4 @@
-import std.option;
+import std.core.option;
 
 variant event {
     quit;

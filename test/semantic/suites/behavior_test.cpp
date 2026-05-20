@@ -58,20 +58,32 @@ auto has_diagnostic(semantic_result const& result, diagnostic_kind kind) -> bool
 }
 
 auto constexpr std_io_modules = {
-    std::string_view{ "option.cp" },
-    std::string_view{ "expected.cp" },
-    std::string_view{ "iter.cp" },
+    std::string_view{ "core/option.cp" },
+    std::string_view{ "core/expected.cp" },
+    std::string_view{ "core/iter.cp" },
     std::string_view{ "detail/runtime.cp" },
-    std::string_view{ "span.cp" },
-    std::string_view{ "buffer.cp" },
-    std::string_view{ "vector.cp" },
-    std::string_view{ "str.cp" },
-    std::string_view{ "string.cp" },
+    std::string_view{ "memory/buffer.cp" },
+    std::string_view{ "memory/span.cp" },
+    std::string_view{ "collections/detail/rb_tree.cp" },
+    std::string_view{ "collections/vector.cp" },
+    std::string_view{ "collections/map.cp" },
+    std::string_view{ "collections/set.cp" },
+    std::string_view{ "text/str.cp" },
+    std::string_view{ "text/string.cp" },
+    std::string_view{ "core.cp" },
+    std::string_view{ "memory.cp" },
+    std::string_view{ "collections.cp" },
+    std::string_view{ "text.cp" },
     std::string_view{ "ranges/iota.cp" },
     std::string_view{ "ranges.cp" },
+    std::string_view{ "compare.cp" },
+    std::string_view{ "algorithm/sort.cp" },
+    std::string_view{ "algorithm.cp" },
     std::string_view{ "io/raw.cp" },
     std::string_view{ "io/format.cp" },
     std::string_view{ "io.cp" },
+    std::string_view{ "fs/file.cp" },
+    std::string_view{ "fs.cp" },
     std::string_view{ "std.cp" },
 };
 
@@ -107,7 +119,8 @@ auto check_fixture_example_group(std::initializer_list<std::string_view> names, 
     }
 
     auto checked = analyze_semantics(sources, std::span<parse_result const>{ units });
-    test_parser::assert_true(checked.accepted(), "fixture example group should pass semantic analysis");
+    auto group_name = names | std::views::join_with(',') | std::ranges::to<std::string>();
+    test_parser::assert_true(checked.accepted(), std::format("{} fixture example group should pass semantic analysis", group_name));
 }
 
 auto analyze_with_std_io(std::string_view name, std::string text) -> semantic_result
@@ -144,9 +157,9 @@ auto check_fixture_examples() -> void
     check_fixture_example_group({ "types/main.cp" });
     check_fixture_example_group({ "flow/main.cp" });
     check_fixture_example_group({ "structs/main.cp" });
-    check_fixture_example_group({ "concepts/main.cp" }, { "option.cp", "iter.cp" });
+    check_fixture_example_group({ "concepts/main.cp" }, { "core/option.cp", "core/iter.cp" });
     check_fixture_example_group({ "generics/main.cp" });
-    check_fixture_example_group({ "variants/main.cp" }, { "option.cp" });
+    check_fixture_example_group({ "variants/main.cp" }, { "core/option.cp" });
     check_fixture_example_group({ "lambdas/main.cp" });
     check_fixture_example_group({ "memory/main.cp" });
     check_fixture_example_group({ "operators/main.cp" });
@@ -226,6 +239,150 @@ main() -> i32
         has_diagnostic(rejected, diagnostic_kind::missing_concept_item),
         "std.io should reject values without display"
     );
+}
+
+auto check_std_layered_imports() -> void
+{
+    auto vector_import = analyze_with_std_io(
+        "std_layered_vector_import.cp",
+        R"(import std.collections.vector;
+
+main() -> i32
+{
+    let values = vector<i32>{};
+    values.push_back(42);
+    return values.size() as i32;
+})"
+    );
+    test_parser::assert_true(vector_import.accepted(), "std.collections.vector should be directly importable");
+
+    auto flat_import = analyze_with_std_io(
+        "std_flat_vector_import.cp",
+        R"(import std.vector;
+
+main() -> i32
+{
+    return 0;
+})"
+    );
+    test_parser::assert_true(
+        has_diagnostic(flat_import, diagnostic_kind::unknown_module),
+        "std.vector should not remain as a flat compatibility module"
+    );
+}
+
+auto check_sort_and_callable_semantics() -> void
+{
+    auto checked = analyze_with_std_io(
+        "sort_semantics.cp",
+        R"(import std;
+
+main() -> i32
+{
+    let values = vector<i32>{};
+    values.push_back(3);
+    values.push_back(1);
+    values.push_back(2);
+    sort(span<i32>{values.data(), values.size()});
+    sort(span<i32>{values.data(), values.size()}, greater<i32>{});
+    sort(span<i32>{values.data(), values.size()}, f(left: i32 const&, right: i32 const&) -> bool {
+        left < right
+    });
+    return values[0];
+})"
+    );
+    test_parser::assert_true(checked.accepted(), "std sort should accept default, object, and lambda comparators");
+    test_parser::assert_true(not checked.expression_operators.empty(), "call operator expressions should record selected overloads");
+}
+
+auto check_ordered_collections_semantics() -> void
+{
+    auto checked = analyze_with_std_io(
+        "ordered_collections_semantics.cp",
+        R"(import std;
+
+main() -> i32
+{
+    let values = map<i32, i32>{};
+    let first = values.insert(3, 30);
+    let second = values.insert(1, 10);
+    let duplicate = values.insert(3, 99);
+    values[2] = 20;
+    let found = values.find(1);
+    *found = *found + 1;
+
+    let keys = set<i32>{};
+    let a = keys.insert(4);
+    let b = keys.insert(2);
+    let c = keys.insert(4);
+
+    if(first.inserted and second.inserted and not duplicate.inserted and a.inserted and b.inserted and not c.inserted) {
+        return values.nth(0 as usize).key + values.nth(1 as usize).value + values.at(3) + keys.nth(0 as usize) + keys.rank(4) as i32;
+    }
+    return 0;
+})"
+    );
+    test_parser::assert_true(checked.accepted(), "std map/set should type-check insert/find/at/nth/rank/operator[]");
+}
+
+auto check_error_handling_semantics() -> void
+{
+    auto checked = analyze_with_std_io(
+        "error_handling_semantics.cp",
+        R"(import std;
+
+fail() -> !
+{
+    panic("bad");
+}
+
+main() -> i32
+{
+    let item = optional<i32>::none;
+    let value: i32 = match item {
+        .some(actual) => actual,
+        .none => panic("none"),
+    };
+    assert(true);
+    return value;
+})"
+    );
+    test_parser::assert_true(checked.accepted(), "panic, assert, and ! should pass semantic analysis");
+
+    auto sources = source_manager{};
+    auto parsed = parse_source(
+        sources,
+        "never_return.cp",
+        R"(fail() -> !
+{
+    return panic("bad");
+})");
+    auto never_checked = analyze_single(sources, parsed);
+    test_parser::assert_true(never_checked.accepted(), "returning a never expression should satisfy -> !");
+    test_parser::assert_true(
+        function_return_type(sources, parsed, never_checked, "fail") == semantic_type_ids::never,
+        "explicit ! return type should lower to semantic never type");
+
+    auto dereference_checked = analyze_with_std_io(
+        "optional_expected_dereference.cp",
+        R"(import std;
+
+main() -> i32
+{
+    let item = optional<i32>::some(3);
+    let result = expected<i32,str>::value(4);
+    *item = 20;
+    *result = 22;
+    return *item + *result;
+})"
+    );
+    test_parser::assert_true(dereference_checked.accepted(), "optional and expected dereference should type-check through panic arms");
+
+    expect_diagnostic("bad_never_value.cp", "main() { let value: ! = 1; }", diagnostic_kind::type_mismatch);
+    expect_diagnostic("bad_never_return_value.cp", "bad() -> ! { return 1; }", diagnostic_kind::return_type_mismatch);
+    expect_diagnostic("bad_never_return_unit.cp", "bad() -> ! { return; }", diagnostic_kind::return_type_mismatch);
+    expect_diagnostic("bad_never_fallthrough.cp", "bad() -> ! { }", diagnostic_kind::return_type_mismatch);
+    expect_diagnostic("bad_assert_condition.cp", "main() { assert(1); }", diagnostic_kind::type_mismatch);
 }
 
 auto check_side_tables() -> void
@@ -355,6 +512,7 @@ auto check_fixed_type_ids() -> void
     test_parser::assert_true(
         types.intern(inferred_type{}) == semantic_type_ids::inferred,
         "inferred intern should return its fixed id");
+    test_parser::assert_true(types.intern(never_type{}) == semantic_type_ids::never, "never intern should return its fixed id");
     test_parser::assert_true(
         types.intern(builtin_type{ builtin_type_kind::i32 }) == semantic_type_ids::i32,
         "builtin intern should return its fixed id");
@@ -745,6 +903,25 @@ main() -> i32
     );
     test_parser::assert_true(const_result.accepted(), "const generic struct source should pass semantic analysis");
 
+    auto default_result = analyze_one(
+        "generic_struct_default_argument.cp",
+        R"(struct pair<T, U = T> {
+    first: T;
+    second: U;
+}
+
+main() -> i32
+{
+    let same: pair<i32> = pair<i32>{ .first = 20, .second = 2 };
+    let mixed: pair<i32, bool> = pair<i32, bool>{ .first = 1, .second = true };
+    if(mixed.second) {
+        return same.first + same.second + mixed.first;
+    }
+    return 0;
+})"
+    );
+    test_parser::assert_true(default_result.accepted(), "generic struct default argument source should pass semantic analysis");
+
     using enum diagnostic_kind;
     expect_diagnostic(
         "generic_struct_missing_argument.cp",
@@ -840,6 +1017,26 @@ main() -> i32
         "touch<T>(value: T) -> void { return; } main() -> i32 { touch(1); return 0; }"
     );
     test_parser::assert_true(void_result.accepted(), "generic functions should allow explicit void return");
+
+    auto default_result = analyze_one(
+        "generic_function_default_argument.cp",
+        R"(choose<T, U = T>(left: T, right: U) -> T
+{
+    return left;
+}
+
+make<N: usize = 4>() -> [i32; N]
+{
+    return [1, 2, 3, 4];
+}
+
+main() -> i32
+{
+    let values = make();
+    return choose<i32>(1, 2) + choose<i32, bool>(3, true) + values[0];
+})"
+    );
+    test_parser::assert_true(default_result.accepted(), "generic function default argument source should pass semantic analysis");
 
     using enum diagnostic_kind;
     expect_diagnostic(
@@ -1024,6 +1221,58 @@ main() -> i32
 })"
     );
     test_parser::assert_true(this_result.accepted(), "this type in concept signatures should pass semantic analysis");
+
+    auto generic_concept_result = analyze_one(
+        "generic_concept_default_argument.cp",
+        R"(concept partial_eq<Rhs = this> {
+    equals(self const&, rhs: Rhs const&) -> bool;
+}
+
+struct box<T> {
+    value: T;
+}
+
+struct word {
+    value: i32;
+}
+
+struct text {
+    value: i32;
+}
+
+impl partial_eq for i32 {
+    equals(self const&, rhs: i32 const&) -> bool
+    {
+        return self == rhs;
+    }
+}
+
+impl<T> partial_eq for box<T>
+requires T: partial_eq
+{
+    equals(self const&, rhs: box<T> const&) -> bool
+    {
+        return value.equals(rhs.value);
+    }
+}
+
+impl partial_eq<text> for word {
+    equals(self const&, rhs: text const&) -> bool
+    {
+        return value == rhs.value;
+    }
+}
+
+main() -> bool
+{
+    let left = box<i32>{ .value = 1 };
+    let right = box<i32>{ .value = 1 };
+    let name = word{ .value = 2 };
+    let other = text{ .value = 2 };
+    return left.equals(right) and name.equals(other);
+})"
+    );
+    test_parser::assert_true(generic_concept_result.accepted(), "generic concept default argument source should pass semantic analysis");
 
 	    auto local_alias_result = analyze_one(
 	        "local_type_alias.cp",
@@ -1306,6 +1555,47 @@ export extern "C" answer() -> i32
         "extern_c_generic.cp",
         "extern \"C\" id<T>(value: T) -> T;",
         invalid_type_argument
+    );
+}
+
+auto check_enum_opaque_and_fs_semantics() -> void
+{
+    auto accepted = analyze_with_std_io(
+        "enum_opaque_fs_ok.cp",
+        R"(import std;
+
+main() -> i32
+{
+    let flag = open_flag::read;
+    let bits: u8 = flag as u8;
+    let options = open_options{}.write().create().truncate();
+    if(bits == 1 and options.bits() == 14) {
+        return 0;
+    }
+    return 1;
+})"
+    );
+    test_parser::assert_true(accepted.accepted(), "enum, opaque open_options, and std.fs should pass semantics");
+
+    expect_diagnostic(
+        "enum_implicit_int.cp",
+        "enum open_flag : u8 { read = 1; } main() { let bits: u8 = open_flag::read; }",
+        diagnostic_kind::type_mismatch
+    );
+    expect_diagnostic(
+        "enum_bitwise.cp",
+        "enum open_flag : u8 { read = 1; write = 2; } main() { let bits = open_flag::read | open_flag::write; }",
+        diagnostic_kind::invalid_operator
+    );
+    expect_diagnostic(
+        "opaque_implicit_raw.cp",
+        "type handle = opaque u8*; main() { let h: handle = (nullptr as u8*) as handle; let raw: u8* = h; }",
+        diagnostic_kind::type_mismatch
+    );
+    expect_diagnostic(
+        "opaque_pointer_index.cp",
+        "type handle = opaque u8*; main() { let h: handle = (nullptr as u8*) as handle; let item = h[0]; }",
+        diagnostic_kind::invalid_operator
     );
 }
 
@@ -1869,6 +2159,10 @@ auto main() -> int
 {
     check_fixture_examples();
     check_io_semantics();
+    check_std_layered_imports();
+    check_sort_and_callable_semantics();
+    check_ordered_collections_semantics();
+    check_error_handling_semantics();
     check_side_tables();
     check_array_index_semantics();
     check_tuple_member_semantics();
@@ -1884,6 +2178,7 @@ auto main() -> int
     check_concept_semantics();
     check_function_type_and_memory_semantics();
     check_extern_c_semantics();
+    check_enum_opaque_and_fs_semantics();
     check_function_body_kind_semantics();
     check_string_index_semantics();
     check_decltype_ref_and_destructuring_semantics();

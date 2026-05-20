@@ -80,5 +80,12 @@ auto main() -> int
         "token after block comment should still observe synthesized separating whitespace");
 
     test_lexer::assert_true(comment_result.diagnostics.empty(), "valid comment input should not emit diagnostics");
+
+    auto const bang_source = sources.add_source("bang.lex", "! !=");
+    auto bang_preprocessed = preprocess(sources, bang_source);
+    auto bang_result = lex(bang_preprocessed);
+    test_lexer::assert_true(bang_result.diagnostics.empty(), "bang tokens should lex without diagnostics");
+    test_lexer::assert_true(bang_result.tokens[0].kind == token_kind::bang, "standalone ! should lex as bang");
+    test_lexer::assert_true(bang_result.tokens[1].kind == token_kind::bang_equal, "!= should keep bang_equal token");
     return 0;
 }

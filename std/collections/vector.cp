@@ -1,9 +1,8 @@
-export module std.vector;
+export module std.collections.vector;
 
-import std.buffer;
-import std.detail.runtime;
-import std.iter;
-import std.option;
+import std.memory.buffer;
+import std.core.iter;
+import std.core.option;
 
 export struct vector<T> {
     storage: buffer<T>;
@@ -146,28 +145,19 @@ impl vector<T> {
 
     operator [](self like&, index: usize) -> T like&
     {
-        if(index >= len) {
-            cp_bounds_fail();
-        }
-
+        assert(index < len, "vector index out of bounds");
         return ref *(storage.data() + index);
     }
 
     front(self like&) -> T like&
     {
-        if(len == 0) {
-            cp_bounds_fail();
-        }
-
+        assert(len != 0, "vector front on empty vector");
         return ref *storage.data();
     }
 
     back(self like&) -> T like&
     {
-        if(len == 0) {
-            cp_bounds_fail();
-        }
-
+        assert(len != 0, "vector back on empty vector");
         return ref *(storage.data() + len - 1);
     }
 
@@ -216,20 +206,14 @@ impl vector<T> {
 
     pop_back(self&) -> void
     {
-        if(len == 0) {
-            cp_bounds_fail();
-        }
-
+        assert(len != 0, "vector pop_back on empty vector");
         len -= 1;
         destroy_at(storage.data() + len);
     }
 
     pop(self&) -> T
     {
-        if(len == 0) {
-            cp_bounds_fail();
-        }
-
+        assert(len != 0, "vector pop on empty vector");
         let index = len - 1;
         let value = move *(storage.data() + index);
         destroy_at(storage.data() + index);
@@ -255,10 +239,7 @@ impl vector<T> {
 
     insert(self&, index: usize, value: T) -> void
     {
-        if(index > len) {
-            cp_bounds_fail();
-        }
-
+        assert(index <= len, "vector insert index out of bounds");
         ensure_capacity(len + 1);
         let current = len;
         while(current > index) {
@@ -272,10 +253,7 @@ impl vector<T> {
 
     erase(self&, index: usize) -> void
     {
-        if(index >= len) {
-            cp_bounds_fail();
-        }
-
+        assert(index < len, "vector erase index out of bounds");
         destroy_at(storage.data() + index);
         let current = index;
         while(current + 1 < len) {
@@ -288,10 +266,7 @@ impl vector<T> {
 
     erase_range(self&, first: usize, last: usize) -> void
     {
-        if(first > last or last > len) {
-            cp_bounds_fail();
-        }
-
+        assert(first <= last and last <= len, "vector erase_range index out of bounds");
         let target = first;
         while(target < last) {
             destroy_at(storage.data() + target);
