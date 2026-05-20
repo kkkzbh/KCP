@@ -5,6 +5,7 @@
 ## 文档目录
 
 - [类型系统](type_system.md)：类型分类、默认初始化、聚合字面量、`decltype`、返回类型推导、引用和指针规则。
+- [所有权、借用与移动](ownership.md)：默认 copy、显式 `ref` / `move`、`like` const 转发 / `move&`、特殊成员和能力推导。
 - [初始化](initial.md)：变量、常量、引用 binding 和初始化表达式。
 - [模块](module.md)：模块声明、导入、重导出、导出和名字冲突。
 - [流程控制](flow.md)：`if`、循环、标签、`break` / `continue` 和 `return`。
@@ -16,7 +17,7 @@
 - [迭代](iteration.md)：range-for 的语言入口、`iterator` / `iterable` 协议要求和内建类型入口。
 - [标准库 ranges](std_ranges.md)：`std.ranges` 的范围对象、`iota` 入口和非重载命名规则。
 - [运算符](operator.md)：运算符表、内建运算符和第一版 `operator` 重载。
-- [类型转换](cast.md)：`as` 和函数式转换。
+- [类型转换](cast.md)：`as` 显式转换。
 - [`extern "C"`](extern_c.md)：外部 C 函数声明、C 符号名导出和第一版 ABI 边界。
 - [底层内存分配](memory_allocation.md)：裸分配、对象生命周期原语和 runtime ABI。
 

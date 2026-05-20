@@ -1,6 +1,6 @@
 # 底层内存分配
 
-本文档记录 cp 的底层内存分配与释放设计。语言提供最小原语，不引入 `new`、`delete` 或 `delete[]`。
+本文档记录 cp 的底层内存分配与释放设计。语言提供四个最小原语，并在其上提供 `new` / `delete` 语法糖；不引入 `new[]` 或 `delete[]`。
 
 `unique<T>`、`vector<T>`、`buffer<T>`、`string` 等拥有资源的类型作为核心库类型或标准库类型建立在这些原语之上。
 
@@ -18,6 +18,8 @@
 `construct_at` 和 `destroy_at` 只处理对象生命周期，不负责申请和释放底层存储。
 
 这样释放内存时不需要区分单个对象和数组，也不会出现 C++ 风格的 `delete` / `delete[]` 二选一问题。
+
+`new` 和 `delete` 只面向“一个对象指针”。`[T; N]` 自身就是一个对象类型，因此 `new [T; N]{...}` 返回的是指向数组对象的指针，`delete` 也只是删除这个数组对象，不需要另一套数组 delete 规则。
 
 ## 原语
 
@@ -100,6 +102,43 @@ destroy_at(p);
 
 `destroy_at` 的类型参数由 `ptr` 的类型推导，用户不需要写 `destroy_at<T>(ptr)`。
 
+## new / delete
+
+`new` 是 `alloc + construct_at` 的便捷语法，只使用构造初始化的 `{}` 形式：
+
+```cp
+let p = new T{args};
+```
+
+它概念上等价于：
+
+```cp
+let p = alloc<T>(1);
+construct_at(p, T{args});
+```
+
+`delete` 是 `destroy_at + free` 的便捷语法：
+
+```cp
+delete p;
+```
+
+它概念上等价于：
+
+```cp
+destroy_at(p);
+free(p);
+```
+
+规则：
+
+- `new T{...}` 返回 `T*`。
+- `new` 后面必须是类型和 `{}` 初始化，不支持 `new T(...)`。
+- `delete` 的操作数必须是非 const 的对象指针。
+- `delete nullptr;` 是允许的 no-op。
+- `delete` 不区分数组和非数组；`new [T; N]{...}` 返回 `[T; N]*`，`delete` 析构并释放这个 `[T; N]` 对象。
+- 编译器只检查指针类型和析构调用，不证明指针一定来自 `new` 或 `alloc`。
+
 ## 使用示例
 
 单个对象：
@@ -112,6 +151,14 @@ let value = *p;
 
 destroy_at(p);
 free(p);
+```
+
+等价便捷写法：
+
+```cp
+let p = new i32{123};
+let value = *p;
+delete p;
 ```
 
 连续存储：
@@ -130,6 +177,13 @@ free(p);
 
 数组长度和哪些元素已经构造由调用者保存。裸指针只表示地址，不携带长度、初始化状态或所有权信息。
 
+数组对象：
+
+```cp
+let p = new [i32; 4]{1, 2, 3, 4};
+delete p;
+```
+
 ## 检查边界
 
 语言规则要求：
@@ -145,6 +199,8 @@ free(p);
 - `free(ptr)` 检查 `ptr` 是指针。
 - `construct_at(ptr, value)` 检查指针目标类型和值类型匹配。
 - `destroy_at(ptr)` 检查 `ptr` 是指针。
+- `new T{...}` 检查初始化表达式能构造 `T`。
+- `delete ptr` 检查 `ptr` 是非 const 对象指针。
 
 编译器不完整证明：
 
@@ -153,6 +209,7 @@ free(p);
 - `free` 前是否所有已构造对象都已 `destroy_at`。
 - `free` 的指针是否一定来自 `alloc`。
 - `free` 的指针是否是分配块起始地址。
+- `delete` 的指针是否一定来自 `new`。
 
 这些属于底层 unsafe 契约。安全使用通过 `unique<T>`、`vector<T>`、`buffer<T>` 等库类型封装。
 
@@ -209,8 +266,9 @@ runtime/
 
 ```text
 unique<T>  = alloc + construct_at + destroy_at + free
+box<T>     = new + delete
 vector<T>  = alloc + 多次 construct_at + 多次 destroy_at + free
-buffer<T>  = 保存 ptr / capacity / initialized_count 的底层拥有容器
+buffer<T>  = 保存 ptr / capacity 的底层原始存储拥有容器，元素构造数量由上层容器维护
 ```
 
 这些封装负责保存长度、容量、已构造数量和所有权状态。裸指针不承担这些职责。

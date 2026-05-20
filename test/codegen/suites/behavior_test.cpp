@@ -139,8 +139,8 @@ auto check_aggregate_literals() -> void
         "aggregates.cp",
         R"(answer() -> i32
 {
-    let data: array<i32,3> = [4, 5, 6];
-    let pair: tuple<i32,f64> = (1, 2.0);
+    let data: [i32; 3] = [4, 5, 6];
+    let pair: (i32, f64) = (1, 2.0);
     return 42;
 })");
     auto checked = analyze_single(sources, parsed);
@@ -189,7 +189,7 @@ auto check_range_for_control_flow() -> void
     auto parsed = parse_source(
         sources,
         "range_for.cp",
-        R"(sum(values: array<i32,4>) -> i32
+        R"(sum(values: [i32; 4]) -> i32
 {
     let total: i32 = 0;
     for(let value : values) {
@@ -220,7 +220,7 @@ auto check_labeled_loop_jumps() -> void
     auto parsed = parse_source(
         sources,
         "labeled_for.cp",
-        R"(contains(rows: array<array<i32,3>,2>, target: i32) -> bool
+        R"(contains(rows: [[i32; 3]; 2], target: i32) -> bool
 {
     let found: bool = false;
     for: outer(let row : rows) {
@@ -321,6 +321,49 @@ answer() -> i32
     test_parser::assert_true(emitted.ir.contains("declare void @cp_free"), "LLVM IR should declare runtime cp_free");
     test_parser::assert_true(not emitted.ir.contains("@malloc"), "LLVM IR should not lower allocation directly to malloc");
     test_parser::assert_true(emitted.ir.contains("getelementptr i32"), "LLVM IR should use typed pointer arithmetic");
+}
+
+auto check_new_delete_codegen() -> void
+{
+    auto sources = source_manager{};
+    auto parsed = parse_source(
+        sources,
+        "new_delete.cp",
+        R"(struct guard {
+    total: i32*;
+    value: i32;
+}
+
+impl guard {
+    ~guard()
+    {
+        *total += value;
+    }
+}
+
+answer() -> i32
+{
+    let total = 0;
+    let item = new guard{ &total, 3 };
+    let values = new [guard; 2]{ guard{ &total, 5 }, guard{ &total, 7 } };
+    delete item;
+    delete values;
+    return total;
+})");
+    auto checked = analyze_single(sources, parsed);
+    test_parser::assert_true(checked.accepted(), "new/delete source should pass semantic analysis");
+
+    auto ir = emit_ir(sources, parsed, checked);
+    test_parser::assert_true(ir.accepted, ir.error.empty() ? "IR emission should pass" : ir.error);
+    auto text = dump_ir(ir.module);
+    test_parser::assert_true(text.contains("alloc_raw"), "MIR dump should contain new allocation");
+    test_parser::assert_true(text.contains("free_raw"), "MIR dump should contain delete free");
+    test_parser::assert_true(text.contains("element_address"), "MIR dump should destroy array elements through element addresses");
+
+    auto emitted = emit_llvm_ir(ir.module);
+    test_parser::assert_true(emitted.verified, emitted.error.empty() ? "LLVM module should verify" : emitted.error);
+    test_parser::assert_true(emitted.ir.contains("declare ptr @cp_alloc"), "LLVM IR should declare runtime cp_alloc for new");
+    test_parser::assert_true(emitted.ir.contains("declare void @cp_free"), "LLVM IR should declare runtime cp_free for delete");
 }
 
 auto check_generic_function_codegen() -> void
@@ -428,6 +471,7 @@ auto main() -> int
     check_labeled_loop_jumps();
     check_variant_match_codegen();
     check_function_pointer_and_memory_codegen();
+    check_new_delete_codegen();
     check_generic_function_codegen();
     check_parameter_pack_codegen();
     return 0;

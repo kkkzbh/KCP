@@ -29,11 +29,17 @@ auto keyword_kind(std::string_view text) -> std::optional<token_kind>
             if(text == "and"sv) {
                 return token_kind::kw_and;
             }
+            if(text == "new"sv) {
+                return token_kind::kw_new;
+            }
             if(text == "for"sv) {
                 return token_kind::kw_for;
             }
             if(text == "let"sv) {
                 return token_kind::kw_let;
+            }
+            if(text == "ref"sv) {
+                return token_kind::kw_ref;
             }
             if(text == "not"sv) {
                 return token_kind::kw_not;
@@ -45,6 +51,12 @@ auto keyword_kind(std::string_view text) -> std::optional<token_kind>
             }
             if(text == "impl"sv) {
                 return token_kind::kw_impl;
+            }
+            if(text == "like"sv) {
+                return token_kind::kw_like;
+            }
+            if(text == "move"sv) {
+                return token_kind::kw_move;
             }
             if(text == "true"sv) {
                 return token_kind::kw_true;
@@ -68,8 +80,14 @@ auto keyword_kind(std::string_view text) -> std::optional<token_kind>
             if(text == "concept"sv) {
                 return token_kind::kw_concept;
             }
+            if(text == "nullptr"sv) {
+                return token_kind::kw_nullptr;
+            }
             break;
         case 6:
+            if(text == "delete"sv) {
+                return token_kind::kw_delete;
+            }
             if(text == "export"sv) {
                 return token_kind::kw_export;
             }

@@ -80,7 +80,7 @@ auto parser::parse_translation_unit_node() -> std::optional<translation_unit_syn
         }
 
         if(not exported and check(token_kind::kw_impl)) {
-            if(peek(2).kind == token_kind::kw_for) {
+            if(looks_like_concept_impl_block()) {
                 auto impl = parse_concept_impl_block();
                 if(not impl) {
                     synchronize_function_list();
@@ -389,6 +389,17 @@ auto parser::parse_operator_function(function_syntax_kind kind, std::optional<so
         }
     }
 
+    if(check(token_kind::equal)) {
+        return parse_default_or_deleted_impl_item(
+            operator_kw->span,
+            operator_kind->second,
+            kind,
+            std::move(*parameters),
+            operator_kind->first,
+            return_type
+        );
+    }
+
     auto requires_clause = std::optional<concept_requires_syntax>{};
     if(check_contextual("requires")) {
         requires_clause = parse_requires_clause_until(token_kind::l_brace);
@@ -628,6 +639,14 @@ auto parser::parse_concept_declaration(bool exported, std::optional<source_span>
 {
     auto concept_kw = expect(token_kind::kw_concept);
     auto name = expect_identifier("concept name");
+    auto generic_parameters = std::vector<generic_parameter_syntax>{};
+    if(check(token_kind::less)) {
+        auto parsed = parse_generic_parameter_list();
+        if(not parsed) {
+            return std::nullopt;
+        }
+        generic_parameters = std::move(*parsed);
+    }
     auto open = expect(token_kind::l_brace);
     if(not concept_kw or not name or not open) {
         return std::nullopt;
@@ -652,6 +671,7 @@ auto parser::parse_concept_declaration(bool exported, std::optional<source_span>
         .full_span = combine_spans(export_span.value_or(concept_kw->span), close->span),
         .exported = exported,
         .name = name->span,
+        .generic_parameters = std::move(generic_parameters),
         .items = std::move(items),
     });
 }
@@ -775,16 +795,18 @@ auto parser::parse_concept_requires_primary() -> std::optional<concept_requires_
             and peek(3uz).kind == token_kind::dot
         )
     ) {
-        auto name = consume();
+        auto parent_concept = parse_concept_id();
+        if(not parent_concept) {
+            return std::nullopt;
+        }
         return concept_requires_constraint_syntax {
             concept_parent_constraint_syntax {
-                .full_span = name.span,
-                .name = name.span,
+                .parent = std::move(*parent_concept),
             }
         };
     }
 
-    auto left = parse_type();
+    auto left = parse_type(true);
     if(not left) {
         return std::nullopt;
     }
@@ -796,13 +818,12 @@ auto parser::parse_concept_requires_primary() -> std::optional<concept_requires_
 
     if(check(token_kind::colon)) {
         consume();
-        auto bounds = std::vector<source_span>{};
-        auto bound = expect_identifier("concept bound");
+        auto bounds = std::vector<concept_id_syntax>{};
+        auto bound = parse_concept_id();
         if(not bound) {
             return std::nullopt;
         }
-        bounds.emplace_back(bound->span);
-        auto end = bound->span;
+        auto end = bound->full_span;
         while (
             check(token_kind::kw_and)
             and peek(1uz).kind == token_kind::identifier
@@ -816,13 +837,15 @@ auto parser::parse_concept_requires_primary() -> std::optional<concept_requires_
             )
         ) {
             consume();
-            auto next = expect_identifier("concept bound");
+            bounds.emplace_back(std::move(*bound));
+            auto next = parse_concept_id();
             if(not next) {
                 return std::nullopt;
             }
-            bounds.emplace_back(next->span);
-            end = next->span;
+            end = next->full_span;
+            bound = std::move(next);
         }
+        bounds.emplace_back(std::move(*bound));
         return concept_requires_constraint_syntax {
             concept_type_bound_constraint_syntax {
                 .full_span = combine_spans(arena.span(*left), end),
@@ -850,6 +873,77 @@ auto parser::parse_concept_requires_primary() -> std::optional<concept_requires_
             .right = *right,
         }
     };
+}
+
+auto parser::parse_concept_id() -> std::optional<concept_id_syntax>
+{
+    auto name = expect_identifier("concept name");
+    if(not name) {
+        return std::nullopt;
+    }
+
+    auto arguments = std::vector<type_argument_syntax>{};
+    auto end = name->span;
+    if(check(token_kind::less)) {
+        auto parsed = parse_type_argument_list();
+        if(not parsed) {
+            return std::nullopt;
+        }
+        arguments = std::move(*parsed);
+        auto const& last = arguments.back();
+        if(auto const* argument = std::get_if<type_argument_type_syntax>(&last)) {
+            end = arena.span(argument->type);
+        } else if(auto const* argument = std::get_if<type_argument_literal_syntax>(&last)) {
+            end = argument->literal;
+        } else {
+            end = std::get<type_argument_name_syntax>(last).name;
+        }
+    }
+
+    return concept_id_syntax {
+        .full_span = combine_spans(name->span, end),
+        .name = name->span,
+        .arguments = std::move(arguments),
+    };
+}
+
+auto parser::looks_like_concept_impl_block() const -> bool
+{
+    auto index = 1uz;
+    if(peek(index).kind == token_kind::less) {
+        auto depth = 0uz;
+        do {
+            auto kind = peek(index).kind;
+            if(kind == token_kind::less) {
+                ++depth;
+            } else if(kind == token_kind::greater) {
+                --depth;
+            } else if(kind == token_kind::eof) {
+                return false;
+            }
+            ++index;
+        } while(depth > 0uz);
+    }
+
+    if(peek(index).kind != token_kind::identifier) {
+        return false;
+    }
+    ++index;
+    if(peek(index).kind == token_kind::less) {
+        auto depth = 0uz;
+        do {
+            auto kind = peek(index).kind;
+            if(kind == token_kind::less) {
+                ++depth;
+            } else if(kind == token_kind::greater) {
+                --depth;
+            } else if(kind == token_kind::eof) {
+                return false;
+            }
+            ++index;
+        } while(depth > 0uz);
+    }
+    return peek(index).kind == token_kind::kw_for;
 }
 
 auto parser::parse_type_alias() -> std::optional<type_alias_syntax>
@@ -938,6 +1032,14 @@ auto parser::parse_concept_function_requirement() -> std::optional<concept_funct
 auto parser::parse_impl_block() -> std::optional<impl_id>
 {
     auto impl_kw = expect(token_kind::kw_impl);
+    auto generic_parameters = std::vector<generic_parameter_syntax>{};
+    if(check(token_kind::less)) {
+        auto parsed = parse_generic_parameter_list();
+        if(not parsed) {
+            return std::nullopt;
+        }
+        generic_parameters = std::move(*parsed);
+    }
     auto type = parse_expected_type();
     auto requires_clause = std::optional<concept_requires_syntax>{};
     if(check_contextual("requires")) {
@@ -979,6 +1081,7 @@ auto parser::parse_impl_block() -> std::optional<impl_id>
 
     return arena.add(impl_syntax {
         .full_span = combine_spans(impl_kw->span, close->span),
+        .generic_parameters = std::move(generic_parameters),
         .type = *type,
         .requires_clause = std::move(requires_clause),
         .type_aliases = std::move(type_aliases),
@@ -989,7 +1092,15 @@ auto parser::parse_impl_block() -> std::optional<impl_id>
 auto parser::parse_concept_impl_block() -> std::optional<concept_impl_id>
 {
     auto impl_kw = expect(token_kind::kw_impl);
-    auto concept_name = expect_identifier("concept name");
+    auto generic_parameters = std::vector<generic_parameter_syntax>{};
+    if(check(token_kind::less)) {
+        auto parsed = parse_generic_parameter_list();
+        if(not parsed) {
+            return std::nullopt;
+        }
+        generic_parameters = std::move(*parsed);
+    }
+    auto concept_name = parse_concept_id();
     auto for_kw = expect(token_kind::kw_for);
     auto target_type = parse_expected_type();
     auto requires_clause = std::optional<concept_requires_syntax>{};
@@ -1032,7 +1143,8 @@ auto parser::parse_concept_impl_block() -> std::optional<concept_impl_id>
 
     return arena.add(concept_impl_syntax {
         .full_span = combine_spans(impl_kw->span, close->span),
-        .concept_name = concept_name->span,
+        .generic_parameters = std::move(generic_parameters),
+        .concept_name = std::move(*concept_name),
         .target_type = *target_type,
         .requires_clause = std::move(requires_clause),
         .type_aliases = std::move(type_aliases),
@@ -1091,7 +1203,14 @@ auto parser::parse_impl_item(type_syntax const& impl_type) -> std::optional<func
 
     static_cast<void>(impl_type);
     if(check(token_kind::equal)) {
-        return parse_default_constructor(name->span, name->span, std::move(*parameters));
+        return parse_default_or_deleted_impl_item(
+            name->span,
+            name->span,
+            function_syntax_kind::constructor,
+            std::move(*parameters),
+            std::nullopt,
+            std::nullopt
+        );
     }
 
     auto return_type = std::optional<type_id>{};
@@ -1128,21 +1247,40 @@ auto parser::parse_impl_item(type_syntax const& impl_type) -> std::optional<func
     });
 }
 
-auto parser::parse_default_constructor(source_span start, source_span name, std::vector<parameter_syntax> parameters) -> std::optional<function_id>
+auto parser::parse_default_or_deleted_impl_item(
+    source_span start,
+    source_span name,
+    function_syntax_kind kind,
+    std::vector<parameter_syntax> parameters,
+    std::optional<overload_operator_kind> overload_operator,
+    std::optional<type_id> return_type
+) -> std::optional<function_id>
 {
     auto equal = expect(token_kind::equal);
-    auto default_name = expect_identifier("default");
+    auto marker = std::optional<token>{};
+    if(check(token_kind::kw_delete)) {
+        marker = consume();
+    } else {
+        marker = expect_identifier("default");
+    }
     auto semicolon = expect(token_kind::semicolon);
-    if(not equal or not default_name or not semicolon) {
+    if(not equal or not marker or not semicolon) {
         return std::nullopt;
     }
+    auto marker_text = marker->kind == token_kind::kw_delete
+        ? std::string_view{ "delete" }
+        : std::string_view{ marker->text };
     return arena.add(function_syntax {
         .full_span = combine_spans(start, semicolon->span),
-        .kind = function_syntax_kind::constructor,
-        .defaulted = true,
+        .kind = kind,
+        .defaulted = marker_text == "default",
+        .deleted = marker_text == "delete",
+        .has_body = false,
+        .overload_operator = overload_operator,
         .name = name,
         .parameters = std::move(parameters),
-        .default_marker = default_name->span,
+        .return_type = return_type,
+        .default_marker = marker->span,
     });
 }
 
@@ -1191,8 +1329,11 @@ auto parser::parse_parameter() -> std::optional<parameter_syntax>
         return std::nullopt;
     }
 
-    if(name->text == "self" and not check(token_kind::colon)) {
+    auto const looks_like_self = name->text == "self" or (name->text.empty() and name->span.end - name->span.start == 4);
+    if(looks_like_self and not check(token_kind::colon)) {
         auto is_reference = false;
+        auto is_like = false;
+        auto is_move = false;
         auto end = name->span;
         if(check(token_kind::kw_const)) {
             is_const = true;
@@ -1206,12 +1347,24 @@ auto parser::parse_parameter() -> std::optional<parameter_syntax>
         } else if(check(token_kind::amp)) {
             is_reference = true;
             end = consume().span;
+        } else if(check_any({ token_kind::kw_like, token_kind::kw_move })) {
+            auto qualifier = consume();
+            is_reference = true;
+            is_like = qualifier.kind == token_kind::kw_like;
+            is_move = qualifier.kind == token_kind::kw_move;
+            auto amp = expect(token_kind::amp);
+            if(not amp) {
+                return std::nullopt;
+            }
+            end = amp->span;
         }
         return parameter_syntax {
             .full_span = combine_spans(const_span.value_or(name->span), end),
             .is_const = is_const,
             .is_self_receiver = true,
             .self_is_reference = is_reference,
+            .self_is_like = is_like,
+            .self_is_move = is_move,
             .name = name->span,
         };
     }
@@ -1367,31 +1520,62 @@ auto parser::parse_generic_parameter() -> std::optional<generic_parameter_syntax
         end = *ellipsis;
     }
 
-    auto bounds = std::vector<source_span>{};
+    auto parameter_kind = generic_parameter_syntax::kind::type;
+    auto bounds = std::vector<concept_id_syntax>{};
     if(check(token_kind::colon)) {
         consume();
-        auto bound = expect_identifier("concept bound");
+        auto bound_name = check(token_kind::identifier) ? std::string_view{ peek().text } : std::string_view{};
+        auto bound = parse_concept_id();
         if(not bound) {
             return std::nullopt;
         }
-        bounds.emplace_back(bound->span);
-        end = bound->span;
-        while(check(token_kind::kw_and)) {
+        if(bound_name == "usize" or bound_name == "isize") {
+            if(is_pack) {
+                report_current(diagnostic_kind::invalid_type_argument, "integer generic parameter cannot be a pack");
+                return std::nullopt;
+            }
+            parameter_kind = bound_name == "usize"
+                ? generic_parameter_syntax::kind::const_usize
+                : generic_parameter_syntax::kind::const_isize;
+            end = bound->full_span;
+        } else {
+            end = bound->full_span;
+            bounds.emplace_back(std::move(*bound));
+        }
+        while(parameter_kind == generic_parameter_syntax::kind::type and check(token_kind::kw_and)) {
             consume();
-            auto next = expect_identifier("concept bound");
+            auto next = parse_concept_id();
             if(not next) {
                 return std::nullopt;
             }
-            bounds.emplace_back(next->span);
-            end = next->span;
+            bounds.emplace_back(std::move(*next));
+            end = next->full_span;
+        }
+    }
+
+    auto default_argument = std::optional<type_argument_syntax>{};
+    if(check(token_kind::equal)) {
+        consume();
+        default_argument = parse_type_argument();
+        if(not default_argument) {
+            return std::nullopt;
+        }
+        if(auto const* argument = std::get_if<type_argument_type_syntax>(&*default_argument)) {
+            end = arena.span(argument->type);
+        } else if(auto const* argument = std::get_if<type_argument_literal_syntax>(&*default_argument)) {
+            end = argument->literal;
+        } else {
+            end = std::get<type_argument_name_syntax>(*default_argument).name;
         }
     }
 
     return generic_parameter_syntax {
         .full_span = combine_spans(name->span, end),
         .name = name->span,
+        .parameter_kind = parameter_kind,
         .is_pack = is_pack,
         .concept_bounds = std::move(bounds),
+        .default_argument = std::move(default_argument),
     };
 }
 

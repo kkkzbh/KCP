@@ -85,7 +85,7 @@ const p: i32 const* = value;
 let count = i32{};
 let ok = bool{};
 let title = str{};
-let values = array<i32,4>{};
+let values = [i32; 4]{};
 let point = vec2{};
 ```
 

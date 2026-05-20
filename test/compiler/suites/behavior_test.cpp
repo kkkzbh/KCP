@@ -49,6 +49,12 @@ auto run_status(std::vector<std::string> const& arguments) -> int
     return std::system(command.c_str());
 }
 
+auto run_stdout(std::vector<std::string> const& arguments, std::filesystem::path const& output) -> int
+{
+    auto command = shell_join(arguments) + " >" + shell_quote(output.string()) + " 2>/dev/null";
+    return std::system(command.c_str());
+}
+
 auto exit_code(int status) -> int
 {
     if(status < 0) {
@@ -226,7 +232,7 @@ auto check_sum_non_negative(test_tools const& tools) -> void
     auto app = dir / "sum";
     write_source(
         source,
-        R"(sum_non_negative(values: array<i32,4>) -> i32
+        R"(sum_non_negative(values: [i32; 4]) -> i32
 {
     let total: i32 = 0;
     for(let value : values) {
@@ -256,7 +262,7 @@ auto check_array_index_binary(test_tools const& tools) -> void
     auto app = dir / "array_index";
     write_source(
         source,
-        R"(pick(values: array<i32,3> const&, index: i32) -> i32
+        R"(pick(values: [i32; 3] const&, index: i32) -> i32
 {
     return values[index];
 }
@@ -276,24 +282,24 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 29, "array index binary should return indexed values");
 }
 
-auto check_tuple_index_binary(test_tools const& tools) -> void
+auto check_tuple_member_binary(test_tools const& tools) -> void
 {
-    auto dir = unique_temp_dir("tuple-index");
-    auto source = dir / "tuple_index.cp";
-    auto app = dir / "tuple_index";
+    auto dir = unique_temp_dir("tuple-member");
+    auto source = dir / "tuple_member.cp";
+    auto app = dir / "tuple_member";
     write_source(
         source,
         R"(main() -> i32
 {
     let pair = (10, 20);
-    pair[0] = 22;
-    return pair[0] + pair[1];
+    pair.0 = 22;
+    return pair.0 + pair.1;
 })"
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile tuple index reads and writes");
-    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "tuple index binary should return indexed values");
+    test_parser::assert_true(status == 0, "cp should compile tuple member reads and writes");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "tuple member binary should return selected values");
 }
 
 auto check_accumulate_and_countdown(test_tools const& tools) -> void
@@ -341,7 +347,7 @@ auto check_labeled_for_binary(test_tools const& tools) -> void
     auto app = dir / "labeled";
     write_source(
         source,
-        R"(contains_target(rows: array<array<i32,3>,2>, target: i32) -> bool
+        R"(contains_target(rows: [[i32; 3]; 2], target: i32) -> bool
 {
     let found: bool = false;
     for: outer(let row : rows) {
@@ -360,7 +366,7 @@ auto check_labeled_for_binary(test_tools const& tools) -> void
 
 main() -> i32
 {
-    let rows: array<array<i32,3>,2> = [[1, 2, 3], [-1, 4, 5]];
+    let rows: [[i32; 3]; 2] = [[1, 2, 3], [-1, 4, 5]];
     if(contains_target(rows, 3)) {
         return 42;
     }
@@ -402,7 +408,8 @@ auto check_fixture_examples(test_tools const& tools) -> void
         { "lambdas", { tools.fixture_examples / "lambdas" / "main.cp" }, 42 },
         { "memory", { tools.fixture_examples / "memory" / "main.cp" }, 42 },
         { "operators", { tools.fixture_examples / "operators" / "main.cp" }, 42 },
-        { "std", { tools.fixture_examples / "std" / "main.cp" }, 48 },
+        { "ownership", { tools.fixture_examples / "ownership" / "main.cp" }, 92 },
+        { "std", { tools.fixture_examples / "std" / "main.cp" }, 75 },
     };
 
     for(auto const& group : groups) {
@@ -735,7 +742,7 @@ auto check_pointer_difference_binary(test_tools const& tools) -> void
     let first = &values[0];
     let third = &values[2];
     let distance: isize = third - first;
-    return i32(distance) + 40;
+    return (distance as i32) + 40;
 })"
     );
 
@@ -859,13 +866,41 @@ auto check_generic_struct_binary(test_tools const& tools) -> void
 main() -> i32
 {
     let values: vector<i32> = vector<i32>{ .item = 40, .size = 2 };
-    return values.item + i32(values.size);
+    return values.item + (values.size as i32);
 })"
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status == 0, "cp should compile generic struct binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "generic struct binary should return 42");
+}
+
+auto check_const_generic_struct_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("const-generic-struct");
+    auto source = dir / "const_generic_struct.cp";
+    auto app = dir / "const_generic_struct";
+    write_source(
+        source,
+        R"(struct buffer<T, N: usize> {
+    data: [T; N];
+}
+
+pick<T, N: usize>(values: buffer<T, N>) -> T
+{
+    return values.data[0];
+}
+
+main() -> i32
+{
+    let values: buffer<i32, 4> = buffer<i32, 4>{ .data = [42, 1, 2, 3] };
+    return pick(values);
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile const generic struct binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "const generic struct binary should return selected value");
 }
 
 auto check_generic_function_binary(test_tools const& tools) -> void
@@ -903,6 +938,29 @@ main() -> i32
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status == 0, "cp should compile generic function binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 22, "generic function binary should return monomorphized value");
+}
+
+auto check_const_generic_array_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("const-generic-array");
+    auto source = dir / "const_generic_array.cp";
+    auto app = dir / "const_generic_array";
+    write_source(
+        source,
+        R"(first<T, N: usize>(values: [T; N]) -> T
+{
+    return values[0];
+}
+
+main() -> i32
+{
+    return first([42, 1, 2]);
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile const generic array binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "const generic array binary should return selected value");
 }
 
 auto check_imported_generic_function_binary(test_tools const& tools) -> void
@@ -1055,6 +1113,199 @@ R"(main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "string index binary should read first char");
 }
 
+auto check_string_iteration_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("string-iteration");
+    auto source = dir / "string_iteration.cp";
+    auto app = dir / "string_iteration";
+    write_source(
+        source,
+        R"(import std;
+
+main() -> i32
+{
+    let text: str = "a\0b";
+    if(text.size() != 3 or text.len != 3) {
+        return 1;
+    }
+    let view = str{ .ptr = text.data(), .len = 2 };
+    if(view.size() != 2 or view[1] != '\0') {
+        return 2;
+    }
+    let index = 0;
+    let matched = 0;
+    for(let ch : text) {
+        if(index == 0 and ch == 'a') {
+            matched += 1;
+        }
+        if(index == 1 and ch == '\0') {
+            matched += 1;
+        }
+        if(index == 2 and ch == 'b') {
+            matched += 1;
+        }
+        index += 1;
+    }
+    for(let ch : "a\0b") {
+        if(index == 3 and ch == 'a') {
+            matched += 1;
+        }
+        if(index == 4 and ch == '\0') {
+            matched += 1;
+        }
+        if(index == 5 and ch == 'b') {
+            matched += 1;
+        }
+        index += 1;
+    }
+    if(index == 6 and matched == 6) {
+        return 42;
+    }
+    return 3;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile string range-for binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "string range-for should iterate chars");
+}
+
+auto check_io_nul_string_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("io-nul-string");
+    auto source = dir / "io_nul_string.cp";
+    auto app = dir / "io_nul_string";
+    auto output = dir / "stdout.bin";
+    write_source(
+        source,
+        R"(import std;
+
+main() -> i32
+{
+    print("a\0b");
+    return 0;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile std.io nul string binary");
+    test_parser::assert_true(exit_code(run_stdout({ app.string() }, output)) == 0, "std.io nul string binary should run");
+    test_parser::assert_true(read_text(output) == std::string("a\0b", 3uz), "std.io should not truncate at nul");
+}
+
+auto check_io_print_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("io-print");
+    auto source = dir / "io_print.cp";
+    auto app = dir / "io_print";
+    auto output = dir / "stdout.txt";
+    write_source(
+        source,
+        R"(import std;
+
+main() -> i32
+{
+    println("language = {}, score = {}", "cp", -42);
+    println("literal braces = {{}}");
+    println("bool = {}", true);
+    return 0;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile std.io print binary");
+    test_parser::assert_true(exit_code(run_stdout({ app.string() }, output)) == 0, "std.io print binary should run");
+    test_parser::assert_true(
+        read_text(output) == "language = cp, score = -42\nliteral braces = {}\nbool = true\n",
+        "std.io print binary should write expected stdout"
+    );
+}
+
+auto check_io_format_errors_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("io-errors");
+    auto source = dir / "io_errors.cp";
+    auto app = dir / "io_errors";
+    write_source(
+        source,
+        R"(import std;
+
+is_placeholder_too_few(result: print_result) -> bool
+{
+    return match result {
+        .ok => false,
+        .error(error) => match error {
+            .placeholder_too_few => true,
+            .argument_too_many => false,
+            .invalid_escape => false,
+            .unsupported_specifier => false,
+            .output_failed => false,
+        },
+    };
+}
+
+is_argument_too_many(result: print_result) -> bool
+{
+    return match result {
+        .ok => false,
+        .error(error) => match error {
+            .placeholder_too_few => false,
+            .argument_too_many => true,
+            .invalid_escape => false,
+            .unsupported_specifier => false,
+            .output_failed => false,
+        },
+    };
+}
+
+is_invalid_escape(result: print_result) -> bool
+{
+    return match result {
+        .ok => false,
+        .error(error) => match error {
+            .placeholder_too_few => false,
+            .argument_too_many => false,
+            .invalid_escape => true,
+            .unsupported_specifier => false,
+            .output_failed => false,
+        },
+    };
+}
+
+is_unsupported_specifier(result: print_result) -> bool
+{
+    return match result {
+        .ok => false,
+        .error(error) => match error {
+            .placeholder_too_few => false,
+            .argument_too_many => false,
+            .invalid_escape => false,
+            .unsupported_specifier => true,
+            .output_failed => false,
+        },
+    };
+}
+
+main() -> i32
+{
+    if(
+        is_placeholder_too_few(println("{} {}", 1))
+        and is_argument_too_many(println("{}", 1, 2))
+        and is_invalid_escape(println("{"))
+        and is_invalid_escape(println("}"))
+        and is_unsupported_specifier(println("{:}", 1))
+    ) {
+        return 42;
+    }
+    return 1;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile std.io format error binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "std.io format errors should be observable");
+}
+
 auto check_operator_overload_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("operator-overload");
@@ -1143,7 +1394,7 @@ auto main(int argc, char** argv) -> int
     check_keep_obj(tools);
     check_sum_non_negative(tools);
     check_array_index_binary(tools);
-    check_tuple_index_binary(tools);
+    check_tuple_member_binary(tools);
     check_accumulate_and_countdown(tools);
     check_labeled_for_binary(tools);
     check_types_example_emit_ll(tools);
@@ -1162,11 +1413,17 @@ auto main(int argc, char** argv) -> int
     check_nested_inferred_lambda_binary(tools);
     check_generic_lambda_binary(tools);
     check_generic_struct_binary(tools);
+    check_const_generic_struct_binary(tools);
     check_generic_function_binary(tools);
+    check_const_generic_array_binary(tools);
     check_imported_generic_function_binary(tools);
     check_parameter_pack_binary(tools);
     check_direct_iterator_consumes_original_binary(tools);
     check_string_index_binary(tools);
+    check_string_iteration_binary(tools);
+    check_io_print_binary(tools);
+    check_io_nul_string_binary(tools);
+    check_io_format_errors_binary(tools);
     check_operator_overload_binary(tools);
     return 0;
 }

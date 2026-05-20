@@ -20,6 +20,7 @@
 - `examples/flow/main.cp`: 流程控制示例，展示 `while`、`do while`、范围 `for` 以及带标签的 `break/continue`
 - `examples/structs/main.cp`: 结构示例，展示 `struct/impl`、默认构造、构造函数、成员/关联函数、字段访问、块表达式和析构清理
 - `examples/operators/main.cp`: 运算符重载示例，展示 `operator +`、`operator +=` 和 `operator []`
+- `examples/ownership/main.cp`: 所有权示例，展示表达式级 `ref` / `const ref` / `move`、`self like&` 和 `= delete`
 - `examples/concepts/main.cp`: concept 示例，展示关联类型、父 concept、默认实现和 `impl concept for type`
 
 ## 设计文档
@@ -37,6 +38,7 @@
 - `docs/memory_allocation.md`: 底层内存分配、对象生命周期原语和 runtime ABI
 - `docs/module.md`: 模块声明、导入与导出
 - `docs/operator.md`: 运算符与第一版 `operator` 重载
+- `docs/ownership.md`: 默认 copy、显式借用、显式移动、`like` const 转发 / `move&`、特殊成员和能力推导
 - `docs/struct.md`: `struct / impl`、构造/析构、成员函数、结构体初始化与块表达式
 - `docs/type_system.md`: 类型分类、默认初始化、聚合字面量、`decltype`、返回类型推导与语义检查规则
 - `docs/variant.md`: `variant`、case 构造、`match` 和 tagged union 布局

@@ -285,7 +285,7 @@ let closure = f(x: i32) {
 `callable` concept 可以让泛型函数接收普通函数、无捕获 lambda 和有捕获闭包：
 
 ```cp
-map<F>(values: array<i32,4>, callback: F)
+map<F>(values: [i32; 4], callback: F)
 requires F: callable
 {
     // ...

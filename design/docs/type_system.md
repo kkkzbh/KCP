@@ -1,6 +1,6 @@
 # 类型系统
 
-本文档记录 cp 的核心类型规则。变量初始化写法见 [initial.md](initial.md)，结构体、构造函数、析构函数和成员函数见 [struct.md](struct.md)，`concept` 和 `type` 类型别名语句见 [concept.md](concept.md)。
+本文档记录 cp 的核心类型规则。变量初始化写法见 [initial.md](initial.md)，结构体、构造函数、析构函数和成员函数见 [struct.md](struct.md)，所有权、借用和移动见 [ownership.md](ownership.md)，`concept` 和 `type` 类型别名语句见 [concept.md](concept.md)。
 
 类型系统包含内建标量类型、内部 `unit` 类型、数组、元组、结构体、variant、引用、指针、函数类型、函数指针、函数返回类型推导、默认初始化、显式转换、控制流条件规则和运算符类型规则。
 
@@ -39,76 +39,112 @@ str
 | 浮点字面量       | `f64`  |
 | 字符字面量       | `char` |
 | 字符串字面量     | `str`  |
+| `nullptr`        | 空指针字面量，需上下文确定为某个 `T*` |
 
 字符串字面量支持 `\n` 等转义字符。`str` 表示字符串视图，语义上接近 C++ 的 `std::string_view`。
 
 #### str 字符串视图
 
-`str` 是内建的非拥有、只读、运行时长度字符序列视图。它不负责分配或释放底层存储，字符串字面量产生的 `str` 指向静态存储。
+`str` 是编译器认识的标准库字符串视图类型，语义字段等价于 `ptr: char const*` 和 `len: usize`。它非拥有、只读、带运行时长度，不负责分配或释放底层存储；字符串字面量产生的 `str` 指向静态存储。
 
-`str` 和 `array<char,N>` 不等价：
+字符串字面量的底层静态存储可以额外带一个 trailing `'\0'` 以兼容 C ABI，但 `'\0'` 不参与 `str` 的长度语义。`"a\0b".size()` 的结果是 `3`，遍历也会访问中间的 `'\0'`。
 
-- `array<char,N>` 是拥有存储的固定长度数组，长度 `N` 是类型的一部分。
+`str` 和 `[char; N]` 不等价：
+
+- `[char; N]` 是拥有存储的固定长度数组，长度 `N` 是类型的一部分。
 - `str` 是借用视图，长度是运行时值，不在类型中。
-- `array<char,N>` 的元素在数组可写时可以通过下标写入；`str` 的下标结果只读。
+- `[char; N]` 的元素在数组可写时可以通过下标写入；`str` 的下标结果只读。
 
 `str` 提供基础内建操作：
 
 ```cp
 let text: str = "hello";
 let count = text.size();
+let pointer = text.data();
 let first = text[0];
 ```
 
 规则：
 
-- `s.size()` 返回 `u64`。
+- `s.ptr` 是 `char const*`，指向第一个字符。
+- `s.len` 是 `usize`，保存运行时长度。
+- `s.size()` 返回 `usize`，等价于 `s.len`。
+- `s.data()` 返回 `char const*`，等价于 `s.ptr`。
 - `s[i]` 要求 `s` 的类型是 `str`。
 - 下标 `i` 必须是整数类型。
 - `s[i]` 的结果类型是 `char`。
 - `s[i]` 不是左值，不能赋值。
 - 越界行为定义为运行时错误；后端通过插入 bounds check 实现。
 - 编译期常量下标访问字符串字面量时，如果能确定越界，语义分析可以报错。
+- 可以显式构造 `str{ .ptr = p, .len = n }`，调用者负责保证 `[p, p + n)` 指向有效只读字符序列；是否 trailing nul 不是 `str` 的不变量。
 
 `str` 不内建相等比较、大小比较、`empty`、`starts_with`、`contains`、切片或解析等高层能力。它们通过标准库 `impl str`、运算符协议或 [iteration.md](iteration.md) 中的 `iterable` 协议扩展。字符串范围遍历依赖 `str` 的 `iterable` 实现，而不是因为 `str` 拥有 `size()` 和 `[]` 自动成立。
+
+#### string 拥有字符串
+
+`string` 是标准库提供的拥有型字符串，底层基于 `buffer<char>` 管理字符存储。它不是内建标量类型；编译器只需要理解 `str` 视图和字符串字面量，拥有、扩容和可变操作由标准库 `std.string` 实现。
+
+`string` 的第一版语义：
+
+- `size()` 返回有效字符数，不包含 trailing `'\0'`。
+- `capacity()` 返回可存放的有效字符数，不包含 trailing `'\0'` 预留位。
+- `data()` 返回底层连续存储指针；普通对象返回 `char*`，const 对象返回 `char const*`。
+- 底层存储始终维护一个 trailing `'\0'`，因此 `data()` 可作为 C++11 风格字符串数据入口使用。
+- 不提供 `c_str()`；需要裸指针时直接使用 `data()`。
+- `as_str()` 返回借用视图 `str`，长度等于 `size()`，不拥有底层存储。
+- 下标、`front()` 和 `back()` 按当前长度检查边界，越界是运行时错误。
+- `push_back()`、`pop_back()`、`resize(new_size, ch)`、`append(str)` 和 `clear()` 都保持 trailing `'\0'` 不变量。
+
+`string` 不是 `str` 的替代品：`str` 表达借用和字面量视图，`string` 表达拥有和可变缓冲区。需要传递只读文本时优先使用 `str` 参数；需要保存或修改文本时使用 `string`。
 
 ### unit
 
 内部存在 `unit` 类型，用于表示没有值的结果。它 lowered 到 LLVM IR 时是 `void`。
 
-`unit` 当前不是用户可写类型，主要由以下场景产生：
+`unit` 不是普通用户可写类型，主要由以下场景产生：
 
 - 没有带值 `return` 的函数。
 - `return;`。
 - 没有尾表达式的块表达式。
 - 尾表达式后带分号的块表达式。
 
-### 结构化类型
-
-`array<T,N>` 表示固定长度数组：
+返回类型位置可以写 `void`，它在语义上等同于内部 `unit`：
 
 ```cp
-let data: array<i32,4> = [1, 2, 3, 4];
+touch<T>(value: T) -> void
+{
+    return;
+}
 ```
 
-`array` 是同构类型，所有元素具有统一元素类型，长度 `N` 是类型的一部分。
+`void` 只允许表达“函数没有返回值”，不能作为局部变量类型、字段类型、容器元素类型或泛型实参使用。
 
-`array<T,N>` 直接作为公开数组类型，同时也是编译器 lowering 到后端数组类型的原语类型。不额外引入 `T[N]` 或 `int[N]` 这类底层数组语法。`array<T,N>` 始终保持同一个类型，标准库可通过普通 `impl array<T,N>` 提供高层成员能力。
+### 结构化类型
 
-`array<T,N>` 的类型参数规则：
+`[T; N]` 表示固定长度数组：
+
+```cp
+let data: [i32; 4] = [1, 2, 3, 4];
+```
+
+固定数组是同构类型，所有元素具有统一元素类型，长度 `N` 是类型的一部分。它内联拥有存储，不退化为指针，编译器 lowering 到后端数组类型。
+
+`[T; N]` 的类型参数规则：
 
 - 第一个参数 `T` 必须是类型。
 - 第二个参数 `N` 必须是非负整数编译期常量。
-- `N` 是数组类型的一部分，`array<i32,3>` 和 `array<i32,4>` 是不同类型。
-- `array<T,0>` 允许存在，但不能读取任何元素。
+- `N` 是数组类型的一部分，`[i32; 3]` 和 `[i32; 4]` 是不同类型。
+- `[T; 0]` 允许存在，但不能读取任何元素。
+- 泛型函数可以声明 `N: usize` 或 `N: isize` 这样的整数 const 参数，并在数组类型中写 `[T; N]`。
 
-`tuple<T...>` 表示元组：
+`(T1, T2)` 表示元组类型：
 
 ```cp
-let triple: tuple<i32,f64,char> = (1, 0.5, 'x');
+let triple: (i32, f64, char) = (1, 0.5, 'x');
+let single: (i32,) = (1,);
 ```
 
-元组是异构类型。普通 `(x)` 是分组表达式，不是单元素元组。
+元组是异构类型。普通 `(T)` 是类型分组，普通 `(x)` 是分组表达式；一元 tuple 必须写成 `(T,)` / `(x,)`。
 
 `struct` 是名义类型。结构体规则见 [struct.md](struct.md)。
 
@@ -160,11 +196,23 @@ type B = decltype(r);   // i32
 type C = decltype(*p);  // i32
 ```
 
+显式借用表达式是例外：`decltype(ref expr)` 和 `decltype(const ref expr)` 保留引用类型。这给成员函数和泛型代码提供查询当前借用形态的方式。
+
+```cp
+let x = 1;
+
+type R = decltype(ref x);        // i32&
+type C = decltype(const ref x);  // i32 const&
+```
+
 规则：
 
 - `decltype(expr)` 只能出现在类型位置，例如类型别名、变量类型标注、函数返回类型、泛型实例类型实参或 `template for` body 中的类型位置。
 - `expr` 只进行语义类型检查，不产生运行时代码，也不会执行副作用。
 - `decltype(expr)` 返回表达式的静态读出类型，不保留左值、引用或可写性类别。
+- `decltype(ref expr)` 的结果是 `T&`。
+- `decltype(const ref expr)` 的结果是 `T const&`。
+- `self` 在成员函数体中是普通 receiver 变量，因此 `decltype(ref self)` 合法。
 - 如果 `expr` 依赖泛型参数，`decltype(expr)` 可以形成依赖类型，等实例化后再确定。
 - 不支持 C++ 的 `decltype(auto)`。
 - 不支持 `decltype((x))` 这类通过额外括号保留引用类别的特殊规则。
@@ -196,7 +244,7 @@ add(x: i32, y: i32) -> i32
 显式返回类型存在时：
 
 - 所有 `return value;` 都必须能转换到声明返回类型。
-- `return;` 只允许用于 `unit` 返回。
+- `return;` 只允许用于 `void` / 内部 `unit` 返回。
 
 函数可以省略 `-> type`：
 
@@ -208,6 +256,8 @@ main()
 ```
 
 省略返回类型时，语义分析收集函数体中的所有 `return value;` 并统一出返回类型。没有任何带值 `return` 时，函数返回类型推导为内部 `unit`。
+
+返回类型推导不通过额外括号保留引用。`return (x);` 与 `return x;` 等价，都会按普通表达式读出规则推导返回类型。需要返回引用时，显式写 `return ref x;` 或 `return const ref x;`，借用表达式规则见 [ownership.md](ownership.md)。
 
 构造函数不参与普通函数返回类型推导；构造函数返回类型固定为当前结构体类型，见 [struct.md](struct.md)。
 
@@ -229,8 +279,8 @@ main()
 | `T&` | 不可默认初始化 |
 | `f(...) -> R` | 不可默认初始化 |
 | `f*(...) -> R` | 空函数指针值 |
-| `array<T,N>` | 每个元素按 `T` 默认初始化 |
-| `tuple<T...>` | 每个元素按对应元素类型默认初始化 |
+| `[T; N]` | 每个元素按 `T` 默认初始化 |
+| `(T1, T2)` | 每个元素按对应元素类型默认初始化 |
 | `struct` | 按结构体初始化规则默认初始化 |
 
 如果某个类型不可默认初始化，那么依赖它的默认初始化也失败。例如引用字段没有显式初始化时，包含该字段的结构体不能完成默认初始化。
@@ -247,28 +297,28 @@ let point = vec2{};
 数组默认初始化写作：
 
 ```cp
-let values = array<i32,4>{};
+let values = [i32; 4]{};
 ```
 
-`array<T,N>{}` 创建长度为 `N` 的数组，每个元素按 `T` 的默认初始化规则初始化。如果 `T` 不可默认初始化，则 `array<T,N>` 也不可默认初始化。不支持 `array<i32,3>{1, 2, 3}` 作为元素列表构造；元素列表统一使用数组字面量 `[1, 2, 3]`。
+`[T; N]{}` 创建长度为 `N` 的数组，每个元素按 `T` 的默认初始化规则初始化。如果 `T` 不可默认初始化，则 `[T; N]` 也不可默认初始化。不支持 `[i32; 3]{1, 2, 3}` 作为元素列表构造；元素列表统一使用数组字面量 `[1, 2, 3]`。
 
 ## 聚合字面量
 
 数组字面量使用 `[ ... ]`：
 
 ```cp
-let data: array<i32,4> = [1, 2, 3, 4];
+let data: [i32; 4] = [1, 2, 3, 4];
 ```
 
 有上下文类型时：
 
-- 目标类型必须是 `array<T,N>`。
+- 目标类型必须是 `[T; N]`。
 - 字面量长度必须等于 `N`。
 - 每个元素按目标元素类型 `T` 做上下文检查。
 
 没有上下文类型时：
 
-- 非空数组字面量自行推导为 `array<T,N>`。
+- 非空数组字面量自行推导为 `[T; N]`。
 - `N` 为元素个数。
 - `T` 由元素类型统一得到。
 - 空 `[]` 报错，因为无法推导元素类型。
@@ -287,6 +337,8 @@ let data: array<i32,4> = [1, 2, 3, 4];
 
 数组提供基础内建操作：下标访问、默认初始化和范围遍历。`size`、`front`、`back`、`data`、`as_slice`、`fill`、`map`、`iter` 等高层能力由标准库提供。
 
+元组同样暂时保持内建或编译器认识的异构聚合，因为当前用户层还不能表达 pack 字段 `fields: T...`。未来支持 pack field expansion 后，可以再考虑迁移为 compiler-recognized std type。
+
 ### 下标访问
 
 数组下标表达式写作：
@@ -298,7 +350,7 @@ values[1] = x + 10;
 
 规则：
 
-- 内建 `a[i]` 要求 `a` 的类型是 `array<T,N>`。
+- 内建 `a[i]` 要求 `a` 的类型是 `[T; N]`。
 - 下标 `i` 必须是整数类型。
 - `a[i]` 的结果类型是 `T`。
 - 如果 `a` 是可写左值，则 `a[i]` 是可写左值。
@@ -310,29 +362,28 @@ values[1] = x + 10;
 
 ## 元组操作
 
-元组提供基础内建操作：字面量构造、默认初始化、编译期下标访问和简单解构声明。`size`、`front`、`back`、`get<N>`、`apply`、`map`、`zip`、`fold`、比较和 hash 等高层能力由标准库提供。
+元组提供基础内建操作：字面量构造、默认初始化、编译期字段访问和简单解构声明。`size`、`front`、`back`、`get<N>`、`apply`、`map`、`zip`、`fold`、比较和 hash 等高层能力由标准库提供。
 
-### 编译期下标访问
+### 编译期字段访问
 
-元组下标表达式复用 `[]` 语法：
+元组字段访问使用 `.0` / `.1` 语法：
 
 ```cp
-let pair: tuple<i32,f64> = (1, 2.0);
-let first = pair[0];
-let second = pair[1];
-pair[0] = first + 1;
+let pair: (i32, f64) = (1, 2.0);
+let first = pair.0;
+let second = pair.1;
+pair.0 = first + 1;
 ```
 
 规则：
 
-- `t[i]` 要求 `t` 的类型是 `tuple<T...>`。
-- 下标 `i` 必须是编译期整数常量。
-- `i` 必须在 `[0, tuple_length)` 范围内。
-- `t[i]` 的结果类型是第 `i` 个元素类型。
-- 如果 `t` 是可写左值，则 `t[i]` 是可写左值。
-- 如果 `t` 是 const 值或 const 引用，则 `t[i]` 只能读取，不能赋值。
+- `t.N` 要求 `t` 是元组类型。
+- 字段编号 `N` 必须在 `[0, tuple_length)` 范围内。
+- `t.N` 的结果类型是第 `N` 个元素类型。
+- 如果 `t` 是可写左值，则 `t.N` 是可写左值。
+- 如果 `t` 是 const 值或 const 引用，则 `t.N` 只能读取，不能赋值。
 
-因为元组是异构类型，元组不支持运行时整数下标。运行时选择异构值应使用 `variant` 或标准库抽象，而不是元组下标。
+因为元组是异构类型，元组不支持运行时整数下标。运行时选择异构值应使用 `variant` 或标准库抽象，而不是元组字段访问。
 
 ### 简单解构声明
 
@@ -371,6 +422,10 @@ i32 const*
 i32 const**&
 i32*&
 i32**&
+i32 like*
+i32 like**&
+i32 like&
+i32 move&
 ```
 
 `const` 分为 binding const 和 target const。
@@ -396,6 +451,15 @@ const ref readonly = value;
 
 `let ref name = expr` 要求 `expr` 是左值，并按表达式的可写性推导为 `T&` 或 `T const&`。`const ref name = expr` 同样要求 `expr` 是左值，但结果总是只读引用 `T const&`。
 
+表达式位置也可以显式借用：
+
+```cp
+foo(ref value);
+bar(const ref value);
+```
+
+`ref expr` 和 `const ref expr` 的匹配规则见 [ownership.md](ownership.md)。
+
 ### target const
 
 `type const*` / `type const&` 中的 `const` 是 target const，表示指针或引用最终指向的基础值不可写。不管有多少级 `*` / `&`，它都约束最终目标值，而不是中间指针本身。
@@ -419,14 +483,14 @@ Declaration -> (let | const) RefMode? BindingPattern (: Type)? = Expression
 RefMode     -> ref
 BindingPattern -> identifier | ( identifier (, identifier)* )
 
-Type        -> TypeBase TargetConst? TypeSuffix
-TargetConst -> const
-TypeSuffix  -> *+ &? | &
+Type            -> TypeBase TargetQualifier? TypeSuffix
+TargetQualifier -> const | like
+TypeSuffix      -> *+ &? | & | move &
 ```
 
-`TargetConst` 只有在 `TypeSuffix` 非空时合法。因此 `i32 const`、`i32* const`、`i32& const` 都不是合法类型写法。
+`TargetQualifier` 只有在 `TypeSuffix` 非空时合法。因此 `i32 const`、`i32 like`、`i32* const`、`i32& const` 都不是合法类型写法。
 
-当前不支持 C++ 式指针自身 const，也不支持 `volatile` / `restrict`。
+`like` 是 receiver-const 转发限定符，可以写作 `T like*`、`T like**`、`T like*&` 或 `T like&`。它只负责把当前 `self like&` receiver 的 constness 转发到对应指针/引用目标，不表达 move，也不改变基础类型。`move &` 只允许写作 `T move&`，表示移动引用；第一版不允许和 `TargetQualifier` 组合成 `T const move&` 或 `T like move&`。具体规则见 [ownership.md](ownership.md)。当前不支持 C++ 式指针自身 const，也不支持 `volatile` / `restrict`。
 
 ### 指针运算与解引用
 
@@ -480,10 +544,9 @@ let item = p[0];
 
 ```cp
 value as i32
-i32(value)
 ```
 
-两者都进入显式转换检查。
+显式转换只使用 `as`。
 
 隐式转换只允许本文档明确说明的数值提升和上下文目标转换，不采用宽泛的 C++ 式隐式转换。
 
@@ -513,7 +576,7 @@ for(let value : values) {
 
 比较运算结果为 `bool`。逻辑运算要求 `bool` 操作数，结果为 `bool`。
 
-下标运算 `value[index]` 是后缀表达式。内建下标支持 `array<T,N>`、`tuple<T...>`、`str` 和指针；用户自定义类型可以通过 `operator []` 提供下标能力，具体规则见 [operator.md](operator.md)。
+下标运算 `value[index]` 是后缀表达式。内建下标支持 `[T; N]`、`str` 和指针；用户自定义类型可以通过 `operator []` 提供下标能力，具体规则见 [operator.md](operator.md)。
 
 自增和自减支持前置 `++value` / `--value` 与后置 `value++` / `value--`：
 

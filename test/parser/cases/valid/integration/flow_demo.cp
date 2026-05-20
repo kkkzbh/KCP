@@ -1,6 +1,6 @@
 export module flow_demo;
 
-export sum_non_negative(values: array<i32,4>) -> i32
+export sum_non_negative(values: [i32; 4]) -> i32
 {
     let total: i32 = 0;
 
@@ -39,7 +39,7 @@ export countdown(start: i32) -> i32
     return current;
 }
 
-export contains_target(rows: array<array<i32,3>,2>, target: i32) -> bool
+export contains_target(rows: [[i32; 3]; 2], target: i32) -> bool
 {
     let found: bool = false;
 

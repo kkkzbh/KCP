@@ -37,11 +37,20 @@ struct parser
     auto parse_requires_clause_until(token_kind end) -> std::optional<concept_requires_syntax>;
     auto parse_concept_requires_constraints_until(token_kind end) -> std::optional<std::vector<concept_requires_constraint_syntax>>;
     auto parse_concept_requires_primary() -> std::optional<concept_requires_constraint_syntax>;
+    auto parse_concept_id() -> std::optional<concept_id_syntax>;
+    auto looks_like_concept_impl_block() const -> bool;
     auto parse_type_alias() -> std::optional<type_alias_syntax>;
     auto parse_concept_function_requirement() -> std::optional<concept_function_requirement_syntax>;
     auto parse_concept_impl_block() -> std::optional<concept_impl_id>;
     auto parse_impl_item(type_syntax const& impl_type) -> std::optional<function_id>;
-    auto parse_default_constructor(source_span start, source_span name, std::vector<parameter_syntax> parameters)
+    auto parse_default_or_deleted_impl_item(
+        source_span start,
+        source_span name,
+        function_syntax_kind kind,
+        std::vector<parameter_syntax> parameters,
+        std::optional<overload_operator_kind> overload_operator,
+        std::optional<type_id> return_type
+    )
         -> std::optional<function_id>;
     auto parse_parameter_list() -> std::optional<std::vector<parameter_syntax>>;
     auto parse_parameter() -> std::optional<parameter_syntax>;
@@ -54,6 +63,11 @@ struct parser
     auto starts_type(token_kind kind) const -> bool;
     auto expect_type_start() -> bool;
     auto parse_type(bool allow_associated_names = true) -> std::optional<type_id>;
+    auto parse_array_type() -> std::optional<type_syntax>;
+    auto parse_tuple_or_grouped_type() -> std::optional<type_syntax>;
+    auto parse_named_type(bool allow_associated_names) -> std::optional<type_syntax>;
+    auto parse_type_length_argument() -> std::optional<type_argument_syntax>;
+    auto finish_type_suffix(type_syntax type) -> std::optional<type_id>;
     auto looks_like_function_type() const -> bool;
     auto parse_function_type() -> std::optional<type_id>;
     auto parse_function_type_parameter() -> std::optional<function_type_parameter_syntax>;
@@ -84,6 +98,7 @@ struct parser
     auto parse_lambda_body(source_span start) -> std::optional<stmt_id>;
     auto looks_like_type_initializer() const -> bool;
     auto parse_type_initializer() -> std::optional<expr_id>;
+    auto parse_new_expression() -> std::optional<expr_id>;
     auto parse_struct_initializer_list(type_id type, source_span start) -> std::optional<expr_id>;
     auto parse_block_expression() -> std::optional<expr_id>;
     auto type_from_name(source_span name) -> type_id;
@@ -202,6 +217,8 @@ struct parser
                 return "'true'";
             case kw_false:
                 return "'false'";
+            case kw_nullptr:
+                return "'nullptr'";
             case kw_and:
                 return "'and'";
             case kw_or:

@@ -64,6 +64,12 @@ auto parser::starts_expression(token_kind kind) const -> bool
         string_literal,
         kw_true,
         kw_false,
+        kw_nullptr,
+        kw_const,
+        kw_ref,
+        kw_move,
+        kw_new,
+        kw_delete,
         l_paren,
         l_bracket,
         plus,
@@ -205,10 +211,33 @@ auto parser::parse_expression_pratt(int min_bp) -> std::optional<expr_id>
 
 auto parser::parse_unary() -> std::optional<expr_id>
 {
+    if(check(token_kind::kw_const) and peek(1uz).kind == token_kind::kw_ref) {
+        auto operation = consume();
+        consume();
+        if(not expect_expression_start()) {
+            return std::nullopt;
+        }
+        auto operand = parse_unary();
+        if(not operand) {
+            return std::nullopt;
+        }
+
+        auto expression = unary_expr_syntax {
+            .full_span = combine_spans(operation.span, arena.span(*operand)),
+            .operator_kind = operation.kind,
+            .position = unary_position::prefix,
+            .operand = *operand,
+        };
+        return arena.add(expr_syntax{ std::move(expression) });
+    }
+
     if(check_any({
         token_kind::plus,
         token_kind::minus,
         token_kind::kw_not,
+        token_kind::kw_ref,
+        token_kind::kw_move,
+        token_kind::kw_delete,
         token_kind::tilde,
         token_kind::amp,
         token_kind::star,
@@ -281,8 +310,14 @@ auto parser::parse_postfix() -> std::optional<expr_id>
 
         if(check(token_kind::dot)) {
             consume();
-            auto name = expect_identifier("member name");
-            if(not name) {
+            auto name = std::optional<token>{};
+            if(check(token_kind::identifier) or check(token_kind::integer_literal)) {
+                name = consume();
+            } else {
+                report_current(
+                    diagnostic_kind::expected_identifier,
+                    std::format("expected member name, got {}", token_name(peek().kind))
+                );
                 return std::nullopt;
             }
             operand = arena.add(expr_syntax {
@@ -396,6 +431,17 @@ auto parser::looks_like_generic_call_suffix() const -> bool
         if(kind == token_kind::eof) {
             return false;
         }
+        if (
+            depth > 0
+            and (
+                kind == token_kind::r_paren
+                or kind == token_kind::r_bracket
+                or kind == token_kind::r_brace
+                or kind == token_kind::semicolon
+            )
+        ) {
+            return false;
+        }
 
         if(kind == token_kind::less) {
             ++depth;
@@ -437,6 +483,10 @@ auto parser::parse_primary() -> std::optional<expr_id>
         return parse_type_initializer();
     }
 
+    if(check(token_kind::kw_new)) {
+        return parse_new_expression();
+    }
+
     switch(peek().kind) {
         case token_kind::identifier: {
             auto name = expect_identifier("expression name");
@@ -455,7 +505,8 @@ auto parser::parse_primary() -> std::optional<expr_id>
         case token_kind::char_literal:
         case token_kind::string_literal:
         case token_kind::kw_true:
-        case token_kind::kw_false: {
+        case token_kind::kw_false:
+        case token_kind::kw_nullptr: {
             auto literal = consume();
             expression = arena.add(expr_syntax {
                 literal_expr_syntax {
@@ -780,6 +831,17 @@ auto parser::looks_like_associated_name_expression() const -> bool
             if(kind == token_kind::eof) {
                 return false;
             }
+            if (
+                depth > 0
+                and (
+                    kind == token_kind::r_paren
+                    or kind == token_kind::r_bracket
+                    or kind == token_kind::r_brace
+                    or kind == token_kind::semicolon
+                )
+            ) {
+                return false;
+            }
             if(kind == token_kind::less) {
                 ++depth;
             } else if(kind == token_kind::greater) {
@@ -834,6 +896,17 @@ auto parser::looks_like_type_initializer() const -> bool
             if(kind == token_kind::eof) {
                 return false;
             }
+            if (
+                depth > 0
+                and (
+                    kind == token_kind::r_paren
+                    or kind == token_kind::r_bracket
+                    or kind == token_kind::r_brace
+                    or kind == token_kind::semicolon
+                )
+            ) {
+                return false;
+            }
             if(kind == token_kind::less) {
                 ++depth;
             } else if(kind == token_kind::greater) {
@@ -872,6 +945,26 @@ auto parser::parse_type_initializer() -> std::optional<expr_id>
         return std::nullopt;
     }
     return parse_struct_initializer_list(*type, arena.span(*type));
+}
+
+auto parser::parse_new_expression() -> std::optional<expr_id>
+{
+    auto start = expect(token_kind::kw_new);
+    auto type = parse_expected_type();
+    if(not start or not type) {
+        return std::nullopt;
+    }
+    auto initializer = parse_struct_initializer_list(*type, arena.span(*type));
+    if(not initializer) {
+        return std::nullopt;
+    }
+    return arena.add(expr_syntax {
+        new_expr_syntax {
+            .full_span = combine_spans(start->span, arena.span(*initializer)),
+            .type = *type,
+            .initializer = *initializer,
+        }
+    });
 }
 
 auto parser::parse_struct_initializer_list(type_id type, source_span start) -> std::optional<expr_id>
@@ -1083,11 +1176,16 @@ auto parser::parse_paren_expression() -> std::optional<expr_id>
     }
 
     auto elements = std::vector<expr_id>{};
+    auto is_tuple = false;
     if(check(token_kind::comma)) {
+        is_tuple = true;
         elements.emplace_back(*first);
 
         while(check(token_kind::comma)) {
             consume();
+            if(check(token_kind::r_paren)) {
+                break;
+            }
             if(not expect_expression_start()) {
                 return std::nullopt;
             }
@@ -1107,7 +1205,7 @@ auto parser::parse_paren_expression() -> std::optional<expr_id>
     }
 
     auto span = combine_spans(open->span, close->span);
-    if(elements.size() > 1uz) {
+    if(is_tuple) {
         return arena.add(expr_syntax {
             tuple_literal_expr_syntax {
                 .full_span = span,

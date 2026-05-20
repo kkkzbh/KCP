@@ -1,4 +1,4 @@
 main()
 {
-    let value: array<i32,> = [1];
+    let value: [i32;] = [1];
 }

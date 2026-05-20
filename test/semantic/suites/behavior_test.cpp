@@ -57,6 +57,24 @@ auto has_diagnostic(semantic_result const& result, diagnostic_kind kind) -> bool
     return std::ranges::contains(result.diagnostics, kind, &diagnostic::kind);
 }
 
+auto constexpr std_io_modules = {
+    std::string_view{ "option.cp" },
+    std::string_view{ "expected.cp" },
+    std::string_view{ "iter.cp" },
+    std::string_view{ "detail/runtime.cp" },
+    std::string_view{ "span.cp" },
+    std::string_view{ "buffer.cp" },
+    std::string_view{ "vector.cp" },
+    std::string_view{ "str.cp" },
+    std::string_view{ "string.cp" },
+    std::string_view{ "ranges/iota.cp" },
+    std::string_view{ "ranges.cp" },
+    std::string_view{ "io/raw.cp" },
+    std::string_view{ "io/format.cp" },
+    std::string_view{ "io.cp" },
+    std::string_view{ "std.cp" },
+};
+
 auto analyze_single(source_manager const& sources, parse_result const& parsed) -> semantic_result
 {
     return analyze_semantics(sources, std::span<parse_result const>{ &parsed, 1uz });
@@ -92,6 +110,17 @@ auto check_fixture_example_group(std::initializer_list<std::string_view> names, 
     test_parser::assert_true(checked.accepted(), "fixture example group should pass semantic analysis");
 }
 
+auto analyze_with_std_io(std::string_view name, std::string text) -> semantic_result
+{
+    auto sources = source_manager{};
+    auto units = std::vector<parse_result>{};
+    for(auto module : std_io_modules) {
+        units.emplace_back(parse_source(sources, std::format("std/{}", module), read_std_module(module)));
+    }
+    units.emplace_back(parse_source(sources, name, std::move(text)));
+    return analyze_semantics(sources, std::span<parse_result const>{ units });
+}
+
 auto function_return_type(source_manager const& sources, parse_result const& parsed, semantic_result const& checked, std::string_view name) -> semantic_type_id
 {
     auto source = ast_source_view{ sources };
@@ -121,7 +150,82 @@ auto check_fixture_examples() -> void
     check_fixture_example_group({ "lambdas/main.cp" });
     check_fixture_example_group({ "memory/main.cp" });
     check_fixture_example_group({ "operators/main.cp" });
-    check_fixture_example_group({ "std/main.cp" }, { "option.cp", "expected.cp", "iter.cp", "ranges/iota.cp", "ranges.cp", "std.cp" });
+    check_fixture_example_group({ "ownership/main.cp" });
+    check_fixture_example_group({ "std/main.cp" }, std_io_modules);
+}
+
+auto check_io_semantics() -> void
+{
+    auto accepted = analyze_with_std_io(
+        "io_ok.cp",
+        R"(import std;
+
+main() -> i32
+{
+    println("x = {}, label = {}", 1, "cp");
+    return 0;
+})"
+    );
+    test_parser::assert_true(accepted.accepted(), "std.io should accept builtin display concept impls");
+
+    auto nested = analyze_with_std_io(
+        "io_nested_generic_call_argument.cp",
+        R"(import std;
+
+saw_result(result: print_result) -> bool
+{
+    return true;
+}
+
+main() -> i32
+{
+    let observed: bool = saw_result(println("{}", 1));
+    return 0;
+})"
+    );
+    test_parser::assert_true(nested.accepted(), "std.io result should remain typed through nested generic calls");
+
+    auto str_checked = analyze_with_std_io(
+        "str_view_ok.cp",
+        R"(import std;
+
+main() -> i32
+{
+    let text: str = "a\0b";
+    let ptr = text.ptr;
+    let len = text.len;
+    let same_ptr = text.data();
+    let same_len = text.size();
+    let view = str{ .ptr = same_ptr, .len = 2 };
+    for(let ch : "a\0b") {
+        let item: char = ch;
+    }
+    if(len == same_len and view.len == 2) {
+        return 0;
+    }
+    return 1;
+})"
+    );
+    test_parser::assert_true(str_checked.accepted(), "str should expose ptr/len, methods, construction, and char iteration");
+
+    auto rejected = analyze_with_std_io(
+        "io_missing_display.cp",
+        R"(import std;
+
+struct box {
+    value: i32;
+}
+
+main() -> i32
+{
+    println("{}", box{ 1 });
+    return 0;
+})"
+    );
+    test_parser::assert_true(
+        has_diagnostic(rejected, diagnostic_kind::missing_concept_item),
+        "std.io should reject values without display"
+    );
 }
 
 auto check_side_tables() -> void
@@ -147,7 +251,7 @@ auto check_side_tables() -> void
     test_parser::assert_true(data_type.valid(), "array literal should have a semantic type");
     test_parser::assert_true(
         std::holds_alternative<array_type>(checked.types.get(data_type)),
-        "[] without context should infer array<T,N>");
+        "[] without context should infer [T; N]");
 
     auto signature = checked.signature_of(unit.functions.front());
     test_parser::assert_true(signature.valid(), "function should have a semantic signature");
@@ -164,13 +268,13 @@ auto check_array_index_semantics() -> void
         "array_index.cp",
         R"(read()
 {
-    let data: array<i32,3> = [4, 5, 6];
+    let data: [i32; 3] = [4, 5, 6];
     return data[1];
 }
 
 write_nested() -> i32
 {
-    let rows: array<array<i32,3>,2> = [[1, 2, 3], [4, 5, 6]];
+    let rows: [[i32; 3]; 2] = [[1, 2, 3], [4, 5, 6]];
     rows[1][2] = 9;
     return rows[1][2];
 }
@@ -182,11 +286,11 @@ rvalue_index()
 
 dynamic_index(offset: i32)
 {
-    let data: array<i32,3> = [4, 5, 6];
+    let data: [i32; 3] = [4, 5, 6];
     return data[offset];
 }
 
-const_ref_read(values: array<i32,3> const&)
+const_ref_read(values: [i32; 3] const&)
 {
     return values[1];
 })");
@@ -207,23 +311,24 @@ const_ref_read(values: array<i32,3> const&)
         "const reference array index read should infer the element type");
 }
 
-auto check_tuple_index_semantics() -> void
+auto check_tuple_member_semantics() -> void
 {
     auto sources = source_manager{};
     auto parsed = parse_source(
         sources,
-        "tuple_index.cp",
+        "tuple_member.cp",
         R"(main() -> i32
 {
-    let pair = (10, 20);
-    pair[0] = 22;
-    return pair[0] + pair[1];
+    let pair: (i32, i32) = (10, 20);
+    pair.0 = 22;
+    let single: (i32,) = (20,);
+    return pair.0 + single.0;
 })");
     auto checked = analyze_single(sources, parsed);
-    test_parser::assert_true(checked.accepted(), "tuple index source should pass semantic analysis");
+    test_parser::assert_true(checked.accepted(), "tuple member source should pass semantic analysis");
     test_parser::assert_true(
         function_return_type(sources, parsed, checked, "main") == semantic_type_ids::i32,
-        "tuple index should infer selected element type");
+        "tuple member access should infer selected element type");
 }
 
 auto check_fixed_type_ids() -> void
@@ -390,6 +495,49 @@ auto check_anonymous_modules() -> void
         "anonymous_export.cp",
         "export helper() { return; }",
         diagnostic_kind::export_requires_module);
+
+    {
+        auto sources = source_manager{};
+        auto units = std::vector<parse_result> {
+            parse_source(
+                sources,
+                "base.cp",
+                R"(export module base;
+
+export concept marker {
+})"),
+            parse_source(
+                sources,
+                "wrap.cp",
+                R"(export module wrap;
+
+export import base;)"),
+            parse_source(
+                sources,
+                "all.cp",
+                R"(export module all;
+
+import base;
+export import wrap;)"),
+            parse_source(
+                sources,
+                "main.cp",
+                R"(import all;
+
+struct value {
+}
+
+impl marker for value {
+}
+
+main()
+{
+    return;
+})")
+        };
+        auto checked = analyze_semantics(sources, std::span<parse_result const>{ units });
+        test_parser::assert_true(checked.accepted(), "same re-exported concept should be imported only once");
+    }
 }
 
 auto check_reference_pointer_types() -> void
@@ -424,7 +572,7 @@ auto check_reference_pointer_types() -> void
     let ppp: i64*** = &pp;
     ***ppp = 33;
     ***ppp += 4;
-    return i32(value);
+    return value as i32;
 })"
         );
         test_parser::assert_true(result.accepted(), "i64*** read/write source should pass semantic analysis");
@@ -442,10 +590,42 @@ auto check_reference_pointer_types() -> void
     alias = &second;
     *alias = 20;
     *pointer += 2;
-    return i32(second);
+    return second as i32;
 })"
         );
         test_parser::assert_true(result.accepted(), "i64*& alias source should pass semantic analysis");
+    }
+
+    {
+        auto result = analyze_one(
+            "pointer_const_qualification.cp",
+            R"(read_pointer(value: i32 const*) -> i32
+{
+    return *value;
+}
+
+read_double_pointer(value: i32 const**) -> i32
+{
+    return **value;
+}
+
+read_pointer_ref(value: i32 const*&) -> i32
+{
+    return *value;
+}
+
+main() -> i32
+{
+    let value = 7;
+    let pointer: i32* = &value;
+    let pointer_pointer: i32** = &pointer;
+    let first = read_pointer(pointer);
+    let second = read_double_pointer(pointer_pointer);
+    let third = read_pointer_ref(ref pointer);
+    return first + second + third;
+})"
+        );
+        test_parser::assert_true(result.accepted(), "pointer qualification conversion source should pass semantic analysis");
     }
 }
 
@@ -469,6 +649,21 @@ impl vec2 {
         return x + self.y;
     }
 
+    add(self&, value: i32) -> void
+    {
+        x += value;
+    }
+
+    add_to_y(self&) -> void
+    {
+        add(y);
+    }
+
+    total(self const&) -> i32
+    {
+        return sum();
+    }
+
     zero() -> vec2
     {
         return vec2{};
@@ -482,8 +677,9 @@ impl vec2 {
 main() -> i32
 {
     let value = vec2{ 1, 2 };
+    value.add_to_y();
     let empty = vec2::zero();
-    return value.sum() + empty.x;
+    return value.total() + empty.x;
 })"
     );
     test_parser::assert_true(result.accepted(), "struct impl source should pass semantic analysis");
@@ -506,6 +702,16 @@ main() -> i32
         "struct holder { value: i32&; } main() { let holder_value = holder{}; }",
         default_initialization_failure
     );
+    expect_diagnostic (
+        "implicit_self_call_blocks_first_arg_ufcs.cp",
+        "struct a { } struct b { } impl a { foo(self&, value: i32) -> void { } test(self&, item: b) -> void { foo(item); } } impl b { foo(self&) -> void { } }",
+        type_mismatch
+    );
+    expect_diagnostic (
+        "local_name_blocks_implicit_self_call.cp",
+        "struct a { } impl a { foo(self&) -> void { } test(self&) -> void { let foo = 1; foo(); } }",
+        not_callable
+    );
 }
 
 auto check_generic_struct_semantics() -> void
@@ -520,10 +726,24 @@ auto check_generic_struct_semantics() -> void
 main() -> i32
 {
     let values: vector<i32> = vector<i32>{ .item = 40, .size = 2 };
-    return values.item + i32(values.size);
+    return values.item + (values.size as i32);
 })"
     );
     test_parser::assert_true(result.accepted(), "generic struct source should pass semantic analysis");
+
+    auto const_result = analyze_one(
+        "const_generic_struct.cp",
+        R"(struct buffer<T, N: usize> {
+    data: [T; N];
+}
+
+main() -> i32
+{
+    let values: buffer<i32, 4> = buffer<i32, 4>{ .data = [40, 1, 2, 3] };
+    return values.data[0] + values.data[1];
+})"
+    );
+    test_parser::assert_true(const_result.accepted(), "const generic struct source should pass semantic analysis");
 
     using enum diagnostic_kind;
     expect_diagnostic(
@@ -568,9 +788,30 @@ requires T: marker
     return 2;
 }
 
-zero<T>(values: array<T,0>) -> i32
+zero<T>(values: [T; 0]) -> i32
 {
     return 0;
+}
+
+head<T, N: usize>(values: [T; N]) -> T
+{
+    return values[0];
+}
+
+struct box<T> {
+    value: T;
+}
+
+impl box<T> {
+    make(seed: usize) -> box<T>
+    {
+        return box<T>{};
+    }
+
+    get(self const&) -> T
+    {
+        return value;
+    }
 }
 
 main() -> i32
@@ -579,19 +820,26 @@ main() -> i32
     let second = id(21);
     let ok = id<bool>(true);
     let item = value{ .item = 1 };
+    let boxed = box<i32>::make(1);
     if(ok) {
-        return first + second + accept(item) + use(item) + zero<i32>([]) - 2;
+        return first + second + accept(item) + use(item) + zero<i32>([]) + boxed.get() + head([2, 3, 4]) - 4;
     }
     return 0;
 })"
     );
     test_parser::assert_true(result.accepted(), "generic function source should pass semantic analysis");
-    test_parser::assert_true(result.function_instances.size() == 5, "generic calls should create concrete function instances");
+    test_parser::assert_true(result.function_instances.size() == 8, "generic calls should create concrete function instances");
     test_parser::assert_true(
         std::ranges::all_of(result.function_instances, [](semantic_function_instance const& instance) {
             return instance.context_index != 0uz and instance.symbol.valid() and instance.signature.valid();
         }),
         "generic function instances should expose context, symbol, and signature metadata");
+
+    auto void_result = analyze_one(
+        "generic_void_return.cp",
+        "touch<T>(value: T) -> void { return; } main() -> i32 { touch(1); return 0; }"
+    );
+    test_parser::assert_true(void_result.accepted(), "generic functions should allow explicit void return");
 
     using enum diagnostic_kind;
     expect_diagnostic(
@@ -942,6 +1190,68 @@ main() -> i32
     test_parser::assert_true(
         alloc_builtin.kind == semantic_builtin_call_kind::alloc and alloc_builtin.type == semantic_type_ids::i32,
         "alloc<T> should record builtin call metadata");
+
+    auto new_parsed = parse_source(
+        sources,
+        "new_delete.cp",
+        R"(struct guard {
+    total: i32*;
+    value: i32;
+}
+
+impl guard {
+    ~guard()
+    {
+        *total += value;
+    }
+}
+
+main() -> i32
+{
+    let total = 0;
+    let item = new guard{ &total, 3 };
+    let values = new [i32; 2]{ 1, 2 };
+    delete item;
+    delete values;
+    delete nullptr;
+    return total;
+})");
+    auto new_checked = analyze_single(sources, new_parsed);
+    test_parser::assert_true(new_checked.accepted(), "new/delete source should pass semantic analysis");
+    auto const& new_body = as<block_statement_syntax>(new_parsed.ast.node(new_parsed.ast.node(new_parsed.root->functions.front()).body));
+    auto const& item_decl = as<declaration_statement_syntax>(new_parsed.ast.node(new_body.statements[1]));
+    auto new_builtin = new_checked.builtin_call_of(0uz, item_decl.initializer);
+    test_parser::assert_true(
+        new_builtin.kind == semantic_builtin_call_kind::new_object,
+        "new expression should record builtin metadata");
+    auto const& delete_statement = as<expression_statement_syntax>(new_parsed.ast.node(new_body.statements[3]));
+    auto delete_builtin = new_checked.builtin_call_of(0uz, delete_statement.expression);
+    test_parser::assert_true(
+        delete_builtin.kind == semantic_builtin_call_kind::delete_object,
+        "delete expression should record builtin metadata");
+
+    auto null_parsed = parse_source(
+        sources,
+        "nullptr.cp",
+        R"(set(pointer: i32*) { }
+
+main() -> i32
+{
+    let pointer: i32* = nullptr;
+    set(nullptr);
+    if(pointer == nullptr) {
+        return 1;
+    }
+    if(nullptr == pointer) {
+        return 2;
+    }
+    return 3;
+})");
+    auto null_checked = analyze_single(sources, null_parsed);
+    test_parser::assert_true(null_checked.accepted(), "nullptr should convert to contextual pointer types");
+
+    expect_diagnostic("bad_delete_value.cp", "main() { let value = 1; delete value; }", diagnostic_kind::type_mismatch);
+    expect_diagnostic("bad_delete_const_pointer.cp", "main() { let value = 1; let pointer: i32 const* = &value; delete pointer; }", diagnostic_kind::type_mismatch);
 }
 
 auto check_extern_c_semantics() -> void
@@ -966,8 +1276,18 @@ export extern "C" answer() -> i32
     auto const& unit = *parsed.root;
     auto const& abs_function = parsed.ast.node(unit.functions.front());
     auto abs_signature = checked.signature_of(unit.functions.front());
+    auto abs_symbol = checked.function_symbol_of(unit.functions.front());
+    auto answer_symbol = checked.function_symbol_of(unit.functions.back());
     test_parser::assert_true(abs_signature.valid(), "extern C declaration should have a signature");
+    test_parser::assert_true(abs_symbol.valid(), "extern C declaration should have a symbol");
+    test_parser::assert_true(answer_symbol.valid(), "extern C definition should have a symbol");
     test_parser::assert_true(not abs_function.has_body, "extern C declaration should not have a body");
+    test_parser::assert_true(
+        checked.symbols[abs_symbol.value].body_kind == semantic_function_body_kind::extern_declaration,
+        "extern C declaration should be classified as an extern declaration");
+    test_parser::assert_true(
+        checked.symbols[answer_symbol.value].body_kind == semantic_function_body_kind::source_body,
+        "extern C definition should be classified as a source body");
     test_parser::assert_true(
         checked.signatures[abs_signature.value].returns == semantic_type_ids::i32,
         "extern C declaration should preserve its return type");
@@ -1031,6 +1351,185 @@ auto check_decltype_ref_and_destructuring_semantics() -> void
     test_parser::assert_true(
         function_return_type(sources, parsed, checked, "main") == semantic_type_ids::i32,
         "decltype/ref/destructuring main should return i32");
+}
+
+auto check_ownership_frontend_semantics() -> void
+{
+    auto sources = source_manager{};
+    auto parsed = parse_source(
+        sources,
+        "ownership_frontend.cp",
+        R"(by_value(value: i32) -> i32
+{
+    return value;
+}
+
+by_ref(value: i32&) -> i32
+{
+    value = value + 1;
+    return value;
+}
+
+by_const(value: i32 const&) -> i32
+{
+    return value;
+}
+
+take_move(value: i32 move&) -> i32
+{
+    return value;
+}
+
+main() -> i32
+{
+    let value = 1;
+    type value_ref = decltype(ref value);
+    let ref alias: value_ref = value;
+    let a = by_ref(ref value);
+    let b = by_const(const ref value);
+    let c = take_move(move value);
+    let d = by_value(move value);
+    return a + b + c + d + alias - 8;
+})");
+    auto checked = analyze_single(sources, parsed);
+    test_parser::assert_true(checked.accepted(), "ownership frontend source should pass semantic analysis");
+
+    using enum diagnostic_kind;
+    expect_diagnostic("ref_to_value.cp", "by_value(value: i32) { } main() { let x = 1; by_value(ref x); }", type_mismatch);
+    expect_diagnostic("const_ref_to_value.cp", "by_value(value: i32) { } main() { let x = 1; by_value(const ref x); }", type_mismatch);
+    expect_diagnostic("const_ref_to_mut.cp", "by_ref(value: i32&) { } main() { let x = 1; by_ref(const ref x); }", type_mismatch);
+    expect_diagnostic("move_to_ref.cp", "by_ref(value: i32&) { } main() { let x = 1; by_ref(move x); }", type_mismatch);
+    expect_diagnostic("lvalue_to_move_ref.cp", "take_move(value: i32 move&) { } main() { let x = 1; take_move(x); }", type_mismatch);
+    expect_diagnostic("const_move.cp", "take_move(value: i32 move&) { } main() { const x = 1; take_move(move x); }", invalid_assignment_target);
+}
+
+auto check_like_receiver_and_delete_semantics() -> void
+{
+    auto checked = analyze_one(
+        "like_receiver.cp",
+        R"(struct box {
+    value: i32;
+}
+
+impl box {
+    get(self like&) -> i32 like&
+    {
+        return ref value;
+    }
+}
+
+main() -> i32
+{
+    let item = box{ 40 };
+    const fixed = box{ 2 };
+    let ref value = item.get();
+    return value + fixed.get();
+})");
+    test_parser::assert_true(checked.accepted(), "self like& receiver source should pass semantic analysis");
+
+    auto pointer_checked = analyze_one(
+        "like_pointer_receiver.cp",
+R"(struct holder {
+    ptr: i32*;
+    ptr_ptr: i32**;
+}
+
+impl holder {
+    data(self like&) -> i32 like*
+    {
+        return ptr;
+    }
+
+    data_ptr(self like&) -> i32 like**
+    {
+        return ptr_ptr;
+    }
+
+    data_ref(self like&) -> i32 like*&
+    {
+        return ref ptr;
+    }
+}
+
+main() -> i32
+{
+    let value = 1;
+    let pointer = &value;
+    let item = holder{ &value, &pointer };
+    const fixed = holder{ &value, &pointer };
+    *item.data() = 2;
+    *item.data_ref() = 3;
+    **item.data_ptr() = 4;
+    return *fixed.data() + **fixed.data_ptr();
+})");
+    test_parser::assert_true(pointer_checked.accepted(), "like pointer and reference returns should follow receiver constness");
+
+    using enum diagnostic_kind;
+    expect_diagnostic(
+        "like_const_to_mut_ref.cp",
+        "struct box { value: i32; } impl box { get(self like&) -> i32 like& { return ref value; } } main() { const fixed = box{ 1 }; fixed.get() = 2; }",
+        assign_to_const
+    );
+    expect_diagnostic(
+        "like_const_pointer_write.cp",
+        "struct holder { ptr: i32*; } impl holder { data(self like&) -> i32 like* { return ptr; } } main() { let value = 1; const fixed = holder{ &value }; *fixed.data() = 3; }",
+        assign_to_const
+    );
+    expect_diagnostic(
+        "like_const_double_pointer_write.cp",
+        "struct holder { ptr_ptr: i32**; } impl holder { data(self like&) -> i32 like** { return ptr_ptr; } } main() { let value = 1; let pointer = &value; const fixed = holder{ &pointer }; **fixed.data() = 3; }",
+        assign_to_const
+    );
+    expect_diagnostic(
+        "deleted_method_call.cp",
+        "struct box { value: i32; } impl box { reset(self&) = delete; } main() { let item = box{ 1 }; item.reset(); }",
+        not_callable
+    );
+    expect_diagnostic(
+        "deleted_assignment_operator.cp",
+        "struct box { value: i32; } impl box { operator =(self&, rhs: this const&) = delete; } main() { let left = box{ 1 }; let right = box{ 2 }; left = right; }",
+        invalid_operator
+    );
+}
+
+auto check_function_body_kind_semantics() -> void
+{
+    auto sources = source_manager{};
+    auto parsed = parse_source(
+        sources,
+        "function_body_kinds.cp",
+        R"(struct box {
+    value: i32;
+}
+
+impl box {
+    box() = default;
+    reset(self&) = delete;
+
+    make() -> box
+    {
+        return box{};
+    }
+})");
+    auto checked = analyze_single(sources, parsed);
+    test_parser::assert_true(checked.accepted(), "function body kind source should pass semantic analysis");
+
+    auto const& impl = parsed.ast.node(parsed.root->impls.front());
+    auto defaulted = checked.function_symbol_of(impl.functions[0]);
+    auto deleted = checked.function_symbol_of(impl.functions[1]);
+    auto source_body = checked.function_symbol_of(impl.functions[2]);
+    test_parser::assert_true(defaulted.valid(), "defaulted constructor should have a symbol");
+    test_parser::assert_true(deleted.valid(), "deleted method should have a symbol");
+    test_parser::assert_true(source_body.valid(), "source body method should have a symbol");
+    test_parser::assert_true(
+        checked.symbols[defaulted.value].body_kind == semantic_function_body_kind::defaulted,
+        "defaulted constructor should be classified as defaulted");
+    test_parser::assert_true(
+        checked.symbols[deleted.value].body_kind == semantic_function_body_kind::deleted,
+        "deleted method should be classified as deleted");
+    test_parser::assert_true(
+        checked.symbols[source_body.value].body_kind == semantic_function_body_kind::source_body,
+        "ordinary method should be classified as source body");
 }
 
 auto check_lambda_semantics() -> void
@@ -1283,18 +1782,18 @@ auto check_negative_cases() -> void
     using enum diagnostic_kind;
     expect_diagnostic("mixed_array.cp", "main() { let value = [1, 2.0]; }", heterogeneous_aggregate);
     expect_diagnostic("empty_array.cp", "main() { let value = []; }", empty_aggregate_without_context);
-    expect_diagnostic("short_array.cp", "main() { let value: array<i32,2> = [1]; }", aggregate_length_mismatch);
-    expect_diagnostic("bad_element.cp", "main() { let value: array<i32,2> = [1, true]; }", type_mismatch);
+    expect_diagnostic("short_array.cp", "main() { let value: [i32; 2] = [1]; }", aggregate_length_mismatch);
+    expect_diagnostic("bad_element.cp", "main() { let value: [i32; 2] = [1, true]; }", type_mismatch);
     expect_diagnostic("index_non_array.cp", "main() { let value = 1; let item = value[0]; }", invalid_operator);
     expect_diagnostic("index_non_integer.cp", "main() { let data = [1, 2]; let item = data[true]; }", invalid_operator);
     expect_diagnostic("index_negative.cp", "main() { let data = [1, 2]; let item = data[-1]; }", invalid_operator);
-    expect_diagnostic("index_too_large.cp", "main() { let data: array<i32,2> = [1, 2]; let item = data[2]; }", invalid_operator);
-    expect_diagnostic("tuple_dynamic_index.cp", "main(index: i32) { let pair = (1, 2); return pair[index]; }", invalid_operator);
-    expect_diagnostic("tuple_index_too_large.cp", "main() { let pair = (1, 2); return pair[2]; }", invalid_operator);
+    expect_diagnostic("index_too_large.cp", "main() { let data: [i32; 2] = [1, 2]; let item = data[2]; }", invalid_operator);
+    expect_diagnostic("tuple_subscript.cp", "main() { let pair = (1, 2); return pair[0]; }", invalid_operator);
+    expect_diagnostic("tuple_member_too_large.cp", "main() { let pair = (1, 2); return pair.2; }", invalid_operator);
     expect_diagnostic("index_const_assign.cp", "main() { const data = [1, 2]; data[0] = 3; }", assign_to_const);
     expect_diagnostic (
         "index_const_ref_assign.cp",
-        "mutate(values: array<i32,2> const&) { values[0] = 3; }",
+        "mutate(values: [i32; 2] const&) { values[0] = 3; }",
         assign_to_const
     );
     expect_diagnostic("unknown_name.cp", "main() { let value = missing; }", unknown_name);
@@ -1326,6 +1825,7 @@ auto check_negative_cases() -> void
     expect_diagnostic("float_increment.cp", "main() { let value = 1.0; value++; }", invalid_operator);
     expect_diagnostic("bad_condition.cp", "main() { if(1) { return; } }", condition_not_bool);
     expect_diagnostic("bad_return.cp", "main() -> i32 { return true; }", return_type_mismatch);
+    expect_diagnostic("bad_void_value.cp", "main() { let value: void = {}; }", unknown_type);
     expect_diagnostic (
         "mixed_inferred_return.cp",
         "f() { if(true) { return 1; } return true; }",
@@ -1342,6 +1842,7 @@ auto check_negative_cases() -> void
     expect_diagnostic("bad_builtin_arg.cp", "main() { let value: i32<u8> = 1; }", invalid_type_argument);
     expect_diagnostic("bad_alloc_count.cp", "main() { let pointer = alloc<i32>(true); }", type_mismatch);
     expect_diagnostic("bad_construct_value.cp", "main() { let pointer = alloc<i32>(1); construct_at(pointer, true); }", type_mismatch);
+    expect_diagnostic("bad_nullptr_inference.cp", "main() { let pointer = nullptr; }", type_mismatch);
     expect_diagnostic("bad_ref_initializer.cp", "main() { let ref value = 1 + 2; }", invalid_assignment_target);
     expect_diagnostic("bad_destructure_initializer.cp", "main() { let (a, b) = 1; }", type_mismatch);
     expect_diagnostic("lambda_parameter_infer.cp", "main() { let f = f(x) => x; }", type_mismatch);
@@ -1367,9 +1868,10 @@ auto check_negative_cases() -> void
 auto main() -> int
 {
     check_fixture_examples();
+    check_io_semantics();
     check_side_tables();
     check_array_index_semantics();
-    check_tuple_index_semantics();
+    check_tuple_member_semantics();
     check_fixed_type_ids();
     check_inferred_return_types();
     check_contiguous_unit_batch();
@@ -1382,8 +1884,11 @@ auto main() -> int
     check_concept_semantics();
     check_function_type_and_memory_semantics();
     check_extern_c_semantics();
+    check_function_body_kind_semantics();
     check_string_index_semantics();
     check_decltype_ref_and_destructuring_semantics();
+    check_ownership_frontend_semantics();
+    check_like_receiver_and_delete_semantics();
     check_lambda_semantics();
     check_operator_overload_semantics();
     check_operator_import_semantics();

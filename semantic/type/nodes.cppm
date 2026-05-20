@@ -36,7 +36,7 @@ export struct array_type
     auto constexpr operator==(array_type const&) const -> bool = default;
 
     semantic_type_id element{};
-    std::uint64_t length{};
+    semantic_type_id length{};
 };
 
 export struct tuple_type
@@ -55,28 +55,39 @@ export struct reference_type
 {
     constexpr reference_type() = default;
 
-    explicit constexpr reference_type(semantic_type_id type_pointee, bool target_const = false) :
+    enum class kind : std::uint8_t
+    {
+        regular,
+        like,
+        move,
+    };
+
+    explicit constexpr reference_type(semantic_type_id type_pointee, bool target_const = false, kind reference_kind = kind::regular) :
         pointee(type_pointee),
-        is_const(target_const) {}
+        is_const(target_const),
+        reference_kind(reference_kind) {}
 
     auto constexpr operator==(reference_type const&) const -> bool = default;
 
     semantic_type_id pointee{};
     bool is_const{};
+    kind reference_kind{ kind::regular };
 };
 
 export struct pointer_type
 {
     constexpr pointer_type() = default;
 
-    explicit constexpr pointer_type(semantic_type_id type_pointee, bool target_const = false) :
+    explicit constexpr pointer_type(semantic_type_id type_pointee, bool target_const = false, bool target_like = false) :
         pointee(type_pointee),
-        is_const(target_const) {}
+        is_const(target_const),
+        is_like(target_like) {}
 
     auto constexpr operator==(pointer_type const&) const -> bool = default;
 
     semantic_type_id pointee{};
     bool is_const{};
+    bool is_like{};
 };
 
 export struct function_type
@@ -92,6 +103,22 @@ export struct generic_parameter_type
     auto constexpr operator==(generic_parameter_type const&) const -> bool = default;
 
     std::uint32_t index{};
+};
+
+export struct integer_constant_type
+{
+    auto constexpr operator==(integer_constant_type const&) const -> bool = default;
+
+    std::int64_t value{};
+    builtin_type_kind type{ builtin_type_kind::usize };
+};
+
+export struct generic_integer_parameter_type
+{
+    auto constexpr operator==(generic_integer_parameter_type const&) const -> bool = default;
+
+    std::uint32_t index{};
+    builtin_type_kind type{ builtin_type_kind::usize };
 };
 
 export struct struct_type
@@ -121,6 +148,8 @@ export using semantic_type_kind = std::variant <
     pointer_type,
     function_type,
     generic_parameter_type,
+    integer_constant_type,
+    generic_integer_parameter_type,
     struct_type,
     variant_type
 >;

@@ -2,7 +2,7 @@
 
 本文档记录非泛型 `struct / impl` 的基础语言设计。目标是保留 C++ 风格的数据类型与花括号初始化，同时借鉴 Rust 的 `impl` 分离模型。
 
-泛型 `struct`、泛型固有 `impl` 和条件 `impl` 见 [generic.md](generic.md)。`concept` 见 [concept.md](concept.md)。
+泛型 `struct`、泛型固有 `impl` 和条件 `impl` 见 [generic.md](generic.md)。所有权、移动引用、特殊成员和 `= delete` 见 [ownership.md](ownership.md)。`concept` 见 [concept.md](concept.md)。
 
 ## 语法总览
 
@@ -18,9 +18,11 @@ ImplItem        -> Constructor
 
 Constructor     -> TypeName ( ParameterList? ) FunctionBody
                 | TypeName ( ) = default ;
+                | TypeName ( ParameterList? ) = delete ;
 Destructor      -> ~ TypeName ( ) FunctionBody
 Function        -> identifier ( ParameterList? ) ReturnType? FunctionBody
 Operator        -> operator OverloadableOperator ( ParameterList? ) ReturnType? FunctionBody
+                | operator OverloadableOperator ( ParameterList? ) ReturnType? = delete ;
 
 StructInit      -> TypeName { InitArgList? }
 InitArgList     -> NamedFieldInit ( , NamedFieldInit )*
@@ -148,8 +150,8 @@ impl vec2 {
 析构函数写作 `~type_name()`，名字必须匹配当前 `impl` 类型：
 
 ```cp
-impl buffer {
-    ~buffer() {
+impl handle {
+    ~handle() {
         release(handle);
     }
 }
@@ -166,6 +168,38 @@ impl buffer {
 - 一个结构体最多声明一个析构函数。
 
 析构调用由编译器在对象生命周期结束时插入，不允许用户直接调用 `value.~type_name()`。显式释放通过标准库函数或所有权规则表达。
+
+## 特殊成员函数
+
+结构体的默认构造、析构、copy 构造、copy 赋值、move 构造和 move 赋值统称为特殊成员函数。copy/move 的所有权规则见 [ownership.md](ownership.md)。
+
+copy 构造和 move 构造写作普通构造函数：
+
+```text
+impl handle {
+    handle(other: this const&) = delete;
+    handle(other: this move&);
+}
+```
+
+copy 赋值和 move 赋值写作 `operator =`：
+
+```text
+impl handle {
+    operator =(self&, rhs: this const&) = delete;
+    operator =(self&, rhs: this move&) -> this&;
+}
+```
+
+`= delete` 表示该特殊成员存在但不可调用。它用于局部禁止 copy、move 或赋值，不引入属性、继承或访问限定。
+
+隐式生成规则：
+
+- 没有用户声明构造函数时，默认构造按逐字段默认初始化生成。
+- 析构函数默认生成；用户写了 `~T()` 后使用用户版本。
+- copy 构造和 copy 赋值默认生成；任一字段不可 copy 时隐式 delete。
+- move 构造和 move 赋值默认生成；任一字段不可 move 时隐式 delete。
+- 用户声明或删除某个特殊成员后，编译器不再生成对应版本。
 
 ## 成员函数
 
@@ -187,9 +221,11 @@ impl vec2 {
 `self` 参数规则：
 
 - 接收者参数必须是第一个参数。
-- 接收者参数写作 `self`、`self&` 或 `self const&`，分别表示当前类型、当前类型可写引用和当前类型 const 引用。
+- 接收者参数写作 `self`、`self&`、`self like&`、`self const&` 或 `self move&`，分别表示当前类型、当前类型可写引用、receiver-const 传播引用、当前类型 const 引用和当前类型移动引用。
 - `self const&` 只能读字段，不能写字段。
 - `self&` 可以读写字段。
+- `self like&` 可由可写 receiver 或 const receiver 调用；函数体按两种 receiver 视图检查，并把 `T like*`、`T like&` 等返回类型展开为对应的可写或 const 类型。完整规则见 [ownership.md](ownership.md)。
+- `self move&` 只能由 `move value`、临时值或函数返回值绑定；函数体内需要继续转移 `self` 或字段时仍要显式写 `move`。
 - 不设计 `mut self`，直接使用现有引用和 `const` 类型语法表达可变性。
 - 其他类型位置需要当前类型时写 `this`，例如 `clone(self const&) -> this`。
 
@@ -223,18 +259,36 @@ let n = v.length(); // 找不到 vec2.length 时，按 length(v) 检查
 3. 如果不存在同名成员函数，再在当前可见自由函数中查找 `name`。
 4. 如果存在自由函数 `name`，按 `name(object, args...)` 检查。
 
-普通调用 `name(first, args...)` 的解析顺序：
+普通调用 `name(args...)` 的解析顺序：
 
 1. 先在当前可见自由函数中查找 `name`。
 2. 如果存在同名自由函数，直接按普通函数调用检查参数和返回类型。检查失败时报错，不继续回退。
-3. 如果不存在同名自由函数，且调用至少有一个参数，再在 `first` 的类型上查找成员函数 `name`。
-4. 如果存在成员函数 `name`，按 `first.name(args...)` 检查。
+3. 如果不存在同名自由函数，且当前位于成员函数或析构函数体内，再在 `self` 的类型上查找成员函数 `name`。
+4. 如果存在 `self` 成员函数 `name`，按 `self.name(args...)` 检查。检查失败时报错，不继续回退。
+5. 如果 `self` 上也不存在同名成员函数，且调用至少有一个参数，再在第一个参数 `first` 的类型上查找成员函数 `name`。
+6. 如果存在成员函数 `name`，按 `first.name(rest...)` 检查。
 
 这里的“当前可见自由函数”遵循 [module.md](module.md) 的模块可见性规则，包括当前模块内声明和 `import` 引入的导出函数。没有函数重载；因此一旦首选路径中存在同名函数，就视为用户明确选择了该名字，参数不匹配时应报告错误，而不是换到另一条 UFCS 路径。
 
 UFCS 不递归展开。实现时应直接查询自由函数表和成员函数表，而不是让 `object.name(args...)` 重新调用 `name(object, args...)`，再让普通调用反向回到点号调用。
 
 关联函数不参与 UFCS。`type_name::make(...)` 这类没有 `self` 的函数只能通过类型限定调用，不能通过 `value.make(...)` 或 `make(value, ...)` 隐式匹配。
+
+成员函数体内的隐式 `self` 成员调用只在自由函数未命中时触发：
+
+```cp
+impl vector<T> {
+    push_back(self&, value: T) -> void
+    {
+        ensure_capacity(size() + 1);
+    }
+}
+```
+
+上例中，如果当前可见自由函数中没有 `ensure_capacity` 和 `size`，则分别按
+`self.ensure_capacity(...)` 和 `self.size()` 检查。如果 `self` 上存在同名成员但参数不匹配，
+直接报告该成员调用错误，不继续尝试首参 UFCS。需要调用其它对象的同名成员时应显式写
+`other.name(...)`。
 
 ## 关联函数
 

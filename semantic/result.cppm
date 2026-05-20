@@ -38,11 +38,17 @@ export struct semantic_node_key
 
     auto constexpr operator<=>(semantic_node_key const& other) const -> std::strong_ordering
     {
-        if(auto context_order = context_index <=> other.context_index; context_order != 0) {
-            return context_order;
+        if(context_index < other.context_index) {
+            return std::strong_ordering::less;
         }
-        if(auto unit_order = unit_index <=> other.unit_index; unit_order != 0) {
-            return unit_order;
+        if(context_index > other.context_index) {
+            return std::strong_ordering::greater;
+        }
+        if(unit_index < other.unit_index) {
+            return std::strong_ordering::less;
+        }
+        if(unit_index > other.unit_index) {
+            return std::strong_ordering::greater;
         }
         return syntax_id_value <=> other.syntax_id_value;
     }
@@ -74,11 +80,17 @@ export struct semantic_parameter_key
 
     auto constexpr operator<=>(semantic_parameter_key const& other) const -> std::strong_ordering
     {
-        if(auto context_order = context_index <=> other.context_index; context_order != 0) {
-            return context_order;
+        if(context_index < other.context_index) {
+            return std::strong_ordering::less;
         }
-        if(auto unit_order = unit_index <=> other.unit_index; unit_order != 0) {
-            return unit_order;
+        if(context_index > other.context_index) {
+            return std::strong_ordering::greater;
+        }
+        if(unit_index < other.unit_index) {
+            return std::strong_ordering::less;
+        }
+        if(unit_index > other.unit_index) {
+            return std::strong_ordering::greater;
         }
         return name_start <=> other.name_start;
     }
@@ -104,13 +116,14 @@ export struct semantic_field_access
 
     auto constexpr valid() const -> bool
     {
-        return struct_index != invalid_index;
+        return struct_index != invalid_index or owner_type.valid();
     }
 
     auto constexpr static invalid_index = std::numeric_limits<std::uint32_t>::max();
 
     std::uint32_t struct_index{ invalid_index };
     std::uint32_t field_index{};
+    semantic_type_id owner_type{};
     bool implicit_self{};
 };
 
@@ -142,6 +155,8 @@ export enum class semantic_builtin_call_kind : std::uint8_t
     free,
     construct_at,
     destroy_at,
+    new_object,
+    delete_object,
 };
 
 export struct semantic_builtin_call

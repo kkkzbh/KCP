@@ -226,6 +226,9 @@ auto semantic_analyzer::collect_generic_lambda_captures(function_id id) -> std::
                         );
                     }
                 },
+                [&](new_expr_syntax const& node) {
+                    collect_expression(node.initializer);
+                },
                 [&](block_expr_syntax const& node) {
                     push_scope();
                     for(auto statement : node.statements) {
@@ -387,6 +390,7 @@ auto semantic_analyzer::instantiate_lambda(semantic_lambda_info const& lambda, s
         .name = std::format("{}.mono.{}", source.name, instance_index),
         .span = source.span,
         .type = function_type_id,
+        .body_kind = source.body_kind,
         .unit_index = source.unit_index,
         .function = source.function,
         .function_kind = source.function_kind,

@@ -183,7 +183,7 @@ variant event {
 }
 ```
 
-`resize(i32, i32)` 是多 payload case。多 payload case 不等价于携带一个公开 `tuple<i32,i32>`，而是 `variant` 自己的 case payload 列表。用户在 `match` 中直接按 case payload 绑定：
+`resize(i32, i32)` 是多 payload case。多 payload case 不等价于携带一个公开 `(i32, i32)`，而是 `variant` 自己的 case payload 列表。用户在 `match` 中直接按 case payload 绑定：
 
 ```cp
 match event {
@@ -193,7 +193,7 @@ match event {
 }
 ```
 
-编译器实现可以复用 tuple-like 布局计算，但类型系统不把 `resize(i32, i32)` 视为 `resize(tuple<i32,i32>)`。
+编译器实现可以复用 tuple-like 布局计算，但类型系统不把 `resize(i32, i32)` 视为 `resize((i32, i32))`。
 
 `variant` 支持任意数量 case。实现上每个 case 分配一个内部 tag 编号；case 数量增加只会线性增加 tag 分发表、穷尽检查集合、析构分支和后端 switch 分支。
 

@@ -98,7 +98,7 @@ extern "C" putchar(ch: i32) -> i32;
 
 export write_char(ch: char)
 {
-    putchar(i32(ch));
+    putchar(ch as i32);
 }
 ```
 
@@ -120,7 +120,7 @@ export extern "C" getchar() -> i32;
 第一版只允许 C-compatible 类型：
 
 ```text
-unit
+void
 bool
 i8 i16 i32 i64
 u8 u16 u32 u64
@@ -132,7 +132,7 @@ T*
 
 其中：
 
-- `unit` 在返回类型位置 lower 为 C `void`。
+- `void` 在返回类型位置 lower 为内部 `unit`，再 lower 为 C `void`。
 - `char` 按 1 字节整数传递。
 - `T*` 只检查指针本身的 ABI；`T` 指向的对象布局仍由调用者契约负责。
 
@@ -140,8 +140,8 @@ T*
 
 ```text
 str
-array<T,N> by value
-tuple<T...>
+[T; N] by value
+(T1, T2)
 struct by value
 variant
 T&
@@ -194,7 +194,7 @@ import std.io.c;
 
 export write_char(ch: char)
 {
-    putchar(i32(ch));
+    putchar(ch as i32);
 }
 ```
 

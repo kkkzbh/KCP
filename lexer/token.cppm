@@ -36,9 +36,15 @@ export enum class token_kind
     kw_as,       ///< `as` 关键字。
     kw_true,     ///< `true` 关键字。
     kw_false,    ///< `false` 关键字。
+    kw_nullptr,  ///< `nullptr` 关键字。
     kw_and,      ///< `and` 关键字。
     kw_or,       ///< `or` 关键字。
     kw_not,      ///< `not` 关键字。
+    kw_ref,      ///< `ref` 关键字。
+    kw_move,     ///< `move` 关键字。
+    kw_like,     ///< `like` 关键字。
+    kw_new,      ///< `new` 关键字。
+    kw_delete,   ///< `delete` 关键字。
 
     l_paren,               ///< 左圆括号 `(`。
     r_paren,               ///< 右圆括号 `)`。
@@ -115,9 +121,15 @@ export auto constexpr token_name_table = std::to_array<std::pair<token_kind, std
     { token_kind::kw_as, "kw_as" },
     { token_kind::kw_true, "kw_true" },
     { token_kind::kw_false, "kw_false" },
+    { token_kind::kw_nullptr, "kw_nullptr" },
     { token_kind::kw_and, "kw_and" },
     { token_kind::kw_or, "kw_or" },
     { token_kind::kw_not, "kw_not" },
+    { token_kind::kw_ref, "kw_ref" },
+    { token_kind::kw_move, "kw_move" },
+    { token_kind::kw_like, "kw_like" },
+    { token_kind::kw_new, "kw_new" },
+    { token_kind::kw_delete, "kw_delete" },
     { token_kind::l_paren, "l_paren" },
     { token_kind::r_paren, "r_paren" },
     { token_kind::l_brace, "l_brace" },

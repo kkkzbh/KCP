@@ -199,8 +199,8 @@ for(let value : values.iter()) {
 内建类型通过等价的 `iterable` 能力接入 range-for：
 
 ```text
-array<T,N> implements iterable
+[T; N] implements iterable
 str        implements iterable
 ```
 
-`str` 是否按 Unicode 标量值、字节或 `char` 遍历，需要在字符串设计中单独确定；在确定前不因为 `str` 有 `size()` 和 `[]` 自动支持 range-for。
+`str` 第一版按 `char` 遍历，迭代边界是 `str.size()`，不是 trailing `'\0'`。因此包含中间 `'\0'` 的字符串视图仍会完整遍历其 `len` 个字符。

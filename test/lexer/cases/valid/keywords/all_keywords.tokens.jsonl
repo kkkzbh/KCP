@@ -18,7 +18,13 @@
 {"kind":"kw_as","lexeme":"as","start":103,"end":105,"line":1,"column":104,"flags":"leading_space"}
 {"kind":"kw_true","lexeme":"true","start":106,"end":110,"line":1,"column":107,"flags":"leading_space"}
 {"kind":"kw_false","lexeme":"false","start":111,"end":116,"line":1,"column":112,"flags":"leading_space"}
-{"kind":"kw_and","lexeme":"and","start":117,"end":120,"line":1,"column":118,"flags":"leading_space"}
-{"kind":"kw_or","lexeme":"or","start":121,"end":123,"line":1,"column":122,"flags":"leading_space"}
-{"kind":"kw_not","lexeme":"not","start":124,"end":127,"line":1,"column":125,"flags":"leading_space"}
-{"kind":"eof","lexeme":"","start":127,"end":127,"line":1,"column":128,"flags":"-"}
+{"kind":"kw_nullptr","lexeme":"nullptr","start":117,"end":124,"line":1,"column":118,"flags":"leading_space"}
+{"kind":"kw_and","lexeme":"and","start":125,"end":128,"line":1,"column":126,"flags":"leading_space"}
+{"kind":"kw_or","lexeme":"or","start":129,"end":131,"line":1,"column":130,"flags":"leading_space"}
+{"kind":"kw_not","lexeme":"not","start":132,"end":135,"line":1,"column":133,"flags":"leading_space"}
+{"kind":"kw_ref","lexeme":"ref","start":136,"end":139,"line":1,"column":137,"flags":"leading_space"}
+{"kind":"kw_move","lexeme":"move","start":140,"end":144,"line":1,"column":141,"flags":"leading_space"}
+{"kind":"kw_like","lexeme":"like","start":145,"end":149,"line":1,"column":146,"flags":"leading_space"}
+{"kind":"kw_new","lexeme":"new","start":150,"end":153,"line":1,"column":151,"flags":"leading_space"}
+{"kind":"kw_delete","lexeme":"delete","start":154,"end":160,"line":1,"column":155,"flags":"leading_space"}
+{"kind":"eof","lexeme":"","start":160,"end":160,"line":1,"column":161,"flags":"-"}

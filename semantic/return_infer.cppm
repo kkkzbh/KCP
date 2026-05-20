@@ -9,7 +9,10 @@ auto semantic_analyzer::infer_return_types() -> void
         auto const& syntax = unit.root;
         for(auto function_id : syntax.functions) {
             auto const& function = unit.ast.node(function_id);
-            if(not function.has_body or function.kind == function_syntax_kind::lambda or function_is_generic(unit_index, function_id)) {
+            if(function.kind == function_syntax_kind::lambda or function_is_generic(unit_index, function_id)) {
+                continue;
+            }
+            if(not function_has_source_body(result.function_symbol_of(unit_index, function_id))) {
                 continue;
             }
             auto signature_id = result.signature_of(unit_index, function_id);
@@ -24,7 +27,7 @@ auto semantic_analyzer::infer_return_types() -> void
         for(auto impl_id : syntax.impls) {
             auto const& impl = unit.ast.node(impl_id);
             for(auto function_id : impl.functions) {
-                if(function_is_generic(unit_index, function_id)) {
+                if(not function_has_source_body(result.function_symbol_of(unit_index, function_id)) or function_is_generic(unit_index, function_id)) {
                     continue;
                 }
                 auto signature_id = result.signature_of(unit_index, function_id);
@@ -40,7 +43,7 @@ auto semantic_analyzer::infer_return_types() -> void
         for(auto impl_id : syntax.concept_impls) {
             auto const& impl = unit.ast.node(impl_id);
             for(auto function_id : impl.functions) {
-                if(function_is_generic(unit_index, function_id)) {
+                if(not function_has_source_body(result.function_symbol_of(unit_index, function_id)) or function_is_generic(unit_index, function_id)) {
                     continue;
                 }
                 auto signature_id = result.signature_of(unit_index, function_id);
@@ -112,7 +115,7 @@ auto semantic_analyzer::infer_function_body_return(std::size_t unit_index, funct
     auto const& ast = unit.ast;
     auto const& function = ast.node(id);
     active_unit_index = unit_index;
-    if(function.defaulted) {
+    if(not function_has_source_body(result.function_symbol_of(unit_index, id))) {
         return semantic_type_ids::unit;
     }
 
@@ -322,6 +325,11 @@ auto semantic_analyzer::infer_expression_type(ast_arena const& ast, expr_id id, 
                     }
                 }
                 return expression_info{ .type = lower_type(ast, node.type) };
+            },
+            [&](new_expr_syntax const& node) {
+                auto element = lower_type(ast, node.type);
+                infer_expression_type(ast, node.initializer, element);
+                return expression_info{ .type = result.types.intern(pointer_type{ element }) };
             },
             [&](block_expr_syntax const& node) {
                 return_scopes.emplace_back();
@@ -558,18 +566,14 @@ auto semantic_analyzer::infer_call_expression(ast_arena const& ast, call_expr_sy
         }
     }
 
-    if(auto cast_type = function_style_cast_type(ast, node)) {
-        for(auto argument : node.arguments) {
-            infer_expression_type(ast, argument, std::nullopt);
-        }
-        return expression_info{ .type = *cast_type };
-    }
-
     if(auto const* associated = std::get_if<associated_name_expr_syntax>(&callee_syntax)) {
         auto type = lower_type(ast, associated->type);
         auto owner = struct_index_of(type);
         if(not owner) {
             return expression_info{ .type = semantic_type_ids::error };
+        }
+        for(auto argument : node.arguments) {
+            infer_expression_type(ast, argument, std::nullopt);
         }
         auto name = std::string{ ast_source.identifier(associated->name) };
         auto found = result.structs[*owner].associated_functions.find(name);
@@ -603,6 +607,19 @@ auto semantic_analyzer::infer_call_expression(ast_arena const& ast, call_expr_sy
             infer_expression_type(ast, argument, std::nullopt);
         }
         return expression_info{ .type = infer_callable_return(*function) };
+    }
+    if(auto const* name_expression = std::get_if<name_expr_syntax>(&callee_syntax)) {
+        auto name = std::string{ ast_source.identifier(name_expression->name) };
+        if(not resolve_binding(name)) {
+            if(auto self = resolve_binding("self")) {
+                if(auto method = method_symbol(self->type, name)) {
+                    for(auto argument : node.arguments) {
+                        infer_expression_type(ast, argument, std::nullopt);
+                    }
+                    return expression_info{ .type = infer_callable_return(*method) };
+                }
+            }
+        }
     }
 
     auto callee = infer_expression_type(ast, node.callee, std::nullopt);
@@ -641,7 +658,10 @@ auto semantic_analyzer::infer_array_literal(ast_arena const& ast, std::vector<ex
     return expression_info {
         .type = intern_type (array_type {
             .element = joined,
-            .length = elements.size(),
+            .length = result.types.intern(integer_constant_type {
+                .value = static_cast<std::int64_t>(elements.size()),
+                .type = builtin_type_kind::usize,
+            }),
         }),
     };
 }

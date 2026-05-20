@@ -160,7 +160,7 @@ operator +(left: vec2 const&, right: vec2 const&) -> vec2
 - 一元运算 `op value` 先尝试内建规则；内建规则不成立时，查找 `value` 类型命名空间中的 `operator op`；如果类型命名空间中没有该 operator，再查当前可见顶层 `operator op`。
 - 二元运算 `left op right` 先尝试内建规则；内建规则不成立时，依次查找 `left` 类型命名空间、`right` 类型命名空间、当前可见顶层 `operator op`。
 - 赋值 `left = right` 和复合赋值 `left op= right` 先检查 `left` 必须是可写左值；然后查找 `left` 类型命名空间中的对应 operator；找不到时再查当前可见顶层 operator；仍然找不到时才使用允许的内建赋值或报错。
-- 下标 `value[index]` 先尝试内建 `array<T,N>`、`tuple<T...>`、`str` 和指针规则；内建规则不成立时，查找 `value` 类型命名空间中的 `operator []`；找不到时再查当前可见顶层 `operator []`。
+- 下标 `value[index]` 先尝试内建 `[T; N]`、`str` 和指针规则；内建规则不成立时，查找 `value` 类型命名空间中的 `operator []`；找不到时再查当前可见顶层 `operator []`。元组字段使用 `.0` / `.1`，不参与 `operator []`。
 - 某一级查找中如果存在同 operator 声明，但没有可行候选，直接报告参数不匹配或二义性，不继续回退到后续层级。
 
 候选选择使用小型重载规则：
@@ -219,13 +219,12 @@ value[index]
 规则：
 
 - 下标运算属于后缀表达式，优先级高于一元前缀运算。
-- 内建下标目标支持 `array<T,N>`、`tuple<T...>`、`str` 和指针。
-- `array<T,N>` 下标要求 `index` 是整数类型，结果类型为 `T`。
-- `tuple<T...>` 下标要求 `index` 是编译期整数常量，结果类型为对应位置的元素类型。
+- 内建下标目标支持 `[T; N]`、`str` 和指针。
+- `[T; N]` 下标要求 `index` 是整数类型，结果类型为 `T`。
 - `str` 下标要求 `index` 是整数类型，结果类型为 `char`。
 - `T*` 下标要求 `index` 是整数类型，结果类型为 `T` 左值；`T const*` 下标结果是只读 `T` 左值。
 - 指针下标只支持 `p[i]`，不支持 C/C++ 的 `i[p]` 对称写法。
-- 如果目标是可写左值且元素本身可写，数组、元组和指针下标结果是可写左值。
+- 如果目标是可写左值且元素本身可写，数组和指针下标结果是可写左值。
 - `str` 下标结果只读，不是可写左值。
 - 内建下标规则不成立时，可以查找 `operator []`。
 - `operator []` 可以返回值，也可以返回引用；返回引用时，`value[index]` 可以作为左值参与赋值。
@@ -313,7 +312,7 @@ value--
 value as type
 ```
 
-`as` 进入显式转换检查。函数式转换 `type(value)` 见 [cast.md](cast.md)。
+`as` 进入显式转换检查。
 
 ## 优先级
 

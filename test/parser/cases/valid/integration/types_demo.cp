@@ -8,8 +8,8 @@ export literals_and_casts() -> i32
     let ratio = 0.5;
     let title: str = "cp";
 
-    let data: array<i32,3> = [4, 5, 6];
-    let triple: tuple<i32,f64,char> = (count, ratio, letter);
+    let data: [i32; 3] = [4, 5, 6];
+    let triple: (i32, f64, char) = (count, ratio, letter);
 
     let count_ref: i32& = count;
     let count_ptr: i32* = &count;
@@ -17,7 +17,7 @@ export literals_and_casts() -> i32
     let count_ptr_ref: i32*& = count_ptr;
 
     let widened: f64 = count as f64;
-    let narrowed = i32(ratio + widened / 42.0);
+    let narrowed = (ratio + widened / 42.0) as i32;
 
     if(not flag or count == 0) {
         return 0;

@@ -1,5 +1,6 @@
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 namespace {
@@ -56,4 +57,15 @@ extern "C" auto cp_alloc(uint64_t elem_size, uint64_t align, uint64_t count) -> 
 extern "C" auto cp_free(void* ptr) -> void
 {
     free(ptr);
+}
+
+extern "C" auto cp_bounds_fail() -> void
+{
+    abort();
+}
+
+extern "C" auto cp_io_write_char(int32_t stream, char ch) -> int32_t
+{
+    auto* target = stream == 2 ? stderr : stdout;
+    return fputc(static_cast<unsigned char>(ch), target) == EOF ? -1 : 0;
 }

@@ -36,7 +36,9 @@ FunctionRequirement
 FunctionDefault    -> identifier ( ParameterList? ) ReturnType? Block
 SelfReceiver       -> self
                     | self &
+                    | self like &
                     | self const &
+                    | self move &
 
 ConceptImpl        -> impl ConceptName for TypePattern RequiresClause? { ConceptImplItem* }
 ConceptImplItem    -> AssociatedTypeBinding
@@ -72,7 +74,7 @@ export concept iterator {
 - `type iter_item;` 表示实现者必须提供关联类型。
 - 函数声明表示实现者必须提供函数。
 - 函数定义表示默认函数实现，实现者可以省略或覆盖。
-- 第一个参数可以写作特殊接收者参数 `self`、`self&` 或 `self const&`，分别表示当前类型、当前类型可写引用和当前类型 const 引用。
+- 第一个参数可以写作特殊接收者参数 `self`、`self&`、`self like&`、`self const&` 或 `self move&`，分别表示当前类型、当前类型可写引用、receiver-const 传播引用、当前类型 const 引用和当前类型移动引用。`self like&` 会驱动签名中的 `T like*`、`T like&` 等类型转发 constness；`self move&` 的规则见 [ownership.md](ownership.md)。
 - `this` 表示当前实现类型，只能出现在类型位置，并且只在 `concept`、固有 `impl` 和对应 `impl concept for T` 上下文中有效。
 - `concept` 体内可以直接使用当前 concept 的关联类型名，例如 `iter_item`，不要求写 `this::iter_item`。
 
@@ -190,6 +192,18 @@ impl iterator for range_iter {
 - 有默认实现的函数可以省略；省略时使用 concept 中的默认函数体。
 - impl 提供的函数签名必须与 concept 要求匹配。接收者参数、`this` 和关联类型名按当前实现类型与关联类型绑定替换后比较。
 - impl 中可以直接使用当前 concept 的关联类型名，例如 `iter_item`。
+
+## 语言级推导 Concept
+
+少数 concept 由编译器根据语言规则直接推导，不需要用户写 `impl`：
+
+- `copyable`：copy constructor 和 copy assignment 都可用。
+- `movable`：move constructor 和 move assignment 都可用。
+- `move_only`：满足 `movable`，但不满足 `copyable`。
+
+这些 concept 只用于约束和查询，不改变类型行为。类型是否可 copy 或可 move 仍由特殊成员函数决定，完整规则见 [ownership.md](ownership.md)。
+
+如果第一版还不支持 `not` 约束表达式，`move_only` 可以作为编译器内建 concept 暴露。
 
 ## Type 语句
 

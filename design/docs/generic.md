@@ -1,6 +1,6 @@
 # 泛型
 
-本文档记录泛型设计，覆盖泛型函数、泛型 `struct`、泛型 `variant`、泛型固有 `impl`、泛型 concept `impl`、参数包、`template for` 展开以及 `requires` 约束。泛型 `concept`、const generic 和模板特化不属于本文档。
+本文档记录泛型设计，覆盖泛型函数、函数级整数 const 参数、泛型 `struct`、泛型 `variant`、泛型固有 `impl`、泛型 concept `impl`、参数包、`template for` 展开以及 `requires` 约束。泛型 `concept`、表达式级 const generic 和模板特化不属于本文档。
 
 函数泛型采用偏现代 C++ 的强模板模型：无约束泛型也可以在函数体内使用依赖于类型参数的操作；`concept` 和 `requires` 是可选约束机制，用于提前表达能力要求、改善诊断、约束公共 API 和辅助重载选择。
 
@@ -102,7 +102,7 @@ id<T>(value: T) -> T
 }
 ```
 
-泛型参数是编译期类型参数，不是运行时值。
+泛型参数默认是编译期类型参数。函数泛型还支持第一版整数 const 参数，写作 `N: usize` 或 `I: isize`，用于 `[T; N]` 这样的类型模式。
 
 泛型参数也可以声明为类型参数包：
 
@@ -127,7 +127,7 @@ id<T>(value: T) -> T
     return value;
 }
 
-make_pair<T, U>(first: T, second: U) -> tuple<T, U>
+make_pair<T, U>(first: T, second: U) -> (T, U)
 {
     return (first, second);
 }
@@ -187,7 +187,7 @@ call_free<T>(value: T) -> i32
 在泛型函数定义阶段，`value.size()` 和 `size(value)` 都可以形成依赖调用。实例化时替换 `T` 后，再按普通 UFCS 规则解析：
 
 - `value.size()` 先查具体类型的成员 `size`，名字不存在时再查自由函数 `size(value)`。
-- `size(value)` 先查当前可见自由函数 `size`，名字不存在时再查具体类型的成员 `value.size()`。
+- `size(value)` 先查当前可见自由函数 `size`；如果当前在成员函数体内，名字不存在时先查 `self.size(value)`；仍不存在且调用至少有一个参数时，再查具体类型的成员 `value.size()`。
 
 回退只在首选路径中不存在同名函数时触发。若同名函数存在，但实例化后的参数类型不匹配、`self` 可变性不满足、返回类型不符合上下文，或 concept / `requires` 约束不满足，都应报告该路径上的错误，不继续尝试另一种 UFCS 形式。
 
@@ -417,7 +417,7 @@ struct vector<T> {
 
 字段类型可以直接使用结构体泛型参数。结构体泛型参数的作用域覆盖整个 `struct` 体，不覆盖对应的 `impl`；`impl` 需要从自己的目标类型模式重新绑定参数。
 
-只支持类型参数，不支持 const generic。因此用户自定义泛型类型不能声明 `struct array<T, N>` 这种由值参数参与类型的形式。内建 `array<T,N>` 是类型系统原语，规则见 [type_system.md](type_system.md)。
+用户自定义泛型类型支持类型参数和第一版整数 const 参数，因此可以声明 `struct buffer<T, N: usize>` 这种由值参数参与类型的名义类型。固定数组 `[T; N]` 是类型系统小内建，规则见 [type_system.md](type_system.md)。
 
 ## 泛型 variant
 
@@ -512,7 +512,7 @@ impl vector<T>
 requires
     T: movable
 {
-    push(self&, value: T)
+    push_back(self&, value: T)
     {
     }
 }
@@ -526,7 +526,7 @@ for every T:
         vector<T> has this impl block
 ```
 
-因此 `vector<i32>` 是否拥有 `push`，取决于 `i32` 是否满足 `movable`。约束不满足时，不是在 `impl` 定义处报错，而是在使用点把该 `impl` 排除出候选；如果没有其它可用候选，则报告“没有满足约束的成员/关联项”，并指出失败的约束。
+因此 `vector<i32>` 是否拥有 `push_back`，取决于 `i32` 是否满足 `movable`。约束不满足时，不是在 `impl` 定义处报错，而是在使用点把该 `impl` 排除出候选；如果没有其它可用候选，则报告“没有满足约束的成员/关联项”，并指出失败的约束。
 
 函数级 `requires` 只控制单个成员函数是否参与候选：
 
@@ -672,8 +672,8 @@ let other = add(1.0, 2.0);  // 推导 T = f64，等价于 add<f64>(1.0, 2.0)
 
 没有函数重载，因此推导不参与重载排序。编译器先根据函数名找到唯一函数声明，再决定使用显式类型实参还是执行推导：
 
-- 如果调用点写了类型实参，必须写满全部类型参数，例如 `add<i32>(1, 2)`。
-- 如果调用点没有写类型实参，则全部类型参数都必须从普通实参推导出来。
+- 如果调用点写了显式泛型实参，必须写满全部泛型参数，例如 `add<i32>(1, 2)` 或 `first<i32, 4>(values)`。
+- 如果调用点没有写显式泛型实参，则全部泛型参数都必须从普通实参推导出来。
 - 不支持部分显式类型实参，例如 `pair<i32>(1, 2.0)`。
 - 不从返回类型、变量声明类型或其他上下文反推类型参数。
 
@@ -705,9 +705,9 @@ let bad = same(1, 2.0);   // 错误：T 同时要求为 i32 和 f64
 形参类型可以是包含类型参数的复合类型。推导时递归匹配类型结构：
 
 ```cp
-first<T, U>(value: tuple<T, U>) -> T
+first<T, U>(value: (T, U)) -> T
 {
-    return value[0];
+    return value.0;
 }
 
 let x = first((1, 2.0)); // T = i32, U = f64
@@ -716,8 +716,9 @@ let x = first((1, 2.0)); // T = i32, U = f64
 递归匹配规则：
 
 - 形参模式是类型参数 `T` 时，把 `T` 绑定到当前目标类型。
-- 形参模式和目标类型是同一种复合类型时，递归匹配其类型实参，例如 `tuple<T, U>` 对 `tuple<i32, f64>`。
-- `array<T, 3>` 可以从 `array<i32, 3>` 推导出 `T = i32`，但长度必须已经相同；没有 const generic，因此不从数组长度反推类型参数。
+- 形参模式和目标类型是同一种复合类型时，递归匹配其类型实参，例如 `(T, U)` 对 `(i32, f64)`。
+- `[T; 3]` 可以从 `[i32; 3]` 推导出 `T = i32`。
+- `[T; N]` 可以从 `[i32; 4]` 推导出 `T = i32, N = 4`，其中 `N` 必须是当前函数可见的 `usize` 或 `isize` 整数 const 参数。
 - 引用、指针和 `const` 修饰必须按同一类型结构递归匹配，例如 `T const&` 可以从 `i32 const&` 推导出 `T = i32`。
 
 参数包推导只支持函数参数列表末尾的值参数包：
@@ -810,11 +811,13 @@ main() -> i32
 - 依赖 `decltype(expr)`：实例化后确定表达式类型
 - 参数包：`func<T...>(values: T...)`
 - 参数包约束：`T...: display`
+- 整数 const 参数：`N: usize` / `I: isize`
 - `template for(let value : values...)` 值包展开
 - `template for(type U : T...)` 类型包展开
 - 依赖 UFCS 调用实例化时检查
 - 函数类型实参推导：从普通实参推导，支持嵌套类型模式
 - 泛型 `struct`：`struct vector<T>`
+- 带整数 const 参数的泛型 `struct`：`struct buffer<T, N: usize>`
 - 泛型 `variant`：`variant optional<T>`
 - 泛型固有 `impl`：`impl vector<T>`
 - `impl` 级条件约束：`impl vector<T> requires T: movable`
@@ -832,7 +835,7 @@ main() -> i32
 - 以裸类型参数为目标的 blanket impl，例如 `impl debug for T`
 - 模板特化
 - SFINAE
-- 泛型常量参数
+- 表达式级 const generic
 - `sizeof...`、参数包随机索引和 fold expression
 - 非末尾值参数包
 - 多值参数包同步推导

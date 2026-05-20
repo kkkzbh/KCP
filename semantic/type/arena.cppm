@@ -82,6 +82,7 @@ private:
             semantic_type_kind{ builtin_type{ builtin_type_kind::f64 } },
             semantic_type_kind{ builtin_type{ builtin_type_kind::char_ } },
             semantic_type_kind{ builtin_type{ builtin_type_kind::str } },
+            semantic_type_kind{ builtin_type{ builtin_type_kind::nullptr_ } },
         };
         return values;
     }

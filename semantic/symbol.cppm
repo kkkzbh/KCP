@@ -63,6 +63,41 @@ export enum class semantic_function_kind : std::uint8_t
     associated_function,
 };
 
+export enum class semantic_function_body_kind : std::uint8_t
+{
+    source_body,
+    defaulted,
+    deleted,
+    extern_declaration,
+    synthesized,
+};
+
+export auto constexpr semantic_function_body_has_source(semantic_function_body_kind kind) -> bool
+{
+    return kind == semantic_function_body_kind::source_body;
+}
+
+export auto constexpr semantic_function_body_is_defaulted(semantic_function_body_kind kind) -> bool
+{
+    return kind == semantic_function_body_kind::defaulted;
+}
+
+export auto constexpr semantic_function_body_is_deleted(semantic_function_body_kind kind) -> bool
+{
+    return kind == semantic_function_body_kind::deleted;
+}
+
+export auto constexpr semantic_function_body_is_extern_declaration(semantic_function_body_kind kind) -> bool
+{
+    return kind == semantic_function_body_kind::extern_declaration;
+}
+
+export auto constexpr semantic_function_body_needs_ir_entry(semantic_function_body_kind kind) -> bool
+{
+    return kind == semantic_function_body_kind::source_body
+           or kind == semantic_function_body_kind::extern_declaration;
+}
+
 export struct semantic_symbol
 {
     auto constexpr operator==(semantic_symbol const&) const -> bool = default;
@@ -73,10 +108,12 @@ export struct semantic_symbol
     semantic_type_id type{};
     bool exported{};
     bool is_const{};
+    semantic_function_body_kind body_kind{ semantic_function_body_kind::source_body };
     std::size_t unit_index{};
     function_id function{};
     std::uint32_t struct_index{ std::numeric_limits<std::uint32_t>::max() };
     std::uint32_t variant_index{ std::numeric_limits<std::uint32_t>::max() };
+    semantic_type_id owner_type{};
     std::uint32_t concept_index{ std::numeric_limits<std::uint32_t>::max() };
     semantic_function_kind function_kind{ semantic_function_kind::free_function };
 };
@@ -106,6 +143,20 @@ export struct semantic_struct_field
     semantic_type_id type{};
 };
 
+export struct semantic_generic_parameter
+{
+    semantic_generic_parameter() = default;
+
+    semantic_generic_parameter(std::string parameter_name, generic_parameter_syntax::kind kind) :
+        name(std::move(parameter_name)),
+        parameter_kind(kind) {}
+
+    auto constexpr operator==(semantic_generic_parameter const&) const -> bool = default;
+
+    std::string name{};
+    generic_parameter_syntax::kind parameter_kind{ generic_parameter_syntax::kind::type };
+};
+
 export struct semantic_struct
 {
     semantic_struct() = default;
@@ -128,7 +179,7 @@ export struct semantic_struct
     std::size_t unit_index{};
     struct_id syntax{};
     symbol_id symbol{};
-    std::vector<std::string> generic_parameters{};
+    std::vector<semantic_generic_parameter> generic_parameters{};
     std::vector<semantic_struct_field> fields{};
     std::vector<symbol_id> constructors{};
     symbol_id destructor{};
@@ -175,7 +226,7 @@ export struct semantic_variant
     std::size_t unit_index{};
     variant_id syntax{};
     symbol_id symbol{};
-    std::vector<std::string> generic_parameters{};
+    std::vector<semantic_generic_parameter> generic_parameters{};
     std::vector<semantic_variant_case> cases{};
     std::map<std::string, std::uint32_t> case_indices{};
     std::map<std::string, symbol_id> methods{};
@@ -209,7 +260,7 @@ export struct semantic_concept_type_bound
 {
     semantic_concept_type_bound() = default;
 
-    semantic_concept_type_bound(std::size_t source_unit, type_id bound_type, std::vector<symbol_id> bound_concepts, source_span bound_span) :
+    semantic_concept_type_bound(std::size_t source_unit, type_id bound_type, std::vector<concept_id_syntax> bound_concepts, source_span bound_span) :
         unit_index(source_unit),
         type(bound_type),
         concepts(std::move(bound_concepts)),
@@ -219,7 +270,7 @@ export struct semantic_concept_type_bound
 
     std::size_t unit_index{};
     type_id type{};
-    std::vector<symbol_id> concepts{};
+    std::vector<concept_id_syntax> concepts{};
     source_span span{};
 };
 
@@ -261,7 +312,7 @@ export struct semantic_concept
     std::size_t unit_index{};
     concept_id syntax{};
     symbol_id symbol{};
-    std::vector<symbol_id> parents{};
+    std::vector<concept_id_syntax> parents{};
     std::vector<semantic_concept_type_bound> type_bounds{};
     std::vector<semantic_concept_type_equality> type_equalities{};
     std::map<std::string, semantic_concept_associated_type> associated_types{};
@@ -273,6 +324,7 @@ export struct semantic_concept_impl
     auto constexpr operator==(semantic_concept_impl const&) const -> bool = default;
 
     symbol_id concept_symbol{};
+    std::vector<semantic_type_id> concept_arguments{};
     semantic_type_id target_type{};
     std::size_t unit_index{};
     concept_impl_id syntax{};

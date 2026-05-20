@@ -169,6 +169,15 @@ export struct struct_init_expr_syntax
     std::vector<struct_initializer_syntax> initializers{};
 };
 
+export struct new_expr_syntax
+{
+    auto constexpr operator==(new_expr_syntax const& other) const -> bool = default;
+
+    source_span full_span{};
+    type_id type{};
+    expr_id initializer{};
+};
+
 export struct block_expr_syntax
 {
     auto constexpr operator==(block_expr_syntax const& other) const -> bool = default;
@@ -239,6 +248,7 @@ export using expr_syntax = std::variant<
     tuple_literal_expr_syntax,
     grouped_expr_syntax,
     struct_init_expr_syntax,
+    new_expr_syntax,
     block_expr_syntax,
     match_expr_syntax,
     lambda_expr_syntax>;

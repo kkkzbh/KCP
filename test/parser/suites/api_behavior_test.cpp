@@ -235,9 +235,11 @@ requires T...: display
         "api_valid.cp",
         R"(main()
 {
-    let rows: array<array<i32,3>,2> = [[1, 2, 3], [4, 5, 6]];
-    let value = i32(1 + 2) as i32;
-    return value;
+    let rows: [[i32; 3]; 2] = [[1, 2, 3], [4, 5, 6]];
+    let pair: (i32, f64) = (1, 2.0);
+    let single: (i32,) = (1,);
+    let value = (1 + 2) as i32;
+    return value + pair.0 + single.0;
 })");
 
     auto parsed = parse_source(sources, valid);
@@ -253,27 +255,52 @@ requires T...: display
     auto const& body = function_body(parsed, function);
     test_parser::assert_true(ast_source.slice(function.name) == "main", "function name should be main");
     test_parser::assert_true(function.body.valid(), "function should have a body");
-    test_parser::assert_true(body.statements.size() == 3, "function body should contain three statements");
+    test_parser::assert_true(body.statements.size() == 5, "function body should contain five statements");
 
     auto const& rows = declaration(parsed, body.statements.front());
     test_parser::assert_true(rows.declared_type != std::nullopt, "first declaration should preserve its explicit type");
     auto const& rows_type = parsed.ast.node(*rows.declared_type);
     test_parser::assert_true (
-        ast_source.identifier(rows_type.name) == "array",
-        "first declaration type should be array");
-    test_parser::assert_true(rows_type.arguments.size() == 2, "outer array type should contain two arguments");
+        rows_type.is_array_type,
+        "first declaration type should be a modern array type");
     test_parser::assert_true (
-        is<type_argument_type_syntax>(rows_type.arguments.front()),
-        "outer array first argument should be nested type");
+        parsed.ast.node(rows_type.array_element).is_array_type,
+        "outer array element should be nested array type");
     test_parser::assert_true (
-        is<type_argument_literal_syntax>(rows_type.arguments.back()),
-        "outer array second argument should be literal argument");
+        is<type_argument_literal_syntax>(rows_type.array_length),
+        "outer array length should be literal argument");
+
+    auto const& pair = declaration(parsed, body.statements[1]);
+    test_parser::assert_true(pair.declared_type != std::nullopt, "tuple declaration should preserve type");
+    auto const& pair_type = parsed.ast.node(*pair.declared_type);
+    test_parser::assert_true(pair_type.is_tuple_type, "pair type should be a tuple type");
+    test_parser::assert_true(pair_type.tuple_elements.size() == 2, "pair tuple should contain two elements");
+
+    auto const& single = declaration(parsed, body.statements[2]);
+    test_parser::assert_true(single.declared_type != std::nullopt, "single tuple declaration should preserve type");
+    auto const& single_type = parsed.ast.node(*single.declared_type);
+    test_parser::assert_true(single_type.is_tuple_type, "single type should be a tuple type");
+    test_parser::assert_true(single_type.tuple_elements.size() == 1, "single tuple should contain one element");
+
+    auto const grouped_source = sources.add_source (
+        "api_grouped_type.cp",
+        R"(main(input: (i32)) -> i32
+{
+    return input;
+})");
+    auto grouped = parse_source(sources, grouped_source);
+    test_parser::assert_true(grouped.accepted, "grouped type source should parse");
+    auto const& grouped_parameter = first_function(grouped).parameters.front();
+    test_parser::assert_true(grouped_parameter.type != std::nullopt, "grouped parameter should preserve its type");
+    auto const& grouped_type = grouped.ast.node(*grouped_parameter.type);
+    test_parser::assert_true(grouped_type.is_grouped_type, "(T) should parse as a grouped type");
 
     auto const shapes = sources.add_source (
         "api_shapes.cp",
         R"(main()
 {
     let pointer: i32 const**& = value;
+    let forwarded: i32 like**& = value;
     let nested: outer<inner<i32>> = seed;
     let empty_array = [];
     counter++;
@@ -294,7 +321,7 @@ requires T...: display
 
     auto const& shaped_function = first_function(shaped);
     auto const& shaped_body = function_body(shaped, shaped_function);
-    test_parser::assert_true(shaped_body.statements.size() == 6, "shape-focused source should contain six statements");
+    test_parser::assert_true(shaped_body.statements.size() == 7, "shape-focused source should contain seven statements");
 
     auto const& pointer = declaration(shaped, shaped_body.statements[0]);
     test_parser::assert_true(pointer.declared_type != std::nullopt, "pointer declaration should keep explicit type");
@@ -307,7 +334,18 @@ requires T...: display
             and pointer_type.suffix_operators.back() == token_kind::amp,
         "pointer declaration should record pointer-reference suffixes");
 
-    auto const& nested = declaration(shaped, shaped_body.statements[1]);
+    auto const& forwarded = declaration(shaped, shaped_body.statements[1]);
+    test_parser::assert_true(forwarded.declared_type != std::nullopt, "like pointer declaration should keep explicit type");
+    auto const& forwarded_type = shaped.ast.node(*forwarded.declared_type);
+    test_parser::assert_true(forwarded_type.is_like, "like pointer declaration should keep receiver-const forwarding");
+    test_parser::assert_true (
+        forwarded_type.suffix_operators.size() == 3
+            and forwarded_type.suffix_operators.front() == token_kind::star
+            and forwarded_type.suffix_operators[1] == token_kind::star
+            and forwarded_type.suffix_operators.back() == token_kind::amp,
+        "like pointer declaration should record pointer-reference suffixes");
+
+    auto const& nested = declaration(shaped, shaped_body.statements[2]);
     test_parser::assert_true(nested.declared_type != std::nullopt, "nested generic declaration should keep explicit type");
     auto const& outer_type = shaped.ast.node(*nested.declared_type);
     test_parser::assert_true (
@@ -383,6 +421,202 @@ main()
         generic_lambda_function.generic_parameters.size() == 1,
         "generic lambda should preserve generic parameters");
 
+    auto const ambiguity_source = sources.add_source (
+        "api_comparison_generic_ambiguity.cp",
+        R"(id<T>(value: T) -> T
+{
+    return value;
+}
+
+main()
+{
+    let value = -1;
+    if(value < 0) {
+        let fixed = 0 as i32;
+    }
+    if((value < 10) and (value >= 0)) {
+        let bounded = id<i32>(value);
+    }
+    while(value < 3) {
+        value = value + 1;
+    }
+    let before_generic_call = value < id<i32>(4);
+    let after = id<i32>(value);
+})");
+    auto ambiguity = parse_source(sources, ambiguity_source);
+    test_parser::assert_true(ambiguity.accepted, "comparison and generic-call ambiguity source should parse");
+    auto const& ambiguity_main = ambiguity.ast.node(ambiguity.root->functions[1]);
+    auto const& ambiguity_body = function_body(ambiguity, ambiguity_main);
+    auto const& first_if = as<if_statement_syntax>(ambiguity.ast.node(ambiguity_body.statements[1]));
+    auto const& first_condition = as<binary_expr_syntax>(ambiguity.ast.node(first_if.condition));
+    test_parser::assert_true(
+        first_condition.operator_kind == token_kind::less,
+        "comparison before a later type call should parse as a less-than binary expression");
+    auto const& second_if = as<if_statement_syntax>(ambiguity.ast.node(ambiguity_body.statements[2]));
+    auto const& second_condition = as<binary_expr_syntax>(ambiguity.ast.node(second_if.condition));
+    test_parser::assert_true(
+        second_condition.operator_kind == token_kind::kw_and,
+        "parenthesized comparisons should stay inside the logical expression");
+    auto const& before_generic_decl = declaration(ambiguity, ambiguity_body.statements[4]);
+    auto const& before_generic = as<binary_expr_syntax>(ambiguity.ast.node(before_generic_decl.initializer));
+    test_parser::assert_true(
+        before_generic.operator_kind == token_kind::less
+            and is<call_expr_syntax>(ambiguity.ast.node(before_generic.right)),
+        "comparison immediately before a generic call should keep the call on the right operand");
+    auto const& after_decl = declaration(ambiguity, ambiguity_body.statements[5]);
+    auto const& after_call = as<call_expr_syntax>(ambiguity.ast.node(after_decl.initializer));
+    test_parser::assert_true(
+        after_call.type_arguments.size() == 1,
+        "generic call parsing should still preserve explicit type arguments");
+
+    auto const all_operator_source = sources.add_source (
+        "api_all_operator_expressions.cp",
+        R"(id<T>(value: T) -> T
+{
+    return value;
+}
+
+main()
+{
+    let value = 16;
+    let pointer: i32* = &value;
+    let bool_or = true or id<bool>(false);
+    let bool_and = true and id<bool>(true);
+    let bit_or = value | id<i32>(1);
+    let bit_xor = value ^ id<i32>(2);
+    let bit_and = value & id<i32>(3);
+    let equal = value == id<i32>(16);
+    let not_equal = value != id<i32>(0);
+    let less = value < id<i32>(20);
+    let less_equal = value <= id<i32>(16);
+    let greater = value > id<i32>(4);
+    let greater_equal = value >= id<i32>(16);
+    let shift_left = value << id<i32>(1);
+    let shift_right = value >> id<i32>(1);
+    let add = value + id<i32>(1);
+    let sub = value - id<i32>(1);
+    let mul = value * id<i32>(2);
+    let div = value / id<i32>(2);
+    let rem = value % id<i32>(3);
+    let casted = id<i32>(1) as i64;
+
+    value = id<i32>(1);
+    value += id<i32>(1);
+    value -= id<i32>(1);
+    value *= id<i32>(2);
+    value /= id<i32>(2);
+    value %= id<i32>(2);
+    value &= id<i32>(1);
+    value |= id<i32>(1);
+    value ^= id<i32>(1);
+    value <<= id<i32>(1);
+    value >>= id<i32>(1);
+
+    let positive = +value;
+    let negative = -value;
+    let logical = not true;
+    let inverted = ~value;
+    let address = &value;
+    let loaded = *pointer;
+    let alias = ref value;
+    let moved = move value;
+    let const_alias = const ref value;
+    ++value;
+    --value;
+    value++;
+    value--;
+})");
+    auto all_operators = parse_source(sources, all_operator_source);
+    test_parser::assert_true(all_operators.accepted, "all operator expression source should parse");
+    auto const& all_operator_main = all_operators.ast.node(all_operators.root->functions[1]);
+    auto const& all_operator_body = function_body(all_operators, all_operator_main);
+    auto const binary_expectations = std::to_array<std::pair<std::size_t, token_kind>>({
+        { 2uz, token_kind::kw_or },
+        { 3uz, token_kind::kw_and },
+        { 4uz, token_kind::pipe },
+        { 5uz, token_kind::caret },
+        { 6uz, token_kind::amp },
+        { 7uz, token_kind::equal_equal },
+        { 8uz, token_kind::bang_equal },
+        { 9uz, token_kind::less },
+        { 10uz, token_kind::less_equal },
+        { 11uz, token_kind::greater },
+        { 12uz, token_kind::greater_equal },
+        { 13uz, token_kind::less_less },
+        { 14uz, token_kind::greater_greater },
+        { 15uz, token_kind::plus },
+        { 16uz, token_kind::minus },
+        { 17uz, token_kind::star },
+        { 18uz, token_kind::slash },
+        { 19uz, token_kind::percent },
+    });
+    for(auto [index, kind] : binary_expectations) {
+        auto const& declaration_node = declaration(all_operators, all_operator_body.statements[index]);
+        auto const& binary = as<binary_expr_syntax>(all_operators.ast.node(declaration_node.initializer));
+        test_parser::assert_true(binary.operator_kind == kind, "binary operator declaration should preserve operator kind");
+        test_parser::assert_true(
+            is<call_expr_syntax>(all_operators.ast.node(binary.right)),
+            "binary operator should keep generic call as its right operand");
+    }
+    auto const& cast_declaration = declaration(all_operators, all_operator_body.statements[20]);
+    test_parser::assert_true(
+        is<cast_expr_syntax>(all_operators.ast.node(cast_declaration.initializer)),
+        "as expression should parse as a cast expression");
+
+    auto const assignment_expectations = std::to_array<std::pair<std::size_t, token_kind>>({
+        { 21uz, token_kind::equal },
+        { 22uz, token_kind::plus_equal },
+        { 23uz, token_kind::minus_equal },
+        { 24uz, token_kind::star_equal },
+        { 25uz, token_kind::slash_equal },
+        { 26uz, token_kind::percent_equal },
+        { 27uz, token_kind::amp_equal },
+        { 28uz, token_kind::pipe_equal },
+        { 29uz, token_kind::caret_equal },
+        { 30uz, token_kind::less_less_equal },
+        { 31uz, token_kind::greater_greater_equal },
+    });
+    for(auto [index, kind] : assignment_expectations) {
+        auto const& statement = expression_statement(all_operators, all_operator_body.statements[index]);
+        auto const& assignment = as<assignment_expr_syntax>(all_operators.ast.node(statement.expression));
+        test_parser::assert_true(assignment.operator_kind == kind, "assignment expression should preserve operator kind");
+        test_parser::assert_true(
+            is<call_expr_syntax>(all_operators.ast.node(assignment.right)),
+            "assignment expression should keep generic call as its right operand");
+    }
+
+    auto const unary_expectations = std::to_array<std::tuple<std::size_t, token_kind, unary_position>>({
+        { 32uz, token_kind::plus, unary_position::prefix },
+        { 33uz, token_kind::minus, unary_position::prefix },
+        { 34uz, token_kind::kw_not, unary_position::prefix },
+        { 35uz, token_kind::tilde, unary_position::prefix },
+        { 36uz, token_kind::amp, unary_position::prefix },
+        { 37uz, token_kind::star, unary_position::prefix },
+        { 38uz, token_kind::kw_ref, unary_position::prefix },
+        { 39uz, token_kind::kw_move, unary_position::prefix },
+        { 40uz, token_kind::kw_const, unary_position::prefix },
+    });
+    for(auto [index, kind, position] : unary_expectations) {
+        auto const& declaration_node = declaration(all_operators, all_operator_body.statements[index]);
+        auto const& unary = as<unary_expr_syntax>(all_operators.ast.node(declaration_node.initializer));
+        test_parser::assert_true(
+            unary.operator_kind == kind and unary.position == position,
+            "unary declaration should preserve operator kind and position");
+    }
+    auto const update_expectations = std::to_array<std::tuple<std::size_t, token_kind, unary_position>>({
+        { 41uz, token_kind::plus_plus, unary_position::prefix },
+        { 42uz, token_kind::minus_minus, unary_position::prefix },
+        { 43uz, token_kind::plus_plus, unary_position::postfix },
+        { 44uz, token_kind::minus_minus, unary_position::postfix },
+    });
+    for(auto [index, kind, position] : update_expectations) {
+        auto const& statement = expression_statement(all_operators, all_operator_body.statements[index]);
+        auto const& unary = as<unary_expr_syntax>(all_operators.ast.node(statement.expression));
+        test_parser::assert_true(
+            unary.operator_kind == kind and unary.position == position,
+            "update expression should preserve operator kind and position");
+    }
+
     auto const recovered_source = sources.add_source (
         "api_recovery.cp",
         R"(main()
@@ -423,26 +657,26 @@ main()
         unclosed_body.statements.size() == 2,
         "statement recovery should stop at semicolon even after an unclosed parenthesis");
 
-    auto const& empty_array = declaration(shaped, shaped_body.statements[2]);
+    auto const& empty_array = declaration(shaped, shaped_body.statements[3]);
     auto const& empty_array_expr = shaped.ast.node(empty_array.initializer);
     test_parser::assert_true (
         is<array_literal_expr_syntax>(empty_array_expr)
             and as<array_literal_expr_syntax>(empty_array_expr).elements.empty(),
         "empty array literal should parse as an array literal with no operands");
 
-    auto const& increment_stmt = expression_statement(shaped, shaped_body.statements[3]);
+    auto const& increment_stmt = expression_statement(shaped, shaped_body.statements[4]);
     auto const& increment = as<unary_expr_syntax>(shaped.ast.node(increment_stmt.expression));
     test_parser::assert_true (
         increment.operator_kind == token_kind::plus_plus and increment.position == unary_position::postfix,
         "postfix increment should remain an expression statement with unary ++");
 
-    auto const& decrement_stmt = expression_statement(shaped, shaped_body.statements[4]);
+    auto const& decrement_stmt = expression_statement(shaped, shaped_body.statements[5]);
     auto const& decrement = as<unary_expr_syntax>(shaped.ast.node(decrement_stmt.expression));
     test_parser::assert_true (
         decrement.operator_kind == token_kind::minus_minus and decrement.position == unary_position::postfix,
         "postfix decrement should remain an expression statement with unary --");
 
-    auto const& if_stmt = as<if_statement_syntax>(shaped.ast.node(shaped_body.statements[5]));
+    auto const& if_stmt = as<if_statement_syntax>(shaped.ast.node(shaped_body.statements[6]));
     test_parser::assert_true(if_stmt.else_branch != std::nullopt, "if statement should keep else-if branch");
     auto const& else_if = as<if_statement_syntax>(shaped.ast.node(*if_stmt.else_branch));
     test_parser::assert_true (
@@ -454,7 +688,7 @@ main()
         "api_index.cp",
         R"(main()
 {
-    let rows: array<array<i32,3>,2> = [[1, 2, 3], [4, 5, 6]];
+    let rows: [[i32; 3]; 2] = [[1, 2, 3], [4, 5, 6]];
     let value = rows[0][1];
     rows[1][2] = value;
 })");
@@ -505,6 +739,70 @@ impl vec2 {
     test_parser::assert_true (
         impl_operator.overload_operator == overload_operator_kind::subscript,
         "impl operator [] should record subscript overload kind");
+
+    auto const ownership_source = sources.add_source (
+        "api_ownership.cp",
+        R"(struct box {
+    value: i32;
+}
+
+impl box {
+    get(self like&) -> i32 like&
+    {
+        return ref value;
+    }
+
+    take(self move&) -> i32
+    {
+        return value;
+    }
+
+    reset(self&) = delete;
+}
+
+main()
+{
+    let box_value = box{ 1 };
+    let ref value = box_value.get();
+    let moved = move box_value;
+})");
+    auto ownership = parse_source(sources, ownership_source);
+    test_parser::assert_true(ownership.accepted, "ownership syntax source should parse");
+    auto const& ownership_impl = ownership.ast.node(ownership.root->impls.front());
+    auto const& get_function = ownership.ast.node(ownership_impl.functions[0]);
+    test_parser::assert_true(get_function.parameters.front().self_is_like, "self like& should be recorded on the receiver");
+    auto const& take_function = ownership.ast.node(ownership_impl.functions[1]);
+    test_parser::assert_true(take_function.parameters.front().self_is_move, "self move& should be recorded on the receiver");
+    auto const& reset_function = ownership.ast.node(ownership_impl.functions[2]);
+    test_parser::assert_true(reset_function.deleted and not reset_function.has_body, "= delete should produce a bodyless deleted function");
+
+    auto const memory_syntax_source = sources.add_source (
+        "api_new_delete.cp",
+        R"(main()
+{
+    let pointer = new i32{1};
+    delete pointer;
+    delete nullptr;
+    let array = new [i32; 2]{1, 2};
+    delete array;
+})");
+    auto memory_syntax = parse_source(sources, memory_syntax_source);
+    test_parser::assert_true(memory_syntax.accepted, "new/delete syntax source should parse");
+    auto const& memory_body = function_body(memory_syntax, first_function(memory_syntax));
+    auto const& pointer_new = declaration(memory_syntax, memory_body.statements[0]);
+    test_parser::assert_true(
+        is<new_expr_syntax>(memory_syntax.ast.node(pointer_new.initializer)),
+        "new expression should be recorded as a dedicated expression");
+    auto const& pointer_delete = expression_statement(memory_syntax, memory_body.statements[1]);
+    auto const& delete_expr = as<unary_expr_syntax>(memory_syntax.ast.node(pointer_delete.expression));
+    test_parser::assert_true(
+        delete_expr.operator_kind == token_kind::kw_delete and delete_expr.position == unary_position::prefix,
+        "delete statement should parse as a prefix delete expression");
+    auto const& array_new = declaration(memory_syntax, memory_body.statements[3]);
+    auto const& array_new_expr = as<new_expr_syntax>(memory_syntax.ast.node(array_new.initializer));
+    test_parser::assert_true(
+        memory_syntax.ast.node(array_new_expr.type).is_array_type,
+        "new [T; N] should preserve the array object type");
 
     return 0;
 }

@@ -48,7 +48,7 @@ struct llvm_type_lowerer
                 return lower_builtin(type.kind);
             },
             [&](array_type const& type) -> llvm::Type* {
-                return llvm::ArrayType::get(lower(type.element), type.length);
+                return llvm::ArrayType::get(lower(type.element), array_length_value(type.length));
             },
             [&](tuple_type const& type) -> llvm::Type* {
                 auto elements = std::vector<llvm::Type*>{};
@@ -68,6 +68,12 @@ struct llvm_type_lowerer
                 return llvm::PointerType::get(context, 0);
             },
             [&](generic_parameter_type const&) -> llvm::Type* {
+                return llvm::Type::getVoidTy(context);
+            },
+            [&](integer_constant_type const&) -> llvm::Type* {
+                return llvm::Type::getVoidTy(context);
+            },
+            [&](generic_integer_parameter_type const&) -> llvm::Type* {
                 return llvm::Type::getVoidTy(context);
             },
             [&](struct_type const& type) -> llvm::Type* {
@@ -107,7 +113,7 @@ struct llvm_type_lowerer
                 return llvm::Type::getVoidTy(context);
             },
             [&](array_type const& type) -> llvm::Type* {
-                return llvm::ArrayType::get(lower_substituted(type.element, arguments), type.length);
+                return llvm::ArrayType::get(lower_substituted(type.element, arguments), array_length_value(substitute_integer(type.length, arguments)));
             },
             [&](tuple_type const& type) -> llvm::Type* {
                 auto elements = std::vector<llvm::Type*>{};
@@ -119,6 +125,13 @@ struct llvm_type_lowerer
             [&](reference_type const&) -> llvm::Type* { return lower(id); },
             [&](pointer_type const&) -> llvm::Type* { return lower(id); },
             [&](function_type const&) -> llvm::Type* { return lower(id); },
+            [&](integer_constant_type const&) -> llvm::Type* { return llvm::Type::getVoidTy(context); },
+            [&](generic_integer_parameter_type const& parameter) -> llvm::Type* {
+                if(parameter.index < arguments.size()) {
+                    return lower(arguments[parameter.index]);
+                }
+                return llvm::Type::getVoidTy(context);
+            },
             [&](struct_type const& type) -> llvm::Type* {
                 auto elements = std::vector<llvm::Type*>{};
                 for(auto const& field : module.structs[type.index].fields) {
@@ -166,6 +179,14 @@ struct llvm_type_lowerer
             case f64:
                 return llvm::Type::getDoubleTy(context);
             case str:
+                return llvm::StructType::get(
+                    context,
+                    {
+                        llvm::PointerType::get(context, 0),
+                        llvm::Type::getInt64Ty(context),
+                    }
+                );
+            case nullptr_:
                 return llvm::PointerType::get(context, 0);
         }
         std::unreachable();
@@ -195,6 +216,26 @@ struct llvm_type_lowerer
             return std::get_if<function_type>(&module.types.get(pointer->pointee));
         }
         return nullptr;
+    }
+
+    auto array_length_value(semantic_type_id length_type) const -> std::uint64_t
+    {
+        auto const& kind = module.types.get(length_type);
+        auto const* value = std::get_if<integer_constant_type>(&kind);
+        if(value == nullptr or value->value < 0) {
+            return 0;
+        }
+        return static_cast<std::uint64_t>(value->value);
+    }
+
+    auto substitute_integer(semantic_type_id value_type, std::vector<semantic_type_id> const& arguments) const -> semantic_type_id
+    {
+        auto const& kind = module.types.get(value_type);
+        auto const* parameter = std::get_if<generic_integer_parameter_type>(&kind);
+        if(parameter != nullptr and parameter->index < arguments.size()) {
+            return arguments[parameter->index];
+        }
+        return value_type;
     }
 
     llvm::LLVMContext& context;
@@ -355,6 +396,10 @@ struct llvm_module_lowerer
             case call:
                 bind_call(instruction);
                 break;
+            case bounds_fail:
+                builder.CreateCall(cp_bounds_fail_function(), {});
+                builder.CreateUnreachable();
+                break;
             case branch:
                 builder.CreateBr(blocks[instruction.targets.front().value]);
                 break;
@@ -402,7 +447,17 @@ struct llvm_module_lowerer
                     return llvm::ConstantInt::get(types.lower(type), static_cast<unsigned char>(value), false);
                 },
                 [&](std::string const& value) -> llvm::Value* {
-                    return builder.CreateGlobalString(value);
+                    auto pointer = builder.CreateGlobalString(value);
+                    if(type != semantic_type_ids::str) {
+                        return pointer;
+                    }
+                    auto aggregate = llvm::UndefValue::get(types.lower(type));
+                    auto with_pointer = builder.CreateInsertValue(aggregate, pointer, { 0u });
+                    return builder.CreateInsertValue(
+                        with_pointer,
+                        llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), value.size()),
+                        { 1u }
+                    );
                 },
             },
             literal.value
@@ -564,6 +619,21 @@ struct llvm_module_lowerer
         );
     }
 
+    auto cp_bounds_fail_function() -> llvm::Function*
+    {
+        if(auto function = llvm_module.getFunction("cp_bounds_fail")) {
+            return function;
+        }
+
+        auto function_type = llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false);
+        return llvm::Function::Create(
+            function_type,
+            llvm::Function::ExternalLinkage,
+            "cp_bounds_fail",
+            llvm_module
+        );
+    }
+
     auto type_size(semantic_type_id id) -> std::uint64_t
     {
         auto const& kind = ir.types.get(id);
@@ -573,7 +643,7 @@ struct llvm_module_lowerer
                 [](error_type const&) -> std::uint64_t { return 0; },
                 [](inferred_type const&) -> std::uint64_t { return 0; },
                 [&](builtin_type const& type) { return builtin_size(type.kind); },
-                [&](array_type const& type) { return type_size(type.element) * type.length; },
+                [&](array_type const& type) { return type_size(type.element) * types.array_length_value(type.length); },
                 [&](tuple_type const& type) -> std::uint64_t {
                     auto total = std::uint64_t{};
                     auto alignment = 1uz;
@@ -589,6 +659,8 @@ struct llvm_module_lowerer
                 [](pointer_type const&) -> std::uint64_t { return 8; },
                 [](function_type const&) -> std::uint64_t { return 8; },
                 [](generic_parameter_type const&) -> std::uint64_t { return 0; },
+                [](integer_constant_type const&) -> std::uint64_t { return 0; },
+                [](generic_integer_parameter_type const&) -> std::uint64_t { return 0; },
                 [&](struct_type const& type) -> std::uint64_t {
                     auto total = std::uint64_t{};
                     auto alignment = 1uz;
@@ -625,6 +697,9 @@ struct llvm_module_lowerer
                 return type_size(arguments[parameter->index]);
             }
             return 0;
+        }
+        if(auto const* array = std::get_if<array_type>(&kind)) {
+            return type_size_substituted(array->element, arguments) * types.array_length_value(types.substitute_integer(array->length, arguments));
         }
         return type_size(id);
     }
@@ -663,6 +738,8 @@ struct llvm_module_lowerer
                 [](pointer_type const&) -> std::uint64_t { return 8; },
                 [](function_type const&) -> std::uint64_t { return 8; },
                 [](generic_parameter_type const&) -> std::uint64_t { return 1; },
+                [](integer_constant_type const&) -> std::uint64_t { return 1; },
+                [](generic_integer_parameter_type const&) -> std::uint64_t { return 1; },
                 [&](struct_type const& type) -> std::uint64_t {
                     auto result = 1uz;
                     for(auto const& field : ir.structs[type.index].fields) {
@@ -692,6 +769,9 @@ struct llvm_module_lowerer
                 return type_align(arguments[parameter->index]);
             }
             return 1;
+        }
+        if(auto const* array = std::get_if<array_type>(&kind)) {
+            return type_align_substituted(array->element, arguments);
         }
         return type_align(id);
     }
@@ -726,8 +806,10 @@ struct llvm_module_lowerer
             case isize:
             case usize:
             case f64:
-            case str:
+            case nullptr_:
                 return 8uz;
+            case str:
+                return 16uz;
         }
         std::unreachable();
     }

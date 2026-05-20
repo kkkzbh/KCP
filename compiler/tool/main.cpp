@@ -106,9 +106,23 @@ auto module_leaf_path(std::string_view name) -> std::filesystem::path
     return result;
 }
 
+auto stdlib_relative_path(std::string_view name) -> std::optional<std::filesystem::path>
+{
+    auto prefix = std::string_view{ "std." };
+    if(not name.starts_with(prefix)) {
+        return std::nullopt;
+    }
+    return module_relative_path(name.substr(prefix.size()));
+}
+
 auto import_roots(std::string_view executable) -> std::vector<std::filesystem::path>
 {
     auto roots = std::vector<std::filesystem::path>{ std::filesystem::current_path() };
+    if(auto const* stdlib_root = std::getenv("CP_STDLIB_ROOT_PATH")) {
+        if(std::string_view{ stdlib_root }.size() != 0uz) {
+            roots.emplace_back(stdlib_root);
+        }
+    }
     if constexpr(std::string_view{ CP_STDLIB_ROOT_PATH }.size() != 0uz) {
         roots.emplace_back(CP_STDLIB_ROOT_PATH);
     }
@@ -137,6 +151,9 @@ auto resolve_import_path(std::filesystem::path const& importer, std::string_view
     };
     for(auto const& root : roots) {
         candidates.emplace_back(root / module_relative_path(name));
+        if(auto std_path = stdlib_relative_path(name)) {
+            candidates.emplace_back(root / *std_path);
+        }
     }
     for(auto const& candidate : candidates) {
         auto error = std::error_code{};
@@ -384,6 +401,19 @@ auto resolve_tool_path(std::string const& tool) -> std::string
     return tool;
 }
 
+auto runtime_library_path() -> std::optional<std::string>
+{
+    if(auto const* path = std::getenv("CP_RUNTIME_LIBRARY_PATH")) {
+        if(std::string_view{ path }.size() != 0uz) {
+            return std::string{ path };
+        }
+    }
+    if constexpr(std::string_view{ CP_RUNTIME_LIBRARY_PATH }.size() != 0uz) {
+        return std::string{ CP_RUNTIME_LIBRARY_PATH };
+    }
+    return std::nullopt;
+}
+
 auto compile_object(cli_options const& options, std::filesystem::path const& ll_path, std::filesystem::path const& obj_path) -> bool
 {
     auto command = std::vector<std::string>{ resolve_tool_path(options.clang) };
@@ -402,8 +432,8 @@ auto link_binary(cli_options const& options, std::filesystem::path const& input_
     command.emplace_back("-Wno-override-module");
     append_all(command, options.clang_args);
     command.emplace_back(input_path.string());
-    if constexpr(std::string_view{ CP_RUNTIME_LIBRARY_PATH }.size() != 0uz) {
-        command.emplace_back(CP_RUNTIME_LIBRARY_PATH);
+    if(auto runtime = runtime_library_path()) {
+        command.emplace_back(*runtime);
     }
     command.emplace_back("-o");
     command.emplace_back(output_path.string());

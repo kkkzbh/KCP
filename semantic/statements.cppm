@@ -9,15 +9,17 @@ auto semantic_analyzer::check_bodies() -> void
         auto const& syntax = unit.root;
         for(auto function_id : syntax.functions) {
             auto const& function = unit.ast.node(function_id);
-            if(not function.has_body or function.kind == function_syntax_kind::lambda or function_is_generic(unit_index, function_id)) {
+            if(function.kind == function_syntax_kind::lambda or function_is_generic(unit_index, function_id)) {
                 continue;
             }
-            check_function(unit_index, function_id);
+            if(function_has_source_body(result.function_symbol_of(unit_index, function_id))) {
+                check_function(unit_index, function_id);
+            }
         }
         for(auto impl_id : syntax.impls) {
             auto const& impl = unit.ast.node(impl_id);
             for(auto function_id : impl.functions) {
-                if(not function_is_generic(unit_index, function_id)) {
+                if(function_has_source_body(result.function_symbol_of(unit_index, function_id)) and not function_is_generic(unit_index, function_id)) {
                     check_function(unit_index, function_id);
                 }
             }
@@ -25,7 +27,7 @@ auto semantic_analyzer::check_bodies() -> void
         for(auto impl_id : syntax.concept_impls) {
             auto const& impl = unit.ast.node(impl_id);
             for(auto function_id : impl.functions) {
-                if(not function_is_generic(unit_index, function_id)) {
+                if(function_has_source_body(result.function_symbol_of(unit_index, function_id)) and not function_is_generic(unit_index, function_id)) {
                     check_function(unit_index, function_id);
                 }
             }
@@ -97,7 +99,7 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
     };
 
     auto const& function = active_ast->node(active_function);
-    if(function.defaulted) {
+    if(not function_has_source_body(function_symbol)) {
         restore_state();
         return;
     }
@@ -121,8 +123,9 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
     );
 
     if(implicit_destructor_self and function_symbol.valid()) {
-        auto const& owner = result.structs[result.symbols[function_symbol.value].struct_index];
-        auto self_type = result.types.intern(reference_type{ owner.type });
+        auto self_type = signature.parameters.empty()
+            ? result.types.intern(reference_type{ result.structs[result.symbols[function_symbol.value].struct_index].type })
+            : signature.parameters.front();
         auto symbol = bind_symbol(semantic_symbol {
             .kind = symbol_kind::parameter,
             .name = "self",
@@ -270,6 +273,18 @@ auto semantic_analyzer::self_struct_index() const -> std::optional<std::uint32_t
 
 auto semantic_analyzer::self_field(std::string_view name) const -> std::optional<semantic_field_access>
 {
+    if(active_self.valid() and read_type(result.symbols[active_self.value].type) == semantic_type_ids::str) {
+        auto field = str_field_index(name);
+        if(not field) {
+            return std::nullopt;
+        }
+        return semantic_field_access {
+            .field_index = *field,
+            .owner_type = semantic_type_ids::str,
+            .implicit_self = true,
+        };
+    }
+
     auto owner = self_struct_index();
     if(not owner) {
         return std::nullopt;
@@ -382,6 +397,14 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                 }
 
                 auto declared_type = expected.value_or(initializer.type);
+                if(not expected and is_nullptr(read_type(declared_type))) {
+                    report(
+                        diagnostic_kind::type_mismatch,
+                        node.full_span,
+                        "nullptr requires a contextual pointer type"
+                    );
+                    declared_type = semantic_type_ids::error;
+                }
                 if(node.is_ref) {
                     if(not initializer.is_lvalue) {
                         report(
@@ -417,6 +440,9 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                 if(symbol.valid()) {
                     result.statement_bindings[node_key(id)] = symbol;
                     result.local_bindings[parameter_key(node.name)] = symbol;
+                    if(not std::holds_alternative<reference_type>(result.types.get(declared_type))) {
+                        static_cast<void>(concrete_destructor_symbol(declared_type, node.full_span));
+                    }
                 }
             },
             [&](type_alias_statement_syntax const& node) {
@@ -449,7 +475,7 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                     report(
                         diagnostic_kind::invalid_range,
                         node.full_span,
-                        "for range must be array<T,N>, iterable, or iterator"
+                        "for range must be [T; N], iterable, or iterator"
                     );
                     element = semantic_type_ids::error;
                 }
@@ -493,12 +519,12 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                 check_loop_jump(node.full_span, node.label, false);
             },
             [&](return_statement_syntax const& node) {
-                auto returned = semantic_type_ids::unit;
+                auto returned = expression_info{ .type = semantic_type_ids::unit };
                 if(node.value) {
                     if(returns.declared_return) {
-                        returned = check_expression(*active_ast, *node.value, returns.declared_return).type;
+                        returned = check_expression(*active_ast, *node.value, returns.declared_return);
                     } else {
-                        returned = check_expression(*active_ast, *node.value, std::nullopt).type;
+                        returned = check_expression(*active_ast, *node.value, std::nullopt);
                     }
                 }
 

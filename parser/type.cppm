@@ -8,7 +8,9 @@ import :state;
 
 auto parser::starts_type(token_kind kind) const -> bool
 {
-    return kind == token_kind::identifier;
+    return kind == token_kind::identifier
+           or kind == token_kind::l_bracket
+           or kind == token_kind::l_paren;
 }
 
 auto parser::expect_type_start() -> bool
@@ -34,14 +36,22 @@ auto parser::parse_type(bool allow_associated_names) -> std::optional<type_id>
         return parse_function_type();
     }
 
-    if(not check(token_kind::identifier)) {
-        report_current(
-            diagnostic_kind::expected_type,
-            std::format("expected type, got {}", token_name(peek().kind))
-        );
+    auto type = std::optional<type_syntax>{};
+    if(check(token_kind::l_bracket)) {
+        type = parse_array_type();
+    } else if(check(token_kind::l_paren)) {
+        type = parse_tuple_or_grouped_type();
+    } else {
+        type = parse_named_type(allow_associated_names);
+    }
+    if(not type) {
         return std::nullopt;
     }
+    return finish_type_suffix(std::move(*type));
+}
 
+auto parser::parse_named_type(bool allow_associated_names) -> std::optional<type_syntax>
+{
     auto name = expect_identifier("type name");
     if(not name) {
         return std::nullopt;
@@ -60,8 +70,10 @@ auto parser::parse_type(bool allow_associated_names) -> std::optional<type_id>
         auto const& last = type.arguments.back();
         if(auto const* argument = std::get_if<type_argument_type_syntax>(&last)) {
             type.full_span = combine_spans(type.full_span, arena.span(argument->type));
-        } else {
+        } else if(auto const* argument = std::get_if<type_argument_literal_syntax>(&last)) {
             type.full_span = combine_spans(type.full_span, std::get<type_argument_literal_syntax>(last).literal);
+        } else {
+            type.full_span = combine_spans(type.full_span, std::get<type_argument_name_syntax>(last).name);
         }
     }
 
@@ -75,9 +87,112 @@ auto parser::parse_type(bool allow_associated_names) -> std::optional<type_id>
         type.full_span = combine_spans(type.full_span, name->span);
     }
 
-    if(check(token_kind::kw_const)) {
-        type.is_const = true;
+    return type;
+}
+
+auto parser::parse_array_type() -> std::optional<type_syntax>
+{
+    auto open = expect(token_kind::l_bracket);
+    auto element = parse_expected_type();
+    auto semicolon = expect(token_kind::semicolon);
+    auto length = parse_type_length_argument();
+    auto close = expect(token_kind::r_bracket);
+    if(not open or not element or not semicolon or not length or not close) {
+        return std::nullopt;
+    }
+
+    return type_syntax {
+        .full_span = combine_spans(open->span, close->span),
+        .name = open->span,
+        .is_array_type = true,
+        .array_element = *element,
+        .array_length = *length,
+    };
+}
+
+auto parser::parse_tuple_or_grouped_type() -> std::optional<type_syntax>
+{
+    auto open = expect(token_kind::l_paren);
+    if(not open) {
+        return std::nullopt;
+    }
+    if(check(token_kind::r_paren)) {
+        report_current(diagnostic_kind::expected_type, "empty tuple type is not supported");
+        return std::nullopt;
+    }
+
+    auto first = parse_expected_type();
+    if(not first) {
+        return std::nullopt;
+    }
+    if(not check(token_kind::comma)) {
+        auto close = expect(token_kind::r_paren);
+        if(not close) {
+            return std::nullopt;
+        }
+        return type_syntax {
+            .full_span = combine_spans(open->span, close->span),
+            .name = open->span,
+            .is_grouped_type = true,
+            .grouped_type = *first,
+        };
+    }
+
+    auto elements = std::vector<type_id>{ *first };
+    while(check(token_kind::comma)) {
+        consume();
+        if(check(token_kind::r_paren)) {
+            break;
+        }
+        auto element = parse_expected_type();
+        if(not element) {
+            return std::nullopt;
+        }
+        elements.emplace_back(*element);
+    }
+
+    auto close = expect(token_kind::r_paren);
+    if(not close) {
+        return std::nullopt;
+    }
+    return type_syntax {
+        .full_span = combine_spans(open->span, close->span),
+        .name = open->span,
+        .is_tuple_type = true,
+        .tuple_elements = std::move(elements),
+    };
+}
+
+auto parser::parse_type_length_argument() -> std::optional<type_argument_syntax>
+{
+    if(check(token_kind::integer_literal)) {
+        return type_argument_syntax {
+            type_argument_literal_syntax {
+                .literal = consume().span,
+            }
+        };
+    }
+    if(check(token_kind::identifier)) {
+        return type_argument_syntax {
+            type_argument_name_syntax {
+                .name = consume().span,
+            }
+        };
+    }
+
+    report_current(
+        diagnostic_kind::expected_type,
+        std::format("expected array length, got {}", token_name(peek().kind))
+    );
+    return std::nullopt;
+}
+
+auto parser::finish_type_suffix(type_syntax type) -> std::optional<type_id>
+{
+    if(check_any({ token_kind::kw_const, token_kind::kw_like })) {
         auto qualifier = consume();
+        type.is_const = qualifier.kind == token_kind::kw_const;
+        type.is_like = qualifier.kind == token_kind::kw_like;
         type.full_span = combine_spans(type.full_span, qualifier.span);
     }
 
@@ -91,6 +206,14 @@ auto parser::parse_type(bool allow_associated_names) -> std::optional<type_id>
         auto suffix = consume();
         type.suffix_operators.emplace_back(suffix.kind);
         type.full_span = combine_spans(type.full_span, suffix.span);
+    } else if(check(token_kind::kw_move)) {
+        auto suffix = consume();
+        auto amp = expect(token_kind::amp);
+        if(not amp) {
+            return std::nullopt;
+        }
+        type.suffix_operators.emplace_back(suffix.kind);
+        type.full_span = combine_spans(type.full_span, amp->span);
     }
     return arena.add(std::move(type));
 }

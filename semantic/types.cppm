@@ -14,7 +14,7 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
         );
         auto function = result.types.intern(function_type {
             .parameters = std::move(parameters),
-            .returns = lower_type(ast, syntax.function_return),
+            .returns = lower_return_type(ast, syntax.function_return),
         });
         return syntax.is_function_pointer
             ? result.types.intern(pointer_type{ function })
@@ -28,7 +28,52 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
         } else {
             info = infer_expression_type(ast, syntax.decltype_expression, std::nullopt);
         }
-        return read_type(info.type);
+        return info.explicit_borrow ? info.type : read_type(info.type);
+    }
+
+    if(syntax.is_array_type) {
+        auto lowered = lower_array_type(ast, syntax);
+        for(auto suffix : syntax.suffix_operators) {
+            if(suffix == token_kind::star) {
+                lowered = result.types.intern(pointer_type{ lowered, syntax.is_const, syntax.is_like });
+            } else if(suffix == token_kind::amp) {
+                auto kind = syntax.is_like ? reference_type::kind::like : reference_type::kind::regular;
+                lowered = result.types.intern(reference_type{ lowered, syntax.is_const, kind });
+            } else if(suffix == token_kind::kw_move) {
+                lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::move });
+            }
+        }
+        return lowered;
+    }
+
+    if(syntax.is_tuple_type) {
+        auto lowered = lower_tuple_type(ast, syntax);
+        for(auto suffix : syntax.suffix_operators) {
+            if(suffix == token_kind::star) {
+                lowered = result.types.intern(pointer_type{ lowered, syntax.is_const, syntax.is_like });
+            } else if(suffix == token_kind::amp) {
+                auto kind = syntax.is_like ? reference_type::kind::like : reference_type::kind::regular;
+                lowered = result.types.intern(reference_type{ lowered, syntax.is_const, kind });
+            } else if(suffix == token_kind::kw_move) {
+                lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::move });
+            }
+        }
+        return lowered;
+    }
+
+    if(syntax.is_grouped_type) {
+        auto lowered = lower_type(ast, syntax.grouped_type);
+        for(auto suffix : syntax.suffix_operators) {
+            if(suffix == token_kind::star) {
+                lowered = result.types.intern(pointer_type{ lowered, syntax.is_const, syntax.is_like });
+            } else if(suffix == token_kind::amp) {
+                auto kind = syntax.is_like ? reference_type::kind::like : reference_type::kind::regular;
+                lowered = result.types.intern(reference_type{ lowered, syntax.is_const, kind });
+            } else if(suffix == token_kind::kw_move) {
+                lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::move });
+            }
+        }
+        return lowered;
     }
 
     auto name = ast_source.identifier(syntax.name);
@@ -45,6 +90,10 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
         }
     } else if(active_type_substitutions and active_type_substitutions->contains(std::string{ name })) {
         lowered = active_type_substitutions->find(std::string{ name })->second;
+        if(std::holds_alternative<integer_constant_type>(result.types.get(lowered))) {
+            report(diagnostic_kind::expected_type, syntax.full_span, "integer generic argument is not a type");
+            lowered = semantic_type_ids::error;
+        }
         if(not syntax.arguments.empty()) {
             report (
                 diagnostic_kind::invalid_type_argument,
@@ -62,6 +111,10 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
         lowered = semantic_type_ids::error;
     } else if(active_generic_parameters.contains(std::string{ name })) {
         lowered = active_generic_parameters.find(std::string{ name })->second;
+        if(std::holds_alternative<generic_integer_parameter_type>(result.types.get(lowered))) {
+            report(diagnostic_kind::expected_type, syntax.full_span, "integer generic parameter is not a type");
+            lowered = semantic_type_ids::error;
+        }
         if(not syntax.arguments.empty()) {
             report (
                 diagnostic_kind::invalid_type_argument,
@@ -108,7 +161,9 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
         auto const& value = result.symbols[symbol->value];
         if(value.variant_index < result.variants.size() and result.variants[value.variant_index].symbol == *symbol) {
             auto const& variant = result.variants[value.variant_index];
-            if(syntax.arguments.size() != variant.generic_parameters.size()) {
+            auto const& variant_ast = units[variant.unit_index].ast;
+            auto const& variant_syntax = variant_ast.node(variant.syntax);
+            if(syntax.arguments.size() > variant.generic_parameters.size()) {
                 report (
                     diagnostic_kind::invalid_type_argument,
                     syntax.full_span,
@@ -120,16 +175,31 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
                 );
                 lowered = semantic_type_ids::error;
             } else {
-                auto arguments = (
-                    syntax.arguments
-                    | std::views::transform([&](type_argument_syntax const& argument) {
-                        if(not std::holds_alternative<type_argument_type_syntax>(argument)) {
-                            report(diagnostic_kind::invalid_type_argument, syntax.full_span, "variant type arguments must be types");
-                            return semantic_type_ids::error;
-                        }
-                        return lower_type(ast, std::get<type_argument_type_syntax>(argument).type);
-                    }) | std::ranges::to<std::vector<semantic_type_id>>()
-                );
+                auto arguments = std::vector<semantic_type_id>{};
+                auto substitutions = std::map<std::string, semantic_type_id>{};
+                auto old_substitutions = active_type_substitutions;
+                for(auto index = 0uz; index < variant.generic_parameters.size(); ++index) {
+                    auto argument = semantic_type_id{};
+                    if(index < syntax.arguments.size()) {
+                        argument = lower_generic_type_argument(ast, syntax.arguments[index], variant.generic_parameters[index].parameter_kind, syntax.full_span);
+                    } else if(variant_syntax.generic_parameters[index].default_argument) {
+                        active_type_substitutions = &substitutions;
+                        auto old_unit = active_unit_index;
+                        active_unit_index = variant.unit_index;
+                        argument = lower_generic_type_argument(variant_ast, *variant_syntax.generic_parameters[index].default_argument, variant.generic_parameters[index].parameter_kind, syntax.full_span);
+                        active_unit_index = old_unit;
+                    } else {
+                        report(
+                            diagnostic_kind::invalid_type_argument,
+                            syntax.full_span,
+                            std::format("variant type '{}' expects {} type argument(s)", variant.name, variant.generic_parameters.size())
+                        );
+                        argument = semantic_type_ids::error;
+                    }
+                    arguments.emplace_back(argument);
+                    substitutions.emplace(variant.generic_parameters[index].name, argument);
+                }
+                active_type_substitutions = old_substitutions;
                 lowered = result.types.intern(variant_type {
                     .index = value.variant_index,
                     .arguments = std::move(arguments),
@@ -137,7 +207,9 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
             }
         } else {
             auto const& item = result.structs[value.struct_index];
-            if(syntax.arguments.size() != item.generic_parameters.size()) {
+            auto const& item_ast = units[item.unit_index].ast;
+            auto const& item_syntax = item_ast.node(item.syntax);
+            if(syntax.arguments.size() > item.generic_parameters.size()) {
                 report (
                     diagnostic_kind::invalid_type_argument,
                     syntax.full_span,
@@ -149,18 +221,62 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
                 );
                 lowered = semantic_type_ids::error;
             } else if(syntax.arguments.empty()) {
-                lowered = value.type;
-            } else {
-                auto arguments = (
-                    syntax.arguments
-                    | std::views::transform([&](type_argument_syntax const& argument) {
-                        if(not std::holds_alternative<type_argument_type_syntax>(argument)) {
-                            report(diagnostic_kind::invalid_type_argument, syntax.full_span, "struct type arguments must be types");
-                            return semantic_type_ids::error;
+                if(item.generic_parameters.empty()) {
+                    lowered = value.type;
+                } else {
+                    auto arguments = std::vector<semantic_type_id>{};
+                    auto substitutions = std::map<std::string, semantic_type_id>{};
+                    auto old_substitutions = active_type_substitutions;
+                    for(auto index = 0uz; index < item.generic_parameters.size(); ++index) {
+                        if(not item_syntax.generic_parameters[index].default_argument) {
+                            report(
+                                diagnostic_kind::invalid_type_argument,
+                                syntax.full_span,
+                                std::format("struct type '{}' expects {} type argument(s)", item.name, item.generic_parameters.size())
+                            );
+                            arguments.emplace_back(semantic_type_ids::error);
+                            continue;
                         }
-                        return lower_type(ast, std::get<type_argument_type_syntax>(argument).type);
-                    }) | std::ranges::to<std::vector<semantic_type_id>>()
-                );
+                        active_type_substitutions = &substitutions;
+                        auto old_unit = active_unit_index;
+                        active_unit_index = item.unit_index;
+                        auto argument = lower_generic_type_argument(item_ast, *item_syntax.generic_parameters[index].default_argument, item.generic_parameters[index].parameter_kind, syntax.full_span);
+                        active_unit_index = old_unit;
+                        arguments.emplace_back(argument);
+                        substitutions.emplace(item.generic_parameters[index].name, argument);
+                    }
+                    active_type_substitutions = old_substitutions;
+                    lowered = result.types.intern(struct_type {
+                        .index = value.struct_index,
+                        .arguments = std::move(arguments),
+                    });
+                }
+            } else {
+                auto arguments = std::vector<semantic_type_id>{};
+                auto substitutions = std::map<std::string, semantic_type_id>{};
+                auto old_substitutions = active_type_substitutions;
+                for(auto index = 0uz; index < item.generic_parameters.size(); ++index) {
+                    auto argument = semantic_type_id{};
+                    if(index < syntax.arguments.size()) {
+                        argument = lower_generic_type_argument(ast, syntax.arguments[index], item.generic_parameters[index].parameter_kind, syntax.full_span);
+                    } else if(item_syntax.generic_parameters[index].default_argument) {
+                        active_type_substitutions = &substitutions;
+                        auto old_unit = active_unit_index;
+                        active_unit_index = item.unit_index;
+                        argument = lower_generic_type_argument(item_ast, *item_syntax.generic_parameters[index].default_argument, item.generic_parameters[index].parameter_kind, syntax.full_span);
+                        active_unit_index = old_unit;
+                    } else {
+                        report(
+                            diagnostic_kind::invalid_type_argument,
+                            syntax.full_span,
+                            std::format("struct type '{}' expects {} type argument(s)", item.name, item.generic_parameters.size())
+                        );
+                        argument = semantic_type_ids::error;
+                    }
+                    arguments.emplace_back(argument);
+                    substitutions.emplace(item.generic_parameters[index].name, argument);
+                }
+                active_type_substitutions = old_substitutions;
                 lowered = result.types.intern(struct_type {
                     .index = value.struct_index,
                     .arguments = std::move(arguments),
@@ -191,14 +307,50 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
         lowered = *found;
     }
 
+    if(syntax.is_like and syntax.suffix_operators.empty()) {
+        report(diagnostic_kind::invalid_type_argument, syntax.full_span, "like requires a pointer or reference suffix");
+    }
+
     for(auto suffix : syntax.suffix_operators) {
         if(suffix == token_kind::star) {
-            lowered = result.types.intern(pointer_type{ lowered, syntax.is_const });
+            lowered = result.types.intern(pointer_type{ lowered, syntax.is_const, syntax.is_like });
         } else if(suffix == token_kind::amp) {
-            lowered = result.types.intern(reference_type{ lowered, syntax.is_const });
+            auto kind = syntax.is_like ? reference_type::kind::like : reference_type::kind::regular;
+            lowered = result.types.intern(reference_type{ lowered, syntax.is_const, kind });
+        } else if(suffix == token_kind::kw_move) {
+            if(syntax.is_const or syntax.is_like) {
+                report(diagnostic_kind::invalid_type_argument, syntax.full_span, "move& cannot be combined with const or like");
+            }
+            lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::move });
         }
     }
     return lowered;
+}
+
+auto semantic_analyzer::lower_return_type(ast_arena const& ast, type_id id) -> semantic_type_id
+{
+    auto const& syntax = ast.node(id);
+    auto const is_plain_named_type = (
+        not syntax.is_function_type
+        and not syntax.is_decltype
+        and not syntax.is_array_type
+        and not syntax.is_tuple_type
+        and not syntax.is_grouped_type
+    );
+    if(is_plain_named_type and ast_source.identifier(syntax.name) == "void") {
+        if(
+            not syntax.arguments.empty()
+            or not syntax.associated_names.empty()
+            or syntax.is_const
+            or syntax.is_like
+            or not syntax.suffix_operators.empty()
+        ) {
+            report(diagnostic_kind::invalid_type_argument, syntax.full_span, "void cannot be qualified or take arguments");
+            return semantic_type_ids::error;
+        }
+        return semantic_type_ids::unit;
+    }
+    return lower_type(ast, id);
 }
 
 auto semantic_analyzer::lower_parameter_type(ast_arena const& ast, parameter_syntax const& parameter, std::optional<semantic_type_id> self_type) -> semantic_type_id
@@ -213,13 +365,56 @@ auto semantic_analyzer::lower_parameter_type(ast_arena const& ast, parameter_syn
             return semantic_type_ids::error;
         }
         if(parameter.self_is_reference) {
-            return result.types.intern(reference_type{ *self_type, parameter.is_const });
+            auto kind = reference_type::kind::regular;
+            if(parameter.self_is_like) {
+                kind = reference_type::kind::like;
+            } else if(parameter.self_is_move) {
+                kind = reference_type::kind::move;
+            }
+            return result.types.intern(reference_type{ *self_type, parameter.is_const, kind });
         }
         return *self_type;
     }
     return parameter.type
         ? lower_type(ast, *parameter.type)
         : semantic_type_ids::inferred;
+}
+
+auto semantic_analyzer::materialize_like_type(semantic_type_id type, bool is_const) -> semantic_type_id
+{
+    auto const& kind = result.types.get(type);
+    if(auto const* reference = std::get_if<reference_type>(&kind)) {
+        auto pointee = materialize_like_type(reference->pointee, is_const);
+        if(reference->reference_kind == reference_type::kind::like) {
+            return result.types.intern(reference_type{ pointee, is_const });
+        }
+        if(pointee != reference->pointee) {
+            return result.types.intern(reference_type{ pointee, reference->is_const, reference->reference_kind });
+        }
+        return type;
+    }
+    if(auto const* pointer = std::get_if<pointer_type>(&kind)) {
+        auto pointee = materialize_like_type(pointer->pointee, is_const);
+        if(pointer->is_like) {
+            return result.types.intern(pointer_type{ pointee, is_const });
+        }
+        if(pointee != pointer->pointee) {
+            return result.types.intern(pointer_type{ pointee, pointer->is_const, pointer->is_like });
+        }
+    }
+    return type;
+}
+
+auto semantic_analyzer::expression_for_return_type(semantic_type_id type) -> expression_info
+{
+    if(auto const* reference = std::get_if<reference_type>(&result.types.get(type))) {
+        return expression_info {
+            .type = type,
+            .is_lvalue = true,
+            .is_const = terminal_pointee_const(reference->pointee, reference->is_const),
+        };
+    }
+    return expression_info{ .type = type };
 }
 
 auto semantic_analyzer::associated_type(semantic_type_id owner, std::string_view name)
@@ -401,6 +596,25 @@ auto semantic_analyzer::field_index(std::uint32_t struct_index, std::string_view
     return std::nullopt;
 }
 
+auto semantic_analyzer::str_field_index(std::string_view name) const -> std::optional<std::uint32_t>
+{
+    if(name == "ptr") {
+        return 0u;
+    }
+    if(name == "len") {
+        return 1u;
+    }
+    return std::nullopt;
+}
+
+auto semantic_analyzer::str_field_type(std::uint32_t index) -> semantic_type_id
+{
+    if(index == 0u) {
+        return intern_type(pointer_type{ semantic_type_ids::char_, true });
+    }
+    return semantic_type_ids::builtin(builtin_type_kind::usize);
+}
+
 auto semantic_analyzer::is_default_initializable(semantic_type_id type) -> bool
 {
     auto const& kind = result.types.get(type);
@@ -420,6 +634,8 @@ auto semantic_analyzer::is_default_initializable(semantic_type_id type) -> bool
             [](pointer_type const&) { return true; },
             [](function_type const&) { return false; },
             [](generic_parameter_type const&) { return false; },
+            [](integer_constant_type const&) { return false; },
+            [](generic_integer_parameter_type const&) { return false; },
             [&](struct_type const& value) {
                 auto const& item = result.structs[value.index];
                 return std::ranges::all_of(item.fields, [&](auto const& field) {
@@ -441,7 +657,7 @@ auto semantic_analyzer::is_dependent_type(semantic_type_id type) const -> bool
             [](error_type const&) { return false; },
             [](inferred_type const&) { return false; },
             [](builtin_type const&) { return false; },
-            [&](array_type const& value) { return is_dependent_type(value.element); },
+            [&](array_type const& value) { return is_dependent_type(value.element) or is_dependent_type(value.length); },
             [&](tuple_type const& value) {
                 return std::ranges::any_of(value.elements, [&](auto element) {
                     return is_dependent_type(element);
@@ -456,6 +672,8 @@ auto semantic_analyzer::is_dependent_type(semantic_type_id type) const -> bool
                     });
             },
             [](generic_parameter_type const&) { return true; },
+            [](integer_constant_type const&) { return false; },
+            [](generic_integer_parameter_type const&) { return true; },
             [&](struct_type const& value) {
                 return std::ranges::any_of(value.arguments, [&](auto argument) {
                     return is_dependent_type(argument);
@@ -496,15 +714,21 @@ auto semantic_analyzer::range_element_type(semantic_type_id type) -> semantic_ty
 auto semantic_analyzer::method_symbol(semantic_type_id owner, std::string_view name) const -> std::optional<symbol_id>
 {
     auto key = std::string{ name };
-    if(auto struct_index = struct_index_of(owner)) {
+    auto type = read_type(owner);
+    if(auto struct_index = struct_index_of(type)) {
         auto const& methods = result.structs[*struct_index].methods;
         if(auto found = methods.find(key); found != methods.end()) {
             return found->second;
         }
     }
-    if(auto variant_index = variant_index_of(owner)) {
+    if(auto variant_index = variant_index_of(type)) {
         auto const& methods = result.variants[*variant_index].methods;
         if(auto found = methods.find(key); found != methods.end()) {
+            return found->second;
+        }
+    }
+    if(auto found_methods = extension_methods.find(type); found_methods != extension_methods.end()) {
+        if(auto found = found_methods->second.find(key); found != found_methods->second.end()) {
             return found->second;
         }
     }
@@ -565,7 +789,19 @@ auto semantic_analyzer::range_info(expression_info range, source_span span) -> s
         }
         iter_symbol = *concrete;
         auto const* callable = std::get_if<function_type>(&result.types.get(result.symbols[iter_symbol.value].type));
-        if(callable == nullptr or callable->parameters.empty() or not can_implicitly_convert(range, callable->parameters.front())) {
+        auto receiver_matches = false;
+        if(callable != nullptr and not callable->parameters.empty()) {
+            receiver_matches = can_implicitly_convert(range, callable->parameters.front());
+            if(not receiver_matches) {
+                if(auto const* reference = std::get_if<reference_type>(&result.types.get(callable->parameters.front()))) {
+                    receiver_matches = reference->reference_kind == reference_type::kind::regular
+                        and read_type(range.type) == read_type(reference->pointee)
+                        and not range.is_const
+                        and not range.is_move;
+                }
+            }
+        }
+        if(callable == nullptr or callable->parameters.empty() or not receiver_matches) {
             report(diagnostic_kind::type_mismatch, span, "iterable iter() receiver type mismatch");
             return {};
         }
@@ -707,10 +943,44 @@ auto semantic_analyzer::read_type(semantic_type_id type) const -> semantic_type_
     }
 }
 
+auto semantic_analyzer::can_qualification_convert(semantic_type_id from, semantic_type_id to) const -> bool
+{
+    if(from == to or is_error(from) or is_error(to)) {
+        return true;
+    }
+
+    auto const& source = result.types.get(from);
+    auto const& target = result.types.get(to);
+    if(auto const* target_pointer = std::get_if<pointer_type>(&target)) {
+        auto const* source_pointer = std::get_if<pointer_type>(&source);
+        return source_pointer != nullptr
+            and (target_pointer->is_const or target_pointer->is_like or not source_pointer->is_const)
+            and can_qualification_convert(source_pointer->pointee, target_pointer->pointee);
+    }
+    if(auto const* target_reference = std::get_if<reference_type>(&target)) {
+        auto const* source_reference = std::get_if<reference_type>(&source);
+        return source_reference != nullptr
+            and source_reference->reference_kind == target_reference->reference_kind
+            and (target_reference->is_const or not source_reference->is_const)
+            and can_qualification_convert(source_reference->pointee, target_reference->pointee);
+    }
+    return false;
+}
+
 auto semantic_analyzer::can_implicitly_convert(expression_info const& from, semantic_type_id to) -> bool
 {
     if(auto const* reference = std::get_if<reference_type>(&result.types.get(to))) {
-        return from.is_lvalue and read_type(from.type) == read_type(reference->pointee);
+        auto same_target = can_qualification_convert(read_type(from.type), reference->pointee);
+        if(reference->reference_kind == reference_type::kind::move) {
+            return same_target and (from.is_move or not from.is_lvalue);
+        }
+        if(reference->reference_kind == reference_type::kind::like) {
+            return same_target and from.is_lvalue;
+        }
+        return same_target and from.is_lvalue and not from.is_move and (reference->is_const or not from.is_const);
+    }
+    if(from.explicit_borrow) {
+        return false;
     }
     return can_implicitly_convert(from.type, to);
 }
@@ -722,9 +992,15 @@ auto semantic_analyzer::can_implicitly_convert(semantic_type_id from, semantic_t
     }
 
     if(auto const* target_pointer = std::get_if<pointer_type>(&result.types.get(to))) {
+        if(from == semantic_type_ids::nullptr_) {
+            return true;
+        }
         if(std::holds_alternative<function_type>(result.types.get(target_pointer->pointee))) {
             return from == target_pointer->pointee;
         }
+    }
+    if(can_qualification_convert(from, to)) {
+        return true;
     }
 
     auto source = read_type(from);
@@ -852,6 +1128,13 @@ auto semantic_analyzer::terminal_pointee_const(semantic_type_id pointee, bool ta
 
 auto semantic_analyzer::lower_array_type(ast_arena const& ast, type_syntax const& syntax) -> semantic_type_id
 {
+    if(syntax.is_array_type) {
+        return result.types.intern (array_type {
+            .element = lower_type(ast, syntax.array_element),
+            .length = lower_array_length(syntax.array_length),
+        });
+    }
+
     if(syntax.arguments.size() != 2uz) {
         report (
             diagnostic_kind::invalid_type_argument,
@@ -863,7 +1146,10 @@ auto semantic_analyzer::lower_array_type(ast_arena const& ast, type_syntax const
 
     if (
         not is<type_argument_type_syntax>(syntax.arguments.front())
-        or not is<type_argument_literal_syntax>(syntax.arguments.back())
+        or (
+            not is<type_argument_literal_syntax>(syntax.arguments.back())
+            and not is<type_argument_name_syntax>(syntax.arguments.back())
+        )
     ) {
         report (
             diagnostic_kind::invalid_type_argument,
@@ -874,15 +1160,24 @@ auto semantic_analyzer::lower_array_type(ast_arena const& ast, type_syntax const
     }
 
     auto element = lower_type(ast, as<type_argument_type_syntax>(syntax.arguments.front()).type);
-    auto length = parse_length(as<type_argument_literal_syntax>(syntax.arguments.back()).literal);
     return result.types.intern (array_type {
         .element = element,
-        .length = length,
+        .length = lower_array_length(syntax.arguments.back()),
     });
 }
 
 auto semantic_analyzer::lower_tuple_type(ast_arena const& ast, type_syntax const& syntax) -> semantic_type_id
 {
+    if(syntax.is_tuple_type) {
+        auto elements = (
+            syntax.tuple_elements
+            | std::views::transform([&](type_id element) {
+                return lower_type(ast, element);
+            }) | std::ranges::to<std::vector<semantic_type_id>>()
+        );
+        return result.types.intern(tuple_type{ std::move(elements) });
+    }
+
     if(syntax.arguments.empty()) {
         report (
             diagnostic_kind::invalid_type_argument,
@@ -907,6 +1202,95 @@ auto semantic_analyzer::lower_tuple_type(ast_arena const& ast, type_syntax const
     return result.types.intern(tuple_type{ std::move(elements) });
 }
 
+auto semantic_analyzer::lower_generic_type_argument(ast_arena const& ast, type_argument_syntax const& argument, generic_parameter_syntax::kind parameter_kind, source_span span) -> semantic_type_id
+{
+    using enum generic_parameter_syntax::kind;
+    if(parameter_kind == type) {
+        if(auto const* type_argument = std::get_if<type_argument_type_syntax>(&argument)) {
+            auto lowered = lower_type(ast, type_argument->type);
+            auto const& kind = result.types.get(lowered);
+            if(std::holds_alternative<integer_constant_type>(kind) or std::holds_alternative<generic_integer_parameter_type>(kind)) {
+                report(diagnostic_kind::invalid_type_argument, span, "type generic parameter requires a type argument");
+                return semantic_type_ids::error;
+            }
+            return lowered;
+        }
+        report(diagnostic_kind::invalid_type_argument, span, "type generic parameter requires a type argument");
+        return semantic_type_ids::error;
+    }
+
+    if(auto const* literal = std::get_if<type_argument_literal_syntax>(&argument)) {
+        return result.types.intern(integer_constant_type {
+            .value = parse_integer_literal(ast_source.slice(literal->literal)),
+            .type = parameter_kind == const_usize ? builtin_type_kind::usize : builtin_type_kind::isize,
+        });
+    }
+
+    if(auto const* type_argument = std::get_if<type_argument_type_syntax>(&argument)) {
+        auto const& syntax = ast.node(type_argument->type);
+        auto bare_name = (
+            syntax.arguments.empty()
+            and syntax.associated_names.empty()
+            and syntax.suffix_operators.empty()
+            and not syntax.is_const
+            and not syntax.is_like
+            and not syntax.is_function_type
+            and not syntax.is_decltype
+            and not syntax.is_array_type
+            and not syntax.is_tuple_type
+            and not syntax.is_grouped_type
+        );
+        if(bare_name) {
+            auto key = std::string{ ast_source.identifier(syntax.name) };
+            if(active_type_substitutions and active_type_substitutions->contains(key)) {
+                auto value = active_type_substitutions->find(key)->second;
+                if(std::holds_alternative<integer_constant_type>(result.types.get(value))) {
+                    return value;
+                }
+            }
+            if(active_generic_parameters.contains(key)) {
+                auto value = active_generic_parameters.find(key)->second;
+                if(std::holds_alternative<generic_integer_parameter_type>(result.types.get(value))) {
+                    return value;
+                }
+            }
+        }
+    }
+
+    report(diagnostic_kind::invalid_type_argument, span, "integer generic parameter requires an integer argument");
+    return semantic_type_ids::error;
+}
+
+auto semantic_analyzer::lower_array_length(type_argument_syntax const& syntax) -> semantic_type_id
+{
+    if(auto const* literal = std::get_if<type_argument_literal_syntax>(&syntax)) {
+        return result.types.intern(integer_constant_type {
+            .value = static_cast<std::int64_t>(parse_length(literal->literal)),
+            .type = builtin_type_kind::usize,
+        });
+    }
+    if(auto const* name = std::get_if<type_argument_name_syntax>(&syntax)) {
+        auto key = std::string{ ast_source.identifier(name->name) };
+        if(active_type_substitutions and active_type_substitutions->contains(key)) {
+            auto value = active_type_substitutions->find(key)->second;
+            if(std::holds_alternative<integer_constant_type>(result.types.get(value))) {
+                return value;
+            }
+        }
+        if(active_generic_parameters.contains(key)) {
+            auto value = active_generic_parameters.find(key)->second;
+            if(std::holds_alternative<generic_integer_parameter_type>(result.types.get(value))) {
+                return value;
+            }
+        }
+        report(diagnostic_kind::invalid_type_argument, name->name, "array length must be a usize integer parameter");
+        return semantic_type_ids::error;
+    }
+
+    report(diagnostic_kind::invalid_type_argument, source_span{}, "array length must be an integer literal or parameter");
+    return semantic_type_ids::error;
+}
+
 auto semantic_analyzer::parse_length(source_span span) -> std::uint64_t
 {
     auto text = ast_source.slice(span);
@@ -919,9 +1303,24 @@ auto semantic_analyzer::parse_length(source_span span) -> std::uint64_t
     return value;
 }
 
+auto semantic_analyzer::array_length_value(semantic_type_id length) const -> std::optional<std::uint64_t>
+{
+    auto const& kind = result.types.get(length);
+    if(auto const* constant = std::get_if<integer_constant_type>(&kind)) {
+        if(constant->value < 0) {
+            return std::nullopt;
+        }
+        return static_cast<std::uint64_t>(constant->value);
+    }
+    return std::nullopt;
+}
+
 auto semantic_analyzer::literal_type(source_span span) -> semantic_type_id
 {
     auto text = ast_source.slice(span);
+    if(text == "nullptr") {
+        return semantic_type_ids::nullptr_;
+    }
     if(text == "true" or text == "false") {
         return semantic_type_ids::bool_;
     }
@@ -949,6 +1348,27 @@ auto semantic_analyzer::unary_type(token_kind operator_kind, expression_info ope
                     target_const(operand_value, operand.is_const),
                 }),
             };
+        case kw_ref:
+            return expression_info {
+                .type = intern_type(reference_type { operand_value }),
+                .is_lvalue = true,
+                .explicit_borrow = true,
+            };
+        case kw_const:
+            return expression_info {
+                .type = intern_type(reference_type { operand_value, true }),
+                .is_lvalue = true,
+                .is_const = true,
+                .explicit_borrow = true,
+            };
+        case kw_move:
+            return expression_info {
+                .type = intern_type(reference_type { operand_value, false, reference_type::kind::move }),
+                .is_lvalue = true,
+                .is_move = true,
+            };
+        case kw_delete:
+            return expression_info{ .type = semantic_type_ids::unit };
         case star:
             if(auto pointee = pointer_pointee(operand_value)) {
                 return *pointee;
@@ -1025,30 +1445,6 @@ auto semantic_analyzer::binary_type(token_kind operator_kind, semantic_type_id l
     }
 }
 
-auto semantic_analyzer::function_style_cast_type(ast_arena const& ast, call_expr_syntax const& node)
-    -> std::optional<semantic_type_id>
-{
-    auto const& callee = ast.node(node.callee);
-    if(not is<name_expr_syntax>(callee)) {
-        return std::nullopt;
-    }
-
-    auto text = ast_source.identifier(as<name_expr_syntax>(callee).name);
-    if(auto builtin = is_builtin_name(text)) {
-        return semantic_type_ids::builtin(*builtin);
-    }
-    if(auto alias = resolve_type_alias(text)) {
-        return *alias;
-    }
-    if(active_type_aliases and active_type_aliases->contains(std::string{ text })) {
-        return active_type_aliases->find(std::string{ text })->second;
-    }
-    if(auto symbol = resolve_type_symbol(active_unit_index, text)) {
-        return result.symbols[symbol->value].type;
-    }
-    return std::nullopt;
-}
-
 auto semantic_analyzer::aggregate_context_for(std::optional<semantic_type_id> expected)
     -> std::optional<aggregate_context>
 {
@@ -1057,9 +1453,13 @@ auto semantic_analyzer::aggregate_context_for(std::optional<semantic_type_id> ex
     }
     auto const& type = result.types.get(*expected);
     if(auto const* array = std::get_if<array_type>(&type)) {
+        auto length = array_length_value(array->length);
+        if(not length) {
+            return std::nullopt;
+        }
         return aggregate_context {
             .element = array->element,
-            .length = array->length,
+            .length = static_cast<std::size_t>(*length),
         };
     }
     return std::nullopt;

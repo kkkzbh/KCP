@@ -37,7 +37,8 @@ auto semantic_analyzer::collect_variant_declaration(std::size_t unit_index, ast_
     result.variants.emplace_back(name, syntax.name, type, syntax.exported, unit_index, id, symbol);
     auto& item = result.variants.back();
     for(auto const& parameter : syntax.generic_parameters) {
-        item.generic_parameters.emplace_back(ast_source.identifier(parameter.name));
+        auto parameter_name = std::string{ ast_source.identifier(parameter.name) };
+        item.generic_parameters.emplace_back(std::move(parameter_name), parameter.parameter_kind);
     }
 
     if(syntax.exported and not state.named_module) {
@@ -71,7 +72,7 @@ auto semantic_analyzer::collect_variant_cases(std::size_t unit_index, ast_arena 
     for(auto index = 0uz; index < syntax.generic_parameters.size(); ++index) {
         active_generic_parameters.emplace(
             std::string{ ast_source.identifier(syntax.generic_parameters[index].name) },
-            result.types.intern(generic_parameter_type{ .index = static_cast<std::uint32_t>(index) })
+            generic_parameter_type_for(static_cast<std::uint32_t>(index), syntax.generic_parameters[index].parameter_kind)
         );
     }
 
@@ -126,10 +127,17 @@ auto semantic_analyzer::substitute_type(semantic_type_id type, std::vector<seman
                 }
                 return semantic_type_ids::error;
             },
+            [&](integer_constant_type const&) { return type; },
+            [&](generic_integer_parameter_type const& value) {
+                if(value.index < arguments.size()) {
+                    return arguments[value.index];
+                }
+                return semantic_type_ids::error;
+            },
             [&](array_type const& value) {
                 return result.types.intern(array_type {
                     .element = substitute_type(value.element, arguments),
-                    .length = value.length,
+                    .length = substitute_type(value.length, arguments),
                 });
             },
             [&](tuple_type const& value) {
@@ -145,12 +153,14 @@ auto semantic_analyzer::substitute_type(semantic_type_id type, std::vector<seman
                 return result.types.intern(reference_type {
                     substitute_type(value.pointee, arguments),
                     value.is_const,
+                    value.reference_kind,
                 });
             },
             [&](pointer_type const& value) {
                 return result.types.intern(pointer_type {
                     substitute_type(value.pointee, arguments),
                     value.is_const,
+                    value.is_like,
                 });
             },
             [&](function_type const& value) {

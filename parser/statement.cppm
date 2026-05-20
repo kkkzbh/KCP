@@ -103,7 +103,7 @@ auto parser::parse_declaration_statement() -> std::optional<stmt_id>
 {
     auto start = consume();
     auto is_ref = false;
-    if(check_contextual("ref")) {
+    if(check(token_kind::kw_ref)) {
         consume();
         is_ref = true;
     }

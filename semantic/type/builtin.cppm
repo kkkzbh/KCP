@@ -19,6 +19,7 @@ export enum class builtin_type_kind : std::uint8_t
     f64,
     char_,
     str,
+    nullptr_,
 };
 
 struct builtin_type_info
@@ -43,6 +44,7 @@ auto constexpr builtin_types = std::array{
     builtin_type_info{ builtin_type_kind::f64, "f64" },
     builtin_type_info{ builtin_type_kind::char_, "char" },
     builtin_type_info{ builtin_type_kind::str, "str" },
+    builtin_type_info{ builtin_type_kind::nullptr_, "nullptr" },
 };
 
 export auto constexpr builtin_type_count = builtin_types.size();

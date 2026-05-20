@@ -1,4 +1,4 @@
 main()
 {
-    let value: array<> = [1];
+    let value: [; 1] = [1];
 }

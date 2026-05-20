@@ -43,6 +43,7 @@ auto constexpr i32 = builtin(builtin_type_kind::i32);
 auto constexpr f64 = builtin(builtin_type_kind::f64);
 auto constexpr char_ = builtin(builtin_type_kind::char_);
 auto constexpr str = builtin(builtin_type_kind::str);
+auto constexpr nullptr_ = builtin(builtin_type_kind::nullptr_);
 } // namespace semantic_type_ids
 
 export auto constexpr is_error(semantic_type_id id) -> bool
@@ -58,6 +59,11 @@ export auto constexpr is_inferred(semantic_type_id id) -> bool
 export auto constexpr is_unit(semantic_type_id id) -> bool
 {
     return id == semantic_type_ids::unit;
+}
+
+export auto constexpr is_nullptr(semantic_type_id id) -> bool
+{
+    return id == semantic_type_ids::nullptr_;
 }
 
 export auto constexpr as_builtin(semantic_type_id id) -> std::optional<builtin_type_kind>

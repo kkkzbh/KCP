@@ -11,11 +11,11 @@ main()
 
     let builtins = literals_and_casts();
 
-    let data: array<i32,4> = [3, -1, 4, 0];
+    let data: [i32; 4] = [3, -1, 4, 0];
     let total = sum_non_negative(data);
     let prefix = accumulate_until(4);
     let finished = countdown(3);
 
-    let rows: array<array<i32,3>,2> = [[1, 2, 3], [-1, 4, 5]];
+    let rows: [[i32; 3]; 2] = [[1, 2, 3], [-1, 4, 5]];
     let has_four = contains_target(rows, 4);
 }
