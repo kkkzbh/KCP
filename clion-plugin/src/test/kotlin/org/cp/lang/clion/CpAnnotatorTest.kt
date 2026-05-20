@@ -80,6 +80,49 @@ class CpAnnotatorTest : BasePlatformTestCase() {
         assertNoHighlight(file.text, highlights, "item", CpSyntaxHighlighter.FUNCTION_CALL)
     }
 
+    fun testNestedCallArgumentsDoNotStealOuterFunctionHighlight() {
+        val file = myFixture.configureByText(
+            CpFileType.INSTANCE,
+            """
+            log(message: str, count: i32)
+            {
+            }
+
+            main()
+            {
+                let source = "abc";
+                log(source.as_str(), source.size());
+            }
+            """.trimIndent(),
+        )
+        val highlights = myFixture.doHighlighting()
+
+        assertHasHighlight(file.text, highlights, "log", CpSyntaxHighlighter.FUNCTION_CALL)
+        assertHasHighlight(file.text, highlights, "as_str", CpSyntaxHighlighter.MEMBER_FUNCTION)
+        assertHasHighlight(file.text, highlights, "size", CpSyntaxHighlighter.MEMBER_FUNCTION)
+        assertNoHighlight(file.text, highlights, "as_str", CpSyntaxHighlighter.FUNCTION_CALL)
+    }
+
+    fun testFieldReferencesInsideCallArgumentsRemainFields() {
+        val file = myFixture.configureByText(
+            CpFileType.INSTANCE,
+            """
+            use(value: i32)
+            {
+            }
+
+            main()
+            {
+                use(item.value);
+            }
+            """.trimIndent(),
+        )
+        val highlights = myFixture.doHighlighting()
+
+        assertHasHighlight(file.text, highlights, "use", CpSyntaxHighlighter.FUNCTION_CALL)
+        assertHasHighlight(file.text, highlights, "value", CpSyntaxHighlighter.FIELD)
+    }
+
     fun testSemanticHighlightsRealExampleFiles() {
         val repoRoot = Path.of(System.getProperty("cp.repo.root") ?: error("cp.repo.root is not configured"))
         val cases = mapOf(

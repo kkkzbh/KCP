@@ -30,6 +30,14 @@ export struct type_arena
         return dynamic_types[id.value - semantic_type_ids::fixed_count];
     }
 
+    auto contains(semantic_type_id id) const -> bool
+    {
+        if(id.value < semantic_type_ids::fixed_count) {
+            return true;
+        }
+        return id.value - semantic_type_ids::fixed_count < dynamic_types.size();
+    }
+
 private:
     auto static fixed_id(semantic_type_kind const& kind) -> std::optional<semantic_type_id>
     {

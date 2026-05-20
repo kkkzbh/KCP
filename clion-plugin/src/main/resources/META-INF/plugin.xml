@@ -23,9 +23,15 @@
         <lang.braceMatcher language="cp" implementationClass="org.cp.lang.clion.CpBraceMatcher" />
         <langCodeStyleSettingsProvider implementation="org.cp.lang.clion.CpCodeStyleSettingsProvider" />
         <lang.formatter language="cp" implementationClass="org.cp.lang.clion.CpFormattingModelBuilder" />
+        <lang.findUsagesProvider language="cp" implementationClass="org.cp.lang.clion.CpFindUsagesProvider" />
+        <lang.documentationProvider language="cp" implementationClass="org.cp.lang.clion.CpDocumentationProvider" />
+        <gotoDeclarationHandler implementation="org.cp.lang.clion.CpGotoDeclarationHandler" />
+        <renamePsiElementProcessor implementation="org.cp.lang.clion.CpRenameProcessor" />
         <backspaceHandlerDelegate implementation="org.cp.lang.clion.CpBackspaceHandler" />
         <enterHandlerDelegate implementation="org.cp.lang.clion.CpEnterHandler" />
         <externalAnnotator language="cp" implementationClass="org.cp.lang.clion.CpExternalAnnotator" />
+        <completion.contributor language="cp" implementationClass="org.cp.lang.clion.CpCompletionContributor" />
+        <codeInsight.inlayProvider language="cp" implementationClass="org.cp.lang.clion.CpTypeHintsProvider" isEnabledByDefault="true" settingsKeyId="cp.type.hints" />
         <highlightErrorFilter implementation="org.cp.lang.clion.CpMarkdownErrorFilter" />
         <daemon.externalAnnotatorsFilter implementation="org.cp.lang.clion.CpExternalAnnotatorsFilter" />
         <configurationType implementation="org.cp.lang.clion.CpRunConfigurationType" />

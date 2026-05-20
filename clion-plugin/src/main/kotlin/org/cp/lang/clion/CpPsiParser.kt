@@ -924,7 +924,7 @@ private class CpBuilder(
             }
             if (consume(CpTypes.DOT)) {
                 val marker = operand.precede()
-                markIdentifier(CpElements.MEMBER_NAME, "expected member name")
+                markMemberName()
                 marker.done(CpElements.MEMBER_EXPRESSION)
                 operand = marker
                 continue
@@ -1350,6 +1350,18 @@ private class CpBuilder(
         }
         marker.done(type)
         return true
+    }
+
+    private fun markMemberName(): Boolean {
+        val marker = builder.mark()
+        if (at(CpTypes.IDENTIFIER) || at(CpTypes.INTEGER_LITERAL)) {
+            advance()
+            marker.done(CpElements.MEMBER_NAME)
+            return true
+        }
+        builder.error("expected member name")
+        marker.drop()
+        return false
     }
 
     private fun expectIdentifier(message: String): Boolean = expect(CpTypes.IDENTIFIER, message)

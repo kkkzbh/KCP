@@ -3,44 +3,44 @@ export module std.ranges.iota;
 import std.core.iter;
 import std.core.option;
 
-export struct iota_iter {
-    current: i32;
-    end: i32;
+export struct iota_iter<T> {
+    current: T;
+    end: T;
 }
 
-impl iterator for iota_iter {
-    type iter_item = i32;
+impl iterator for iota_iter<T> {
+    type iter_item = T;
 
-    next(self&) -> optional<i32>
+    next(self&) -> optional<T>
     {
-        if(current >= end) {
-            return optional<i32>::none;
+        if(current == end) {
+            return optional<T>::none;
         }
 
         let value = current;
-        current += 1;
-        return optional<i32>::some(value);
+        ++current;
+        return optional<T>::some(value);
     }
 }
 
-export struct iota_range {
-    begin: i32;
-    end: i32;
+export struct iota_range<T> {
+    begin: T;
+    end: T;
 }
 
-impl iota_range {
-    iter(self&) -> iota_iter
+impl iota_range<T> {
+    iter(self&) -> iota_iter<T>
     {
-        return iota_iter{ .current = begin, .end = end };
+        return iota_iter<T>{ .current = begin, .end = end };
     }
 }
 
-impl iterable for iota_range {
-    type iter_type = iota_iter;
-    type iter_item = i32;
+impl iterable for iota_range<T> {
+    type iter_type = iota_iter<T>;
+    type iter_item = T;
 }
 
-export iota(begin: i32, end: i32) -> iota_range
+export iota<T>(begin: T, end: T) -> iota_range<T>
 {
-    return iota_range{ .begin = begin, .end = end };
+    return iota_range<T>{ .begin = begin, .end = end };
 }

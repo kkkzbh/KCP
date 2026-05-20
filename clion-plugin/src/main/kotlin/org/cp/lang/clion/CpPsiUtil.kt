@@ -5,6 +5,12 @@ import com.intellij.psi.tree.IElementType
 
 fun PsiElement.cpElementType(): IElementType? = node?.elementType
 
+fun PsiElement.directChild(type: IElementType): PsiElement? =
+    children.firstOrNull { it.cpElementType() == type }
+
+fun PsiElement.directChildren(type: IElementType): List<PsiElement> =
+    children.filter { it.cpElementType() == type }
+
 fun PsiElement.firstDescendant(type: IElementType): PsiElement? {
     for (child in children) {
         if (child.cpElementType() == type) {

@@ -63,11 +63,22 @@ struct highlight_record
     std::size_t end_offset{};
 };
 
+struct navigation_record
+{
+    std::string category;
+    std::size_t source_start_offset{};
+    std::size_t source_end_offset{};
+    std::string target_file;
+    std::size_t target_start_offset{};
+    std::size_t target_end_offset{};
+};
+
 struct inspect_result
 {
     bool accepted{};
     std::vector<diagnostic_record> diagnostics;
     std::vector<highlight_record> highlights;
+    std::vector<navigation_record> navigation;
 };
 
 auto analyze(std::string_view filename, std::string_view text) -> std::vector<diagnostic_record>;
@@ -201,6 +212,47 @@ struct highlight_collector
     std::vector<highlight_record> highlights{};
 };
 
+struct navigation_collector
+{
+    navigation_collector(source_manager const& sources, file_id active_file) :
+        sources(sources),
+        active_file(active_file) {}
+
+    auto add(std::string_view category, source_span source, source_span target) -> void
+    {
+        if(source.start == source.end or target.start == target.end or not in_file(sources, source, active_file)) {
+            return;
+        }
+
+        auto const [target_file, target_start] = sources.locate(target.start);
+        auto const target_end = sources.locate(target.end).second;
+        auto item = navigation_record {
+            .category = std::string{ category },
+            .source_start_offset = span_local_start(sources, source),
+            .source_end_offset = span_local_end(sources, source),
+            .target_file = std::string{ sources.name(target_file) },
+            .target_start_offset = target_start,
+            .target_end_offset = target_end,
+        };
+        auto const key = std::tuple {
+            item.category,
+            item.source_start_offset,
+            item.source_end_offset,
+            item.target_file,
+            item.target_start_offset,
+            item.target_end_offset,
+        };
+        if(seen.emplace(key).second) {
+            navigation.emplace_back(std::move(item));
+        }
+    }
+
+    source_manager const& sources;
+    file_id active_file{};
+    std::set<std::tuple<std::string, std::size_t, std::size_t, std::string, std::size_t, std::size_t>> seen{};
+    std::vector<navigation_record> navigation{};
+};
+
 auto is_operator_token(token_kind kind) -> bool
 {
     using enum token_kind;
@@ -301,6 +353,14 @@ auto collect_expression_highlights(highlight_collector& collector, ast_arena con
 auto collect_type_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, type_id id) -> void;
 
 auto collect_generic_parameter_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, std::span<generic_parameter_syntax const> parameters) -> void;
+
+auto collect_statement_navigation(navigation_collector& collector, ast_arena const& ast, semantic_result const& checked, std::size_t unit_index, stmt_id id) -> void;
+
+auto collect_expression_navigation(navigation_collector& collector, ast_arena const& ast, semantic_result const& checked, std::size_t unit_index, expr_id id, bool call_callee = false) -> void;
+
+auto collect_type_navigation(navigation_collector& collector, ast_arena const& ast, semantic_result const& checked, std::size_t unit_index, type_id id) -> void;
+
+auto collect_generic_parameter_navigation(navigation_collector& collector, ast_arena const& ast, semantic_result const& checked, std::size_t unit_index, std::span<generic_parameter_syntax const> parameters) -> void;
 
 auto source_text(highlight_collector& collector, source_span span) -> std::string_view
 {
@@ -515,6 +575,10 @@ auto collect_expression_highlights(highlight_collector& collector, ast_arena con
             collect_type_highlights(collector, ast, checked, unit_index, node.type);
             if(checked != nullptr and checked->variant_case_of(unit_index, id).valid()) {
                 collector.add("variant.case", node.name);
+                return;
+            }
+            if(checked != nullptr and checked->enum_case_of(unit_index, id).valid()) {
+                collector.add("enum.case", node.name);
                 return;
             }
             if(auto const symbol = semantic_symbol(); symbol.valid()) {
@@ -883,6 +947,509 @@ auto collect_ast_highlights(highlight_collector& collector, parse_result const& 
     }
 }
 
+auto valid_symbol(semantic_result const& checked, symbol_id symbol) -> bool
+{
+    return symbol.valid() and symbol.value < checked.symbols.size();
+}
+
+auto type_declaration_span(semantic_result const& checked, semantic_type_id id) -> std::optional<source_span>
+{
+    if(not checked.types.contains(id)) {
+        return std::nullopt;
+    }
+    auto const& kind = checked.types.get(id);
+    return std::visit(overloaded {
+        [&](struct_type const& value) -> std::optional<source_span> {
+            if(value.index < checked.structs.size()) {
+                return checked.structs[value.index].span;
+            }
+            return std::nullopt;
+        },
+        [&](enum_type const& value) -> std::optional<source_span> {
+            if(value.index < checked.enums.size()) {
+                return checked.enums[value.index].span;
+            }
+            return std::nullopt;
+        },
+        [&](opaque_type const& value) -> std::optional<source_span> {
+            if(value.index < checked.opaque_aliases.size()) {
+                return checked.opaque_aliases[value.index].span;
+            }
+            return std::nullopt;
+        },
+        [&](variant_type const& value) -> std::optional<source_span> {
+            if(value.index < checked.variants.size()) {
+                return checked.variants[value.index].span;
+            }
+            return std::nullopt;
+        },
+        [](auto const&) -> std::optional<source_span> {
+            return std::nullopt;
+        },
+    }, kind);
+}
+
+auto field_declaration_span(semantic_result const& checked, semantic_field_access access) -> std::optional<source_span>
+{
+    if(access.struct_index < checked.structs.size()) {
+        auto const& fields = checked.structs[access.struct_index].fields;
+        if(access.field_index < fields.size()) {
+            return fields[access.field_index].span;
+        }
+    }
+    return std::nullopt;
+}
+
+auto variant_case_declaration_span(semantic_result const& checked, semantic_variant_case_access access) -> std::optional<source_span>
+{
+    if(access.variant_index < checked.variants.size()) {
+        auto const& cases = checked.variants[access.variant_index].cases;
+        if(access.case_index < cases.size()) {
+            return cases[access.case_index].span;
+        }
+    }
+    return std::nullopt;
+}
+
+auto enum_case_declaration_span(semantic_result const& checked, semantic_enum_case_access access) -> std::optional<source_span>
+{
+    if(access.enum_index < checked.enums.size()) {
+        auto const& cases = checked.enums[access.enum_index].cases;
+        if(access.case_index < cases.size()) {
+            return cases[access.case_index].span;
+        }
+    }
+    return std::nullopt;
+}
+
+auto exact_symbol_span(semantic_result const& checked, std::string_view name, symbol_kind kind) -> std::optional<source_span>
+{
+    auto found = std::optional<source_span>{};
+    for(auto const& symbol : checked.symbols) {
+        if(symbol.kind != kind or symbol.name != name) {
+            continue;
+        }
+        if(found) {
+            return std::nullopt;
+        }
+        found = symbol.span;
+    }
+    return found;
+}
+
+auto add_symbol_navigation(navigation_collector& collector, semantic_result const& checked, std::string_view category, source_span source, symbol_id symbol) -> void
+{
+    if(valid_symbol(checked, symbol)) {
+        collector.add(category, source, checked.symbols[symbol.value].span);
+    }
+}
+
+auto collect_concept_id_navigation(navigation_collector& collector, ast_arena const& ast, semantic_result const& checked, std::size_t unit_index, concept_id_syntax const& concept_id) -> void
+{
+    if(auto target = exact_symbol_span(checked, collector.sources.slice(concept_id.name), symbol_kind::concept_)) {
+        collector.add("concept.reference", concept_id.name, *target);
+    }
+    for(auto const& argument : concept_id.arguments) {
+        std::visit(overloaded {
+            [&](type_argument_type_syntax const& node) {
+                collect_type_navigation(collector, ast, checked, unit_index, node.type);
+            },
+            [](type_argument_literal_syntax const&) {},
+            [](type_argument_name_syntax const&) {},
+        }, argument);
+    }
+}
+
+auto collect_type_navigation(navigation_collector& collector, ast_arena const& ast, semantic_result const& checked, std::size_t unit_index, type_id id) -> void
+{
+    auto const& type = ast.node(id);
+    if(auto target = exact_symbol_span(checked, collector.sources.slice(type.name), symbol_kind::type)) {
+        collector.add("type.reference", type.name, *target);
+    } else if(auto concept_target = exact_symbol_span(checked, collector.sources.slice(type.name), symbol_kind::concept_)) {
+        collector.add("concept.reference", type.name, *concept_target);
+    }
+    for(auto const& argument : type.arguments) {
+        std::visit(overloaded {
+            [&](type_argument_type_syntax const& node) {
+                collect_type_navigation(collector, ast, checked, unit_index, node.type);
+            },
+            [](type_argument_literal_syntax const&) {},
+            [](type_argument_name_syntax const&) {},
+        }, argument);
+    }
+}
+
+auto collect_expression_navigation(navigation_collector& collector, ast_arena const& ast, semantic_result const& checked, std::size_t unit_index, expr_id id, bool call_callee) -> void
+{
+    auto const& expression = ast.node(id);
+    std::visit(overloaded {
+        [&](name_expr_syntax const& node) {
+            if(auto access = checked.field_access_of(unit_index, id); access.valid()) {
+                if(auto target = field_declaration_span(checked, access)) {
+                    collector.add("field.reference", node.name, *target);
+                }
+                return;
+            }
+            if(auto symbol = checked.resolved_name(unit_index, id); symbol.valid()) {
+                add_symbol_navigation(collector, checked, call_callee ? "function.call" : "name.reference", node.name, symbol);
+            }
+        },
+        [](literal_expr_syntax const&) {},
+        [&](unary_expr_syntax const& node) {
+            collect_expression_navigation(collector, ast, checked, unit_index, node.operand);
+        },
+        [&](binary_expr_syntax const& node) {
+            collect_expression_navigation(collector, ast, checked, unit_index, node.left);
+            collect_expression_navigation(collector, ast, checked, unit_index, node.right);
+        },
+        [&](assignment_expr_syntax const& node) {
+            collect_expression_navigation(collector, ast, checked, unit_index, node.left);
+            collect_expression_navigation(collector, ast, checked, unit_index, node.right);
+        },
+        [&](call_expr_syntax const& node) {
+            collect_expression_navigation(collector, ast, checked, unit_index, node.callee, true);
+            for(auto argument : node.arguments) {
+                collect_expression_navigation(collector, ast, checked, unit_index, argument);
+            }
+        },
+        [&](member_expr_syntax const& node) {
+            collect_expression_navigation(collector, ast, checked, unit_index, node.object);
+            if(call_callee) {
+                if(auto symbol = checked.resolved_name(unit_index, id); symbol.valid()) {
+                    add_symbol_navigation(collector, checked, "member.function.call", node.name, symbol);
+                }
+                return;
+            }
+            if(auto access = checked.field_access_of(unit_index, id); access.valid()) {
+                if(auto target = field_declaration_span(checked, access)) {
+                    collector.add("field.reference", node.name, *target);
+                }
+            }
+        },
+        [&](index_expr_syntax const& node) {
+            collect_expression_navigation(collector, ast, checked, unit_index, node.object);
+            collect_expression_navigation(collector, ast, checked, unit_index, node.index);
+        },
+        [&](associated_name_expr_syntax const& node) {
+            collect_type_navigation(collector, ast, checked, unit_index, node.type);
+            if(auto access = checked.variant_case_of(unit_index, id); access.valid()) {
+                if(auto target = variant_case_declaration_span(checked, access)) {
+                    collector.add("variant.case", node.name, *target);
+                }
+                return;
+            }
+            if(auto access = checked.enum_case_of(unit_index, id); access.valid()) {
+                if(auto target = enum_case_declaration_span(checked, access)) {
+                    collector.add("enum.case", node.name, *target);
+                }
+                return;
+            }
+            if(auto symbol = checked.resolved_name(unit_index, id); symbol.valid()) {
+                add_symbol_navigation(collector, checked, call_callee ? "associated.function.call" : "associated.function.reference", node.name, symbol);
+            }
+        },
+        [&](cast_expr_syntax const& node) {
+            collect_expression_navigation(collector, ast, checked, unit_index, node.operand);
+            collect_type_navigation(collector, ast, checked, unit_index, node.type);
+        },
+        [&](array_literal_expr_syntax const& node) {
+            for(auto element : node.elements) {
+                collect_expression_navigation(collector, ast, checked, unit_index, element);
+            }
+        },
+        [&](tuple_literal_expr_syntax const& node) {
+            for(auto element : node.elements) {
+                collect_expression_navigation(collector, ast, checked, unit_index, element);
+            }
+        },
+        [&](grouped_expr_syntax const& node) {
+            collect_expression_navigation(collector, ast, checked, unit_index, node.expression);
+        },
+        [&](struct_init_expr_syntax const& node) {
+            if(auto target = type_declaration_span(checked, checked.type_of(unit_index, id))) {
+                collector.add("type.reference", ast.node(node.type).name, *target);
+            } else {
+                collect_type_navigation(collector, ast, checked, unit_index, node.type);
+            }
+
+            auto const type = checked.type_of(unit_index, id);
+            auto const field_target = [&](source_span name) -> std::optional<source_span> {
+                if(not checked.types.contains(type)) {
+                    return std::nullopt;
+                }
+                auto const* structure = std::get_if<struct_type>(&checked.types.get(type));
+                if(structure == nullptr or structure->index >= checked.structs.size()) {
+                    return std::nullopt;
+                }
+                auto const& fields = checked.structs[structure->index].fields;
+                auto found = std::ranges::find_if(fields, [&](semantic_struct_field const& field) {
+                    return field.name == collector.sources.slice(name);
+                });
+                if(found == fields.end()) {
+                    return std::nullopt;
+                }
+                return found->span;
+            };
+
+            for(auto const& initializer : node.initializers) {
+                if(auto const* named = std::get_if<named_field_initializer_syntax>(&initializer)) {
+                    if(auto target = field_target(named->name)) {
+                        collector.add("field.reference", named->name, *target);
+                    }
+                    collect_expression_navigation(collector, ast, checked, unit_index, named->value);
+                } else {
+                    collect_expression_navigation(
+                        collector,
+                        ast,
+                        checked,
+                        unit_index,
+                        std::get<positional_initializer_syntax>(initializer).value
+                    );
+                }
+            }
+        },
+        [&](new_expr_syntax const& node) {
+            collect_type_navigation(collector, ast, checked, unit_index, node.type);
+            collect_expression_navigation(collector, ast, checked, unit_index, node.initializer);
+        },
+        [&](block_expr_syntax const& node) {
+            for(auto statement : node.statements) {
+                collect_statement_navigation(collector, ast, checked, unit_index, statement);
+            }
+            if(node.tail) {
+                collect_expression_navigation(collector, ast, checked, unit_index, *node.tail);
+            }
+        },
+        [&](match_expr_syntax const& node) {
+            collect_expression_navigation(collector, ast, checked, unit_index, node.value);
+            for(auto const& arm : node.arms) {
+                collect_expression_navigation(collector, ast, checked, unit_index, arm.value);
+            }
+        },
+        [&](lambda_expr_syntax const& node) {
+            auto const& function = ast.node(node.function);
+            collect_generic_parameter_navigation(collector, ast, checked, unit_index, function.generic_parameters);
+            for(auto const& parameter : function.parameters) {
+                if(parameter.type) {
+                    collect_type_navigation(collector, ast, checked, unit_index, *parameter.type);
+                }
+                if(parameter.default_value) {
+                    collect_expression_navigation(collector, ast, checked, unit_index, *parameter.default_value);
+                }
+            }
+            if(function.return_type) {
+                collect_type_navigation(collector, ast, checked, unit_index, *function.return_type);
+            }
+            collect_statement_navigation(collector, ast, checked, unit_index, function.body);
+        },
+    }, expression);
+}
+
+auto collect_generic_parameter_navigation(navigation_collector& collector, ast_arena const& ast, semantic_result const& checked, std::size_t unit_index, std::span<generic_parameter_syntax const> parameters) -> void
+{
+    for(auto const& parameter : parameters) {
+        for(auto const& concept_bound : parameter.concept_bounds) {
+            collect_concept_id_navigation(collector, ast, checked, unit_index, concept_bound);
+        }
+        if(parameter.default_argument) {
+            std::visit(overloaded {
+                [&](type_argument_type_syntax const& node) {
+                    collect_type_navigation(collector, ast, checked, unit_index, node.type);
+                },
+                [](type_argument_literal_syntax const&) {},
+                [](type_argument_name_syntax const&) {},
+            }, *parameter.default_argument);
+        }
+    }
+}
+
+auto collect_function_navigation(navigation_collector& collector, ast_arena const& ast, semantic_result const& checked, std::size_t unit_index, function_syntax const& function) -> void
+{
+    collect_generic_parameter_navigation(collector, ast, checked, unit_index, function.generic_parameters);
+    for(auto const& parameter : function.parameters) {
+        if(parameter.type) {
+            collect_type_navigation(collector, ast, checked, unit_index, *parameter.type);
+        }
+        if(parameter.default_value) {
+            collect_expression_navigation(collector, ast, checked, unit_index, *parameter.default_value);
+        }
+    }
+    if(function.return_type) {
+        collect_type_navigation(collector, ast, checked, unit_index, *function.return_type);
+    }
+    if(function.has_body) {
+        collect_statement_navigation(collector, ast, checked, unit_index, function.body);
+    }
+}
+
+auto collect_statement_navigation(navigation_collector& collector, ast_arena const& ast, semantic_result const& checked, std::size_t unit_index, stmt_id id) -> void
+{
+    auto const& statement = ast.node(id);
+    std::visit(overloaded {
+        [&](block_statement_syntax const& node) {
+            for(auto child : node.statements) {
+                collect_statement_navigation(collector, ast, checked, unit_index, child);
+            }
+        },
+        [&](declaration_statement_syntax const& node) {
+            if(node.declared_type) {
+                collect_type_navigation(collector, ast, checked, unit_index, *node.declared_type);
+            }
+            collect_expression_navigation(collector, ast, checked, unit_index, node.initializer);
+        },
+        [&](type_alias_statement_syntax const& node) {
+            collect_type_navigation(collector, ast, checked, unit_index, node.type);
+        },
+        [&](if_statement_syntax const& node) {
+            collect_expression_navigation(collector, ast, checked, unit_index, node.condition);
+            collect_statement_navigation(collector, ast, checked, unit_index, node.then_branch);
+            if(node.else_branch) {
+                collect_statement_navigation(collector, ast, checked, unit_index, *node.else_branch);
+            }
+        },
+        [&](while_statement_syntax const& node) {
+            collect_expression_navigation(collector, ast, checked, unit_index, node.condition);
+            collect_statement_navigation(collector, ast, checked, unit_index, node.body);
+        },
+        [&](do_while_statement_syntax const& node) {
+            collect_statement_navigation(collector, ast, checked, unit_index, node.body);
+            collect_expression_navigation(collector, ast, checked, unit_index, node.condition);
+        },
+        [&](for_statement_syntax const& node) {
+            collect_expression_navigation(collector, ast, checked, unit_index, node.range);
+            collect_statement_navigation(collector, ast, checked, unit_index, node.body);
+        },
+        [&](template_for_statement_syntax const&) {},
+        [](break_statement_syntax const&) {},
+        [](continue_statement_syntax const&) {},
+        [&](return_statement_syntax const& node) {
+            if(node.value) {
+                collect_expression_navigation(collector, ast, checked, unit_index, *node.value);
+            }
+        },
+        [&](expression_statement_syntax const& node) {
+            collect_expression_navigation(collector, ast, checked, unit_index, node.expression);
+        },
+    }, statement);
+}
+
+auto collect_ast_navigation(navigation_collector& collector, parse_result const& parsed, semantic_result const& checked, std::size_t unit_index) -> void
+{
+    if(not parsed.root) {
+        return;
+    }
+
+    auto const& root = *parsed.root;
+    for(auto id : root.structs) {
+        auto const& value = parsed.ast.node(id);
+        collect_generic_parameter_navigation(collector, parsed.ast, checked, unit_index, value.generic_parameters);
+        for(auto const& field : value.fields) {
+            collect_type_navigation(collector, parsed.ast, checked, unit_index, field.type);
+        }
+    }
+    for(auto id : root.enums) {
+        auto const& value = parsed.ast.node(id);
+        collect_type_navigation(collector, parsed.ast, checked, unit_index, value.underlying_type);
+        for(auto const& enum_case : value.cases) {
+            collect_expression_navigation(collector, parsed.ast, checked, unit_index, enum_case.value);
+        }
+    }
+    for(auto id : root.variants) {
+        auto const& value = parsed.ast.node(id);
+        collect_generic_parameter_navigation(collector, parsed.ast, checked, unit_index, value.generic_parameters);
+        for(auto const& variant_case : value.cases) {
+            for(auto payload : variant_case.payloads) {
+                collect_type_navigation(collector, parsed.ast, checked, unit_index, payload);
+            }
+        }
+    }
+    for(auto id : root.concepts) {
+        auto const& value = parsed.ast.node(id);
+        collect_generic_parameter_navigation(collector, parsed.ast, checked, unit_index, value.generic_parameters);
+        for(auto const& item : value.items) {
+            std::visit(overloaded {
+                [&](concept_requires_syntax const& requirement) {
+                    for(auto const& constraint : requirement.constraints) {
+                        std::visit(overloaded {
+                            [&](concept_parent_constraint_syntax const& parent) {
+                                collect_concept_id_navigation(collector, parsed.ast, checked, unit_index, parent.parent);
+                            },
+                            [&](concept_type_bound_constraint_syntax const& bound) {
+                                collect_type_navigation(collector, parsed.ast, checked, unit_index, bound.type);
+                                for(auto const& concept_bound : bound.concept_bounds) {
+                                    collect_concept_id_navigation(collector, parsed.ast, checked, unit_index, concept_bound);
+                                }
+                            },
+                            [&](concept_type_equality_constraint_syntax const& equality) {
+                                collect_type_navigation(collector, parsed.ast, checked, unit_index, equality.left);
+                                collect_type_navigation(collector, parsed.ast, checked, unit_index, equality.right);
+                            },
+                        }, constraint);
+                    }
+                },
+                [&](type_alias_syntax const& alias) {
+                    if(alias.value) {
+                        collect_type_navigation(collector, parsed.ast, checked, unit_index, *alias.value);
+                    }
+                },
+                [&](concept_function_requirement_syntax const& function) {
+                    if(function.default_function) {
+                        collect_function_navigation(collector, parsed.ast, checked, unit_index, parsed.ast.node(*function.default_function));
+                        return;
+                    }
+                    for(auto const& parameter : function.parameters) {
+                        if(parameter.type) {
+                            collect_type_navigation(collector, parsed.ast, checked, unit_index, *parameter.type);
+                        }
+                        if(parameter.default_value) {
+                            collect_expression_navigation(collector, parsed.ast, checked, unit_index, *parameter.default_value);
+                        }
+                    }
+                    if(function.return_type) {
+                        collect_type_navigation(collector, parsed.ast, checked, unit_index, *function.return_type);
+                    }
+                },
+            }, item);
+        }
+    }
+    for(auto id : root.type_aliases) {
+        auto const& value = parsed.ast.node(id);
+        if(value.value) {
+            collect_type_navigation(collector, parsed.ast, checked, unit_index, *value.value);
+        }
+    }
+    for(auto id : root.impls) {
+        auto const& value = parsed.ast.node(id);
+        collect_generic_parameter_navigation(collector, parsed.ast, checked, unit_index, value.generic_parameters);
+        collect_type_navigation(collector, parsed.ast, checked, unit_index, value.type);
+        for(auto const& alias : value.type_aliases) {
+            if(alias.value) {
+                collect_type_navigation(collector, parsed.ast, checked, unit_index, *alias.value);
+            }
+        }
+        for(auto function_id : value.functions) {
+            collect_function_navigation(collector, parsed.ast, checked, unit_index, parsed.ast.node(function_id));
+        }
+    }
+    for(auto id : root.concept_impls) {
+        auto const& value = parsed.ast.node(id);
+        collect_generic_parameter_navigation(collector, parsed.ast, checked, unit_index, value.generic_parameters);
+        collect_concept_id_navigation(collector, parsed.ast, checked, unit_index, value.concept_name);
+        collect_type_navigation(collector, parsed.ast, checked, unit_index, value.target_type);
+        for(auto const& alias : value.type_aliases) {
+            if(alias.value) {
+                collect_type_navigation(collector, parsed.ast, checked, unit_index, *alias.value);
+            }
+        }
+        for(auto function_id : value.functions) {
+            collect_function_navigation(collector, parsed.ast, checked, unit_index, parsed.ast.node(function_id));
+        }
+    }
+    for(auto id : root.functions) {
+        collect_function_navigation(collector, parsed.ast, checked, unit_index, parsed.ast.node(id));
+    }
+}
+
 auto read_all(std::istream& input) -> std::string
 {
     return std::string {
@@ -1132,6 +1699,12 @@ auto inspect(inspect_request request) -> inspect_result
         collect_ast_highlights(collector, parsed_units[*active_unit], semantic, *active_unit);
     }
     result.highlights = std::move(collector.highlights);
+
+    if(active_unit and checked) {
+        auto navigation = navigation_collector{ sources, *active_file };
+        collect_ast_navigation(navigation, parsed_units[*active_unit], *checked, *active_unit);
+        result.navigation = std::move(navigation.navigation);
+    }
     return result;
 }
 
@@ -1206,6 +1779,17 @@ auto inspect_to_json(inspect_result const& result) -> std::string
         item["category"] = highlight.category;
         item["startOffset"] = highlight.start_offset;
         item["endOffset"] = highlight.end_offset;
+    }
+
+    payload["navigation"] = nlohmann::ordered_json::array();
+    for(auto const& navigation : result.navigation) {
+        auto& item = payload["navigation"].emplace_back();
+        item["category"] = navigation.category;
+        item["sourceStartOffset"] = navigation.source_start_offset;
+        item["sourceEndOffset"] = navigation.source_end_offset;
+        item["targetFile"] = navigation.target_file;
+        item["targetStartOffset"] = navigation.target_start_offset;
+        item["targetEndOffset"] = navigation.target_end_offset;
     }
 
     return payload.dump();

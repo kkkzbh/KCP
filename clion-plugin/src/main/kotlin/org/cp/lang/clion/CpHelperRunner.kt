@@ -32,6 +32,16 @@ data class CpHelperHighlight(
 )
 
 @Serializable
+data class CpHelperNavigation(
+    val category: String,
+    val sourceStartOffset: Int,
+    val sourceEndOffset: Int,
+    val targetFile: String,
+    val targetStartOffset: Int,
+    val targetEndOffset: Int,
+)
+
+@Serializable
 data class CpInspectionFile(
     val path: String,
     val text: String,
@@ -48,6 +58,7 @@ data class CpInspectionResult(
     val accepted: Boolean,
     val diagnostics: List<CpHelperDiagnostic>,
     val highlights: List<CpHelperHighlight>,
+    val navigation: List<CpHelperNavigation> = emptyList(),
 )
 
 @Serializable
@@ -106,6 +117,7 @@ object CpHelperRunner {
     fun inspect(request: CpInspectionRequest): CpInspectionResult {
         val activeText = request.files.firstOrNull { it.path == request.activeFile }?.text.orEmpty()
         val offsetMap = Utf8OffsetMap(activeText)
+        val offsetMaps = request.files.associate { it.path to Utf8OffsetMap(it.text) }
         val payload = json.encodeToString(request)
         return runHelper(
             command = "inspect",
@@ -130,11 +142,23 @@ object CpHelperRunner {
                         endOffset = offsetMap.toCharOffset(highlight.endOffset),
                     )
                 },
+                navigation = decoded.navigation.map { navigation ->
+                    val targetOffsetMap = offsetMaps[navigation.targetFile]
+                    navigation.copy(
+                        sourceStartOffset = offsetMap.toCharOffset(navigation.sourceStartOffset),
+                        sourceEndOffset = offsetMap.toCharOffset(navigation.sourceEndOffset),
+                        targetStartOffset = targetOffsetMap?.toCharOffset(navigation.targetStartOffset)
+                            ?: navigation.targetStartOffset,
+                        targetEndOffset = targetOffsetMap?.toCharOffset(navigation.targetEndOffset)
+                            ?: navigation.targetEndOffset,
+                    )
+                },
             )
         } ?: CpInspectionResult(
             accepted = false,
             diagnostics = emptyList(),
             highlights = emptyList(),
+            navigation = emptyList(),
         )
     }
 

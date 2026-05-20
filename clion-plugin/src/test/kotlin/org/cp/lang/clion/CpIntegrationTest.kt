@@ -7,6 +7,8 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.nio.file.Files
+import java.nio.file.Path
 
 class CpIntegrationTest {
     @Test
@@ -158,4 +160,127 @@ class CpIntegrationTest {
         assertTrue(result.highlights.any { it.category == "import.name" })
         assertTrue(result.highlights.any { it.category == "function.declaration" })
     }
+
+    @Test
+    fun inspectReportsSemanticNavigationTargets() {
+        val text = """
+            struct box {
+                value: i32;
+            }
+
+            impl box {
+                get(self const&) -> i32
+                {
+                    return self.value;
+                }
+            }
+
+            main() -> i32
+            {
+                let item = box{ .value = 1 };
+                return item.get();
+            }
+        """.trimIndent()
+
+        val result = CpHelperRunner.inspect(
+            CpInspectionRequest(
+                activeFile = "main.cp",
+                files = listOf(CpInspectionFile("main.cp", text)),
+            ),
+        )
+
+        val field = result.navigation.single {
+            it.category == "field.reference" &&
+                it.sourceStartOffset > text.indexOf("box{") &&
+                text.substring(it.sourceStartOffset, it.sourceEndOffset) == "value" &&
+                text.substring(it.targetStartOffset, it.targetEndOffset) == "value"
+        }
+        val method = result.navigation.single {
+            it.category == "member.function.call" &&
+                text.substring(it.sourceStartOffset, it.sourceEndOffset) == "get" &&
+                text.substring(it.targetStartOffset, it.targetEndOffset) == "get"
+        }
+
+        assertEquals("main.cp", field.targetFile)
+        assertEquals("main.cp", method.targetFile)
+    }
+
+    @Test
+    fun labSourcesProduceAcceptedNativeSemanticHighlights() {
+        val repoRoot = Path.of(System.getProperty("cp.repo.root") ?: error("cp.repo.root is not configured"))
+        val labSources = cpSourcesUnder(repoRoot.resolve("lab"))
+        val stdSources = cpSourcesUnder(repoRoot.resolve("std"))
+        val projectFiles = (labSources + stdSources).map { path ->
+            CpInspectionFile(path.toString(), Files.readString(path))
+        }
+
+        for (labSource in labSources) {
+            val text = Files.readString(labSource)
+            val result = CpHelperRunner.inspect(
+                CpInspectionRequest(
+                    activeFile = labSource.toString(),
+                    files = projectFiles,
+                ),
+            )
+
+            assertTrue("${repoRoot.relativize(labSource)} should be semantically accepted", result.accepted)
+            assertTrue("${repoRoot.relativize(labSource)} should not produce active diagnostics", result.diagnostics.isEmpty())
+            assertTrue("${repoRoot.relativize(labSource)} should produce semantic highlights", result.highlights.isNotEmpty())
+            assertNoConflictingHighlights(repoRoot, labSource, text, result.highlights)
+
+            if (repoRoot.relativize(labSource).toString() == "lab/lexer/main.cp") {
+                assertHighlight(text, result.highlights, "read_source", "function.call")
+                assertHighlight(text, result.highlights, "lex", "function.call")
+                assertHighlight(text, result.highlights, "println", "function.call")
+                assertHighlight(text, result.highlights, "size", "member.function.call")
+                assertHighlight(text, result.highlights, "tokens", "field.reference")
+                assertHighlight(text, result.highlights, "kw_int", "enum.case")
+                assertHighlight(text, result.highlights, "eof", "enum.case")
+            }
+        }
+    }
+
+    private fun cpSourcesUnder(root: Path): List<Path> =
+        Files.walk(root).use { stream ->
+            stream
+                .filter { Files.isRegularFile(it) && it.toString().endsWith(".cp") }
+                .sorted()
+                .toList()
+        }
+
+    private fun assertHighlight(text: String, highlights: List<CpHelperHighlight>, fragment: String, category: String) {
+        assertTrue(
+            "$fragment should be highlighted as $category",
+            highlights.any { highlight ->
+                highlight.category == category &&
+                    highlight.endOffset <= text.length &&
+                    text.substring(highlight.startOffset, highlight.endOffset) == fragment
+            },
+        )
+    }
+
+    private fun assertNoConflictingHighlights(
+        repoRoot: Path,
+        source: Path,
+        text: String,
+        highlights: List<CpHelperHighlight>,
+    ) {
+        val conflicts = highlights
+            .groupBy { it.startOffset to it.endOffset }
+            .filterValues { group -> group.map { it.category }.distinct().size > 1 }
+        assertTrue(
+            buildString {
+                append(repoRoot.relativize(source))
+                append(" should not assign conflicting highlight categories")
+                for ((range, group) in conflicts) {
+                    append('\n')
+                    append(text.substring(range.first, range.second))
+                    append(": ")
+                    append(group.map { it.category }.distinct().joinToString(", "))
+                }
+            },
+            conflicts.isEmpty(),
+        )
+    }
+
 }

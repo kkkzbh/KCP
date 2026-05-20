@@ -27,24 +27,32 @@ class CpAnnotator : Annotator {
     }
 
     private fun annotateCall(element: PsiElement, holder: AnnotationHolder) {
-        val member = element.descendants(CpElements.MEMBER_NAME).lastOrNull()
+        val callee = element.children.firstOrNull {
+            it.cpElementType() == CpElements.NAME_EXPRESSION ||
+                it.cpElementType() == CpElements.MEMBER_EXPRESSION ||
+                it.cpElementType() == CpElements.ASSOCIATED_NAME_EXPRESSION
+        } ?: return
+
+        val member = callee.directChild(CpElements.MEMBER_NAME)
         if (member != null) {
             annotate(member, holder, CpSyntaxHighlighter.MEMBER_FUNCTION)
             return
         }
 
-        val associated = element.descendants(CpElements.ASSOCIATED_NAME).lastOrNull()
+        val associated = callee.directChild(CpElements.ASSOCIATED_NAME)
         if (associated != null) {
             annotate(associated, holder, CpSyntaxHighlighter.ASSOCIATED_FUNCTION)
             return
         }
 
-        val callee = element.firstDescendant(CpElements.NAME_EXPRESSION) ?: return
-        annotate(callee, holder, CpSyntaxHighlighter.FUNCTION_CALL)
+        if (callee.cpElementType() == CpElements.NAME_EXPRESSION) {
+            annotate(callee, holder, CpSyntaxHighlighter.FUNCTION_CALL)
+        }
     }
 
     private fun annotateMemberName(element: PsiElement, holder: AnnotationHolder) {
-        if (element.parentByType(CpElements.CALL_EXPRESSION) != null) {
+        val memberExpression = element.parent?.takeIf { it.cpElementType() == CpElements.MEMBER_EXPRESSION }
+        if (memberExpression?.parent?.cpElementType() == CpElements.CALL_EXPRESSION) {
             return
         }
         annotate(element, holder, CpSyntaxHighlighter.FIELD)

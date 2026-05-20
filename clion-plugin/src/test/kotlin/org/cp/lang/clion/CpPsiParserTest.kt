@@ -143,6 +143,21 @@ class CpPsiParserTest : BasePlatformTestCase() {
         assertTrue(file.collectPsiErrors().isEmpty())
     }
 
+    fun testTupleIndexMemberExpressionParses() {
+        val file = parse(
+            """
+            main() -> i32
+            {
+                let pair = (1, 2);
+                return pair.0;
+            }
+            """.trimIndent(),
+        )
+
+        assertTrue(file.descendants(CpElements.MEMBER_NAME).any { it.text == "0" })
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
     fun testOperatorOverloadsBuildStructuredPsi() {
         val file = parse(
             """

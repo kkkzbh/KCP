@@ -241,6 +241,7 @@ impl measurable for box {
 main() -> i32
 {
     type payload = box::item;
+    let current = state::ready;
     let scalar_value: box::scalar = 2;
     const bias = 1;
     let inc: f(i32) -)"
@@ -266,8 +267,8 @@ R"(> i32 {
     assert_true(global_highlights.accepted, "global highlight sample should pass semantic analysis");
     assert_true(highlight_count(global_highlights, global_source, "type.alias.declaration", "public_int") == 1uz,
         "inspect should distinguish top-level type aliases");
-    assert_true(highlight_count(global_highlights, global_source, "enum.case", "ready") == 1uz,
-        "inspect should distinguish enum cases");
+    assert_true(highlight_count(global_highlights, global_source, "enum.case", "ready") == 2uz,
+        "inspect should distinguish enum case declarations and references");
     assert_true(highlight_count(global_highlights, global_source, "concept.declaration", "measurable") == 1uz,
         "inspect should distinguish concept declarations");
     assert_true(highlight_count(global_highlights, global_source, "associated.type.requirement", "item") == 1uz,
@@ -338,6 +339,23 @@ R"(> i32 {
     });
     assert_true(not active_only.accepted, "inactive file syntax errors should make project inspect fail");
     assert_true(active_only.diagnostics.empty(), "inspect should return only active-file diagnostics");
+
+    auto const partial_semantic = cp_lexer_helper::inspect(cp_lexer_helper::inspect_request {
+        .active_file = "partial_semantic.cp",
+        .files = {
+            cp_lexer_helper::source_file_record {
+                "partial_semantic.cp",
+                R"(main()
+{
+    let value = missing_type{ .field = 1 };
+    return;
+})",
+            },
+        },
+    });
+    assert_true(not partial_semantic.accepted, "semantically invalid struct initialization should be rejected");
+    assert_true(has_diagnostic(partial_semantic, "semantic", "unknown_type"),
+        "invalid struct initialization should still report semantic diagnostics");
 
     auto analyze_in = std::istringstream{"let bad = @;"};
     auto analyze_out = std::ostringstream{};
