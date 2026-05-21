@@ -77,6 +77,9 @@ auto lexer::lex_punctuation(token_flags flags) -> std::optional<token>
             }
             return make_token(token_kind::equal, 1);
         case '<':
+            if(cursor_.peek_char(1) == '=' and cursor_.peek_char(2) == '>') {
+                return make_token(token_kind::spaceship, 3);
+            }
             if(cursor_.peek_char(1) == '<') {
                 if(cursor_.peek_char(2) == '=') {
                     return make_token(token_kind::less_less_equal, 3);

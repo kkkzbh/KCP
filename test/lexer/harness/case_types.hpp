@@ -104,6 +104,7 @@ auto constexpr inline all_token_kinds = std::array {
     token_kind::bang_equal,
     token_kind::less,
     token_kind::less_equal,
+    token_kind::spaceship,
     token_kind::greater,
     token_kind::greater_equal,
     token_kind::amp,

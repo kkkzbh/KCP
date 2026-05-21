@@ -33,6 +33,18 @@ auto highlight_count(cp_lexer_helper::inspect_result const& result, std::string_
     }));
 }
 
+auto has_navigation(cp_lexer_helper::inspect_result const& result, std::string_view source, std::string_view target, std::string_view category, std::string_view source_text, std::string_view target_file, std::string_view target_text) -> bool
+{
+    return std::ranges::any_of(result.navigation, [&](auto const& navigation) {
+        return navigation.category == category
+               and navigation.target_file == target_file
+               and navigation.source_end_offset <= source.size()
+               and navigation.target_end_offset <= target.size()
+               and source.substr(navigation.source_start_offset, navigation.source_end_offset - navigation.source_start_offset) == source_text
+               and target.substr(navigation.target_start_offset, navigation.target_end_offset - navigation.target_start_offset) == target_text;
+    });
+}
+
 } // namespace
 
 auto main() -> int
@@ -107,26 +119,28 @@ auto main() -> int
     assert_true(contains(tokens_json, "\"startOfLine\":true"),
         "token json should include token flags");
 
+    auto constexpr math_source = R"(export module math;
+
+export add(a: i32, b: i32) -> i32
+{
+    return a + b;
+})"sv;
+    auto constexpr main_source = R"(import math;
+
+main() -> i32
+{
+    return add(1, 2);
+})"sv;
     auto const multi_file = cp_lexer_helper::inspect(cp_lexer_helper::inspect_request {
         .active_file = "main.cp",
         .files = {
             cp_lexer_helper::source_file_record {
                 "math.cp",
-                R"(export module math;
-
-export add(a: i32, b: i32) -> i32
-{
-    return a + b;
-})",
+                std::string{math_source},
             },
             cp_lexer_helper::source_file_record {
                 "main.cp",
-                R"(import math;
-
-main() -> i32
-{
-    return add(1, 2);
-})",
+                std::string{main_source},
             },
         },
     });
@@ -135,6 +149,102 @@ main() -> i32
     assert_true(has_highlight(multi_file, "import.name"), "inspect should highlight import module names");
     assert_true(has_highlight(multi_file, "function.call"), "inspect should highlight function calls");
     assert_true(has_highlight(multi_file, "type"), "inspect should highlight type names");
+    assert_true(has_navigation(multi_file, main_source, math_source, "import.name", "math", "math.cp", "math"),
+        "inspect should navigate import names to module declarations");
+
+    auto constexpr std_source = R"(export module std;
+export import std.io;)"sv;
+    auto constexpr io_source = R"(export module std.io;
+export import std.io.format;)"sv;
+    auto constexpr format_source = R"(export module std.io.format;
+export print(fmt: str) -> unit {})"sv;
+    auto constexpr std_main_source = R"(import std;
+main() -> i32
+{
+    print("ok");
+    return 0;
+})"sv;
+    auto const resolved_std = cp_lexer_helper::resolve(cp_lexer_helper::resolve_request {
+        .active_file = "/project/main.cp",
+        .target_file = "/project/main.cp",
+        .import_roots = { "/stdlib" },
+        .files = {
+            cp_lexer_helper::source_file_record{ "/project/main.cp", std::string{ std_main_source } },
+            cp_lexer_helper::source_file_record{ "/stdlib/std.cp", std::string{ std_source } },
+            cp_lexer_helper::source_file_record{ "/stdlib/io.cp", std::string{ io_source } },
+            cp_lexer_helper::source_file_record{ "/stdlib/io/format.cp", std::string{ format_source } },
+        },
+    });
+    assert_true(std::ranges::any_of(resolved_std.files, [](auto const& file) {
+        return file.path == "/stdlib/io/format.cp";
+    }), "resolve should expand std re-export closures through native module declarations");
+
+    auto const resolved_sibling = cp_lexer_helper::resolve(cp_lexer_helper::resolve_request {
+        .active_file = "/project/main.cp",
+        .target_file = "/project/main.cp",
+        .import_roots = { "/project" },
+        .files = {
+            cp_lexer_helper::source_file_record{ "/project/main.cp", "import math.x;\nmain() -> i32 { return add(1, 2); }\n" },
+            cp_lexer_helper::source_file_record{ "/project/math.cp", "export module math.x;\nexport add(x: i32, y: i32) -> i32 { return x + y; }\n" },
+            cp_lexer_helper::source_file_record{ "/project/x.cp", "export module x;\n" },
+        },
+    });
+    assert_true(std::ranges::any_of(resolved_sibling.files, [](auto const& file) {
+        return file.path == "/project/math.cp";
+    }), "resolve should use exported module declarations for sibling aggregate files");
+    assert_true(std::ranges::none_of(resolved_sibling.files, [](auto const& file) {
+        return file.path == "/project/x.cp";
+    }), "resolve should not include unrelated files that only match a leaf name");
+
+    auto constexpr private_math_source = R"(export module math.x;
+
+add(x: i32, y: i32) -> i32
+{
+    return x + y;
+})"sv;
+    auto constexpr private_main_source = R"(import math.x;
+
+main() -> i32
+{
+    add(1, 2);
+})"sv;
+    auto const private_import_main = cp_lexer_helper::inspect(cp_lexer_helper::inspect_request {
+        .active_file = "main.cp",
+        .files = {
+            cp_lexer_helper::source_file_record {
+                "math.cp",
+                std::string{private_math_source},
+            },
+            cp_lexer_helper::source_file_record {
+                "main.cp",
+                std::string{private_main_source},
+            },
+        },
+    });
+    assert_true(not private_import_main.accepted, "private imported function use should fail semantic analysis");
+    assert_true(has_diagnostic(private_import_main, "semantic", "unexported_name"),
+        "inspect should explain imported declarations that exist but are not exported");
+    assert_true(has_navigation(private_import_main, private_main_source, private_math_source, "function.call", "add", "math.cp", "add"),
+        "inspect should still navigate unexported imported function calls to their declarations");
+    assert_true(has_diagnostic(private_import_main, "semantic", "missing_return"),
+        "inspect should report explicit non-unit functions that can complete without returning");
+
+    auto const private_import_declaration = cp_lexer_helper::inspect(cp_lexer_helper::inspect_request {
+        .active_file = "math.cp",
+        .files = {
+            cp_lexer_helper::source_file_record {
+                "math.cp",
+                std::string{private_math_source},
+            },
+            cp_lexer_helper::source_file_record {
+                "main.cp",
+                std::string{private_main_source},
+            },
+        },
+    });
+    assert_true(not private_import_declaration.accepted, "private imported declaration should keep project failure state");
+    assert_true(has_diagnostic(private_import_declaration, "semantic", "unexported_name"),
+        "inspect should surface imported-but-not-exported facts on the provider declaration");
 
     auto constexpr rich_source = R"(struct vec2 {
     x: i32;
@@ -252,8 +362,9 @@ R"(> i32 {
     };
     let memory = alloc<i32>(1);
     free(memory);
+    let raw_sum = builtin(1 + 2);
     let value = box::zero();
-    return value.get() + value.size() + scalar_value + (1.5 as i32) + inc(1) + add_bias(1);
+    return value.get() + value.size() + scalar_value + raw_sum + (1.5 as i32) + inc(1) + add_bias(1);
 })"sv;
     auto const global_highlights = cp_lexer_helper::inspect(cp_lexer_helper::inspect_request {
         .active_file = "global.cp",
@@ -287,6 +398,8 @@ R"(> i32 {
         "inspect should distinguish destructors");
     assert_true(highlight_count(global_highlights, global_source, "builtin.function.call", "alloc") == 1uz,
         "inspect should distinguish builtin calls");
+    assert_true(highlight_count(global_highlights, global_source, "builtin.function.call", "builtin") == 1uz,
+        "inspect should distinguish builtin operator escape calls");
     assert_true(highlight_count(global_highlights, global_source, "function.type", "f") == 1uz,
         "inspect should highlight function type markers");
     assert_true(highlight_count(global_highlights, global_source, "lambda.marker", "f") == 2uz,

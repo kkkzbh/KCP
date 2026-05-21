@@ -346,12 +346,31 @@ private class CpBuilder(
             expect(CpTypes.R_PAREN, "expected ')'")
             return
         }
+        if (consumeContextual("prefix") || consumeContextual("postfix")) {
+            parseIncrementOrDecrementOverloadOperatorName()
+            return
+        }
+        if (at(CpTypes.PLUS_PLUS) || at(CpTypes.MINUS_MINUS)) {
+            builder.error("expected 'prefix' or 'postfix' before '++' or '--'")
+            advance()
+            return
+        }
         val current = token()
         if (current != null && current in OVERLOAD_OPERATOR_TOKENS) {
             advance()
             return
         }
         builder.error("expected overloadable operator")
+        if (!at(CpTypes.L_PAREN) && !builder.eof()) {
+            advance()
+        }
+    }
+
+    private fun parseIncrementOrDecrementOverloadOperatorName() {
+        if (consume(CpTypes.PLUS_PLUS) || consume(CpTypes.MINUS_MINUS)) {
+            return
+        }
+        builder.error("expected '++' or '--'")
         if (!at(CpTypes.L_PAREN) && !builder.eof()) {
             advance()
         }
@@ -402,6 +421,7 @@ private class CpBuilder(
         if (consume(CpTypes.COLON)) {
             parseConceptId()
             while (consume(CpTypes.KW_AND)) {
+                parseRepeatedGenericConstraintTarget()
                 parseConceptId()
             }
         }
@@ -409,6 +429,14 @@ private class CpBuilder(
             parseTypeArgument()
         }
         marker.done(CpElements.GENERIC_PARAMETER)
+    }
+
+    private fun parseRepeatedGenericConstraintTarget() {
+        if (lookAhead(0) != CpTypes.IDENTIFIER || lookAhead(1) != CpTypes.COLON) {
+            return
+        }
+        markIdentifier(CpElements.TYPE_NAME, "expected generic parameter")
+        expect(CpTypes.COLON, "expected ':'")
     }
 
     private fun parseConceptId() {
@@ -468,9 +496,20 @@ private class CpBuilder(
             return
         }
         markIdentifier(CpElements.PARAMETER_NAME, "expected parameter name")
-        expect(CpTypes.COLON, "expected ':'")
-        parseType()
-        consumeEllipsis()
+        var hasExplicitType = false
+        if (consume(CpTypes.COLON)) {
+            hasExplicitType = true
+            parseType()
+            consumeEllipsis()
+        } else if (consume(CpTypes.KW_CONST) || consume(CpTypes.KW_MOVE)) {
+            expect(CpTypes.AMP, "expected '&'")
+        } else {
+            consume(CpTypes.AMP)
+        }
+        if (!hasExplicitType && consume(CpTypes.COLON)) {
+            builder.error("inferred parameter suffix cannot be combined with an explicit type")
+            parseType()
+        }
         if (consume(CpTypes.EQUAL)) {
             parseExpression()
         }
@@ -507,10 +546,12 @@ private class CpBuilder(
         if (at(CpTypes.LESS)) {
             parseTypeArgumentList()
         }
-        while (consume(CpTypes.COLON_COLON)) {
-            markIdentifier(CpElements.TYPE_NAME, "expected associated type name")
+        if (syntheticGreaterClosers == 0) {
+            while (consume(CpTypes.COLON_COLON)) {
+                markIdentifier(CpElements.TYPE_NAME, "expected associated type name")
+            }
+            parseTypeSuffix()
         }
-        parseTypeSuffix()
         marker.done(CpElements.TYPE_REFERENCE)
         return true
     }
@@ -1485,6 +1526,7 @@ private class CpBuilder(
             BinaryOperator(CpTypes.BANG_EQUAL, 80, 81),
             BinaryOperator(CpTypes.LESS, 90, 91),
             BinaryOperator(CpTypes.LESS_EQUAL, 90, 91),
+            BinaryOperator(CpTypes.SPACESHIP, 90, 91),
             BinaryOperator(CpTypes.GREATER, 90, 91),
             BinaryOperator(CpTypes.GREATER_EQUAL, 90, 91),
             BinaryOperator(CpTypes.LESS_LESS, 100, 101),
@@ -1552,6 +1594,7 @@ private class CpBuilder(
             CpTypes.BANG_EQUAL,
             CpTypes.LESS,
             CpTypes.LESS_EQUAL,
+            CpTypes.SPACESHIP,
             CpTypes.GREATER,
             CpTypes.GREATER_EQUAL,
             CpTypes.EQUAL,

@@ -22,7 +22,7 @@ auto constexpr make_binary_operator_entry(token_kind kind, int left_bp, int righ
     };
 }
 
-auto constexpr inline cp_binary_operator_table = std::array<binary_operator_entry, 19uz>{{
+auto constexpr inline cp_binary_operator_table = std::array<binary_operator_entry, 20uz>{{
     make_binary_operator_entry(token_kind::kw_or, 30, 31),
     make_binary_operator_entry(token_kind::kw_and, 40, 41),
     make_binary_operator_entry(token_kind::pipe, 50, 51),
@@ -32,6 +32,7 @@ auto constexpr inline cp_binary_operator_table = std::array<binary_operator_entr
     make_binary_operator_entry(token_kind::bang_equal, 80, 81),
     make_binary_operator_entry(token_kind::less, 90, 91),
     make_binary_operator_entry(token_kind::less_equal, 90, 91),
+    make_binary_operator_entry(token_kind::spaceship, 90, 91),
     make_binary_operator_entry(token_kind::greater, 90, 91),
     make_binary_operator_entry(token_kind::greater_equal, 90, 91),
     make_binary_operator_entry(token_kind::less_less, 100, 101),

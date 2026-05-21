@@ -6,7 +6,10 @@ import com.intellij.lang.ASTNode
 import com.intellij.lang.ParserDefinition
 import com.intellij.lang.PsiParser
 import com.intellij.lexer.Lexer
+import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
+import com.intellij.platform.backend.navigation.NavigationRequest
+import com.intellij.pom.Navigatable
 import com.intellij.psi.FileViewProvider
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
@@ -54,13 +57,31 @@ class CpFile(viewProvider: FileViewProvider) : PsiFileBase(viewProvider, CpLangu
     override fun toString(): String = "cp file"
 }
 
-open class CpPsiElement(node: ASTNode) : ASTWrapperPsiElement(node) {
+open class CpPsiElement(node: ASTNode) : ASTWrapperPsiElement(node), Navigatable {
     override fun getReference(): PsiReference? =
         if (cpElementType() in CpReferenceElementTypes) {
             CpReference(this)
         } else {
             null
         }
+
+    override fun canNavigate(): Boolean =
+        navigationDescriptor() != null
+
+    override fun canNavigateToSource(): Boolean =
+        canNavigate()
+
+    override fun navigate(requestFocus: Boolean) {
+        navigationDescriptor()?.navigate(requestFocus)
+    }
+
+    override fun navigationRequest(): NavigationRequest? =
+        navigationDescriptor()?.navigationRequest()
+
+    private fun navigationDescriptor(): OpenFileDescriptor? {
+        val file = containingFile?.virtualFile ?: return null
+        return OpenFileDescriptor(project, file, textOffset)
+    }
 }
 
 class CpNamedElement(node: ASTNode) : CpPsiElement(node), PsiNameIdentifierOwner {
@@ -71,7 +92,7 @@ class CpNamedElement(node: ASTNode) : CpPsiElement(node), PsiNameIdentifierOwner
     override fun setName(name: String): PsiElement {
         val references = containingFile
             ?.let { file ->
-                CpDeclarationResolver.referenceTypes
+                CpNavigationKinds.referenceTypes
                     .flatMap { file.descendants(it) }
                     .mapNotNull { it.reference }
                     .filter { it.isReferenceTo(this) }

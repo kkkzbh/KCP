@@ -36,7 +36,7 @@ class CpCompletionTest : BasePlatformTestCase() {
         )
 
         val items = CpCompletionEngine.items(myFixture.file, myFixture.caretOffset).map { it.name }
-        assertContainsElements(items, "total", "helper", "box")
+        assertContainsElements(items, "total", "helper", "box", "builtin")
     }
 
     fun testCompletesMemberNames() {
@@ -64,5 +64,23 @@ class CpCompletionTest : BasePlatformTestCase() {
 
         val items = CpCompletionEngine.items(myFixture.file, myFixture.caretOffset).map { it.name }
         assertContainsElements(items, "value", "get")
+    }
+
+    fun testCompletesOperatorAffixes() {
+        myFixture.configureByText(
+            CpFileType.INSTANCE,
+            """
+            struct counter {
+                value: i32;
+            }
+
+            impl counter {
+                operator <caret>
+            }
+            """.trimIndent(),
+        )
+
+        val items = CpCompletionEngine.items(myFixture.file, myFixture.caretOffset).map { it.name }
+        assertContainsElements(items, "prefix", "postfix")
     }
 }

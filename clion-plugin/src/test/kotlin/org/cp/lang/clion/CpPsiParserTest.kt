@@ -143,6 +143,41 @@ class CpPsiParserTest : BasePlatformTestCase() {
         assertTrue(file.collectPsiErrors().isEmpty())
     }
 
+    fun testInferredFunctionParametersDoNotRequireColon() {
+        val file = parse(
+            """
+            read(value const&) -> i32
+            {
+                return value;
+            }
+
+            borrow(value&) -> i32
+            {
+                return value;
+            }
+
+            take(value move&) -> i32
+            {
+                return value;
+            }
+
+            add(left, right) -> i32
+            {
+                return left + right;
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(5, file.descendants(CpElements.PARAMETER).size)
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
+    fun testMixedInferredParameterSuffixAndTypeReportsPsiError() {
+        val file = parse("bad(value&: i32) -> i32 { return value; }")
+
+        assertTrue(file.collectPsiErrors().any { "inferred parameter suffix cannot be combined with an explicit type" in it })
+    }
+
     fun testTupleIndexMemberExpressionParses() {
         val file = parse(
             """
@@ -177,6 +212,16 @@ class CpPsiParserTest : BasePlatformTestCase() {
                     x += rhs.x;
                     y += rhs.y;
                 }
+
+                operator prefix ++(self&) -> this&
+                {
+                    return self;
+                }
+
+                operator postfix --(self&) -> this
+                {
+                    return self;
+                }
             }
             """.trimIndent(),
         )
@@ -185,7 +230,43 @@ class CpPsiParserTest : BasePlatformTestCase() {
         assertTrue("top-level operator should be parsed as a function", "operator +" in names)
         assertTrue("operator [] should parse both bracket tokens as the function name", "operator []" in names)
         assertTrue("operator += should be parsed as an impl function", "operator +=" in names)
-        assertEquals(3, file.descendants(CpElements.FUNCTION).size)
+        assertTrue("operator prefix ++ should include the affix in the function name", "operator prefix ++" in names)
+        assertTrue("operator postfix -- should include the affix in the function name", "operator postfix --" in names)
+        assertEquals(5, file.descendants(CpElements.FUNCTION).size)
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
+    fun testBareIncrementOperatorDeclarationReportsPsiError() {
+        val file = parse(
+            """
+            impl counter {
+                operator ++(self&) -> this&
+                {
+                    return self;
+                }
+            }
+            """.trimIndent(),
+        )
+
+        assertTrue(file.collectPsiErrors().any { "expected 'prefix' or 'postfix' before '++' or '--'" in it })
+    }
+
+    fun testRepeatedGenericBoundTargetsParse() {
+        val file = parse(
+            """
+            struct iota_iter<T: equality_comparable<T> and T: incrementable> {
+                current: T;
+                end: T;
+            }
+
+            iota<T: equality_comparable<T> and T: incrementable>(begin: T, end: T) -> iota_iter<T>
+            {
+                return iota_iter<T>{ .current = begin, .end = end };
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(2, file.descendants(CpElements.GENERIC_PARAMETER).size)
         assertTrue(file.collectPsiErrors().isEmpty())
     }
 
@@ -228,6 +309,21 @@ class CpPsiParserTest : BasePlatformTestCase() {
         assertEquals(2, file.descendants(CpElements.ENUM_CASE).size)
         assertTrue(file.descendants(CpElements.LAMBDA_EXPRESSION).isNotEmpty())
         assertTrue(file.descendants(CpElements.TYPE_REFERENCE).any { it.text == "!" })
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
+    fun testNestedGenericAssociatedConstructorParses() {
+        val file = parse(
+            """
+            parse(tokens: vector<token>) -> optional<vector<op_symbol>>
+            {
+                let result = vector<op_symbol>{};
+                return optional<vector<op_symbol>>::some(move result);
+            }
+            """.trimIndent(),
+        )
+
+        assertTrue(file.descendants(CpElements.ASSOCIATED_NAME_EXPRESSION).any { it.text == "optional<vector<op_symbol>>::some" })
         assertTrue(file.collectPsiErrors().isEmpty())
     }
 

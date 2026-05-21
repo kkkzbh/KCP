@@ -1,14 +1,12 @@
 package org.cp.lang.clion
 
 import com.intellij.execution.RunManager
-import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.FileDocumentManager
+import com.intellij.openapi.roots.ProjectRootManager
+import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiFile
-import com.intellij.psi.search.FileTypeIndex
-import com.intellij.psi.search.GlobalSearchScope
-import java.nio.file.Files
 import java.nio.file.Path
 
 data class CpSnapshotSource(
@@ -17,9 +15,6 @@ data class CpSnapshotSource(
 )
 
 object CpProjectSnapshotCollector {
-    private val log: Logger = Logger.getInstance(CpProjectSnapshotCollector::class.java)
-    private val importRegex = Regex("""(?m)^\s*(?:export\s+)?import\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*;""")
-
     fun collect(file: PsiFile, activeText: String): CpInspectionRequest? {
         if (file.language != CpLanguage) {
             return null
@@ -28,34 +23,21 @@ object CpProjectSnapshotCollector {
         val activePath = file.virtualFile?.path ?: file.name
         val targetPath = selectedTargetPath(file) ?: activePath
         val importRoots = importRoots(file, targetPath)
-        val projectFiles = runCatching {
-            FileTypeIndex.getFiles(CpFileType.INSTANCE, GlobalSearchScope.projectScope(file.project))
-                .asSequence()
-                .filter { it.isValid && !it.isDirectory }
-                .mapNotNull { virtualFile ->
-                    runCatching {
-                        CpSnapshotSource(
-                            path = virtualFile.path,
-                            text = loadEditorText(virtualFile),
-                        )
-                    }.getOrElse { exception ->
-                        log.warn("failed to read cp project file ${virtualFile.path}", exception)
-                        null
-                    }
-                }
-                .toList()
-        }.getOrElse { exception ->
-            log.warn("failed to collect cp project files", exception)
-            emptyList()
-        }
-
+        val moduleSearchRoots = moduleSearchRoots(file, activePath, targetPath)
         return buildRequest(
             activePath = activePath,
             activeText = activeText,
             targetPath = targetPath,
             importRoots = importRoots,
-            projectFiles = projectFiles,
-        )
+            moduleSearchRoots = moduleSearchRoots,
+            projectFiles = unsavedCpFiles() + nonLocalProjectCpFiles(file),
+        ).also { request ->
+            CpDiagnosticsTrace.info("snapshot:${request.activeFile}:${request.files.map { it.path }}") {
+                "cp snapshot active=${request.activeFile} target=$targetPath " +
+                    "importRoots=$importRoots moduleSearchRoots=$moduleSearchRoots " +
+                    "files=${request.files.map { it.path }}"
+            }
+        }
     }
 
     fun buildRequest(
@@ -64,56 +46,77 @@ object CpProjectSnapshotCollector {
         projectFiles: Iterable<CpSnapshotSource>,
         targetPath: String = activePath,
         importRoots: Iterable<String> = emptyList(),
+        moduleSearchRoots: Iterable<String> = emptyList(),
     ): CpInspectionRequest {
-        val sourceTexts = linkedMapOf<String, String>()
-        for (projectFile in projectFiles) {
-            sourceTexts[normalizedPath(projectFile.path)] = projectFile.text
+        val active = cpNormalizePath(activePath)
+        val target = cpNormalizePath(targetPath)
+        val roots = importRoots.map(::cpNormalizePath)
+        val searchRoots = moduleSearchRoots
+            .plus(listOfNotNull(Path.of(active).parent?.toString(), Path.of(target).parent?.toString()))
+            .map(::cpNormalizePath)
+            .distinct()
+            .toList()
+        val knownFiles = linkedMapOf<String, CpInspectionFile>()
+        for (source in projectFiles) {
+            val path = cpNormalizePath(source.path)
+            knownFiles[path] = CpInspectionFile(path = path, text = source.text)
         }
-        sourceTexts[normalizedPath(activePath)] = activeText
+        knownFiles[active] = CpInspectionFile(path = active, text = activeText)
 
-        val files = linkedMapOf<String, String>()
-        val loaded = mutableSetOf<String>()
-        val pending = mutableListOf(normalizedPath(targetPath))
-        val roots = importRoots.map { normalizedPath(it) }
-
-        var index = 0
-        while (index < pending.size) {
-            val path = pending[index]
-            index += 1
-            if (!loaded.add(path)) {
-                continue
-            }
-            val text = sourceTexts[path] ?: readText(path) ?: continue
-            files[path] = text
-
-            val base = Path.of(path).parent
-            for (moduleName in importedModules(text)) {
-                val resolved = resolveImportPath(base, moduleName, roots, sourceTexts) ?: continue
-                if (resolved !in loaded) {
-                    pending.add(resolved)
-                }
-            }
-        }
-
-        val active = normalizedPath(activePath)
-        if (active !in files) {
-            return CpInspectionRequest(
+        return CpHelperRunner.resolveInspectionRequest(
+            CpInspectionResolveRequest(
                 activeFile = active,
-                files = listOf(CpInspectionFile(path = active, text = activeText)),
-            )
-        }
-
-        return CpInspectionRequest(
+                targetFile = target,
+                importRoots = roots,
+                searchRoots = searchRoots,
+                files = knownFiles.values.toList(),
+            ),
+        ) ?: CpInspectionRequest(
             activeFile = active,
-            files = files.map { (path, text) ->
-                CpInspectionFile(path = path, text = text)
-            },
+            files = listOf(CpInspectionFile(path = active, text = activeText)),
         )
     }
 
-    private fun loadEditorText(virtualFile: VirtualFile): String =
-        FileDocumentManager.getInstance().getDocument(virtualFile)?.text
-            ?: VfsUtilCore.loadText(virtualFile)
+    private fun unsavedCpFiles(): List<CpSnapshotSource> {
+        val fileDocumentManager = FileDocumentManager.getInstance()
+        return fileDocumentManager.unsavedDocuments
+            .asSequence()
+            .mapNotNull { document ->
+                val virtualFile = fileDocumentManager.getFile(document)
+                    ?.takeIf { it.isValid && !it.isDirectory && it.extension == CpFileType.INSTANCE.defaultExtension }
+                    ?: return@mapNotNull null
+                CpSnapshotSource(
+                    path = virtualFile.path,
+                    text = document.text,
+                )
+            }
+            .distinctBy { cpNormalizePath(it.path) }
+            .toList()
+    }
+
+    private fun nonLocalProjectCpFiles(file: PsiFile): List<CpSnapshotSource> {
+        val files = mutableListOf<CpSnapshotSource>()
+        val roots = ProjectRootManager.getInstance(file.project).contentRoots
+        for (root in roots) {
+            if (root.fileSystem == LocalFileSystem.getInstance()) {
+                continue
+            }
+            VfsUtilCore.iterateChildrenRecursively(root, null) { virtualFile ->
+                if (!virtualFile.isDirectory && virtualFile.extension == CpFileType.INSTANCE.defaultExtension) {
+                    files += CpSnapshotSource(
+                        path = virtualFile.path,
+                        text = loadVirtualFileText(virtualFile),
+                    )
+                }
+                true
+            }
+        }
+        return files
+    }
+
+    private fun loadVirtualFileText(file: VirtualFile): String =
+        FileDocumentManager.getInstance().getDocument(file)?.text
+            ?: VfsUtilCore.loadText(file)
 
     private fun selectedTargetPath(file: PsiFile): String? {
         val configuration = RunManager.getInstance(file.project).selectedConfiguration?.configuration as? CpRunConfiguration
@@ -130,72 +133,27 @@ object CpProjectSnapshotCollector {
             .plus(
                 listOfNotNull(
                     file.project.basePath,
-                    compiler?.let { CpRunPaths.resolveStdlibRoot(it)?.toString() },
+                    compiler?.let { CpRunPaths.resolveStdlibRoot(file.project, source, it)?.toString() },
                 ).asSequence(),
             )
             .distinct()
             .toList()
     }
 
-    private fun importedModules(text: String): List<String> =
-        importRegex.findAll(text).map { it.groupValues[1] }.toList()
-
-    private fun resolveImportPath(
-        base: Path?,
-        moduleName: String,
-        roots: List<String>,
-        sourceTexts: Map<String, String>,
-    ): String? {
-        val candidates = mutableListOf<Path>()
-        if (base != null) {
-            candidates.add(base.resolve(moduleLeafPath(moduleName)))
-            candidates.add(base.resolve(moduleRelativePath(moduleName)))
-            aggregateRelativePath(moduleName)?.let { candidates.add(base.resolve(it)) }
-        }
-        for (root in roots) {
-            val rootPath = Path.of(root)
-            candidates.add(rootPath.resolve(moduleRelativePath(moduleName)))
-            aggregateRelativePath(moduleName)?.let { candidates.add(rootPath.resolve(it)) }
-            stdlibRelativePath(moduleName)?.let { candidates.add(rootPath.resolve(it)) }
-        }
-        return candidates
+    private fun moduleSearchRoots(file: PsiFile, activePath: String, targetPath: String): List<String> {
+        val projectRoots = ProjectRootManager.getInstance(file.project).contentRoots
             .asSequence()
-            .map { normalizedPath(it.toString()) }
-            .firstOrNull { it in sourceTexts || Files.isRegularFile(Path.of(it)) }
+            .filter { it.fileSystem == LocalFileSystem.getInstance() }
+            .map { it.path }
+        return sequenceOf(
+            Path.of(activePath).parent?.toString(),
+            Path.of(targetPath).parent?.toString(),
+        )
+            .filterNotNull()
+            .plus(file.project.basePath?.let { sequenceOf(it) } ?: emptySequence())
+            .plus(projectRoots)
+            .map(::cpNormalizePath)
+            .distinct()
+            .toList()
     }
-
-    private fun moduleRelativePath(moduleName: String): Path {
-        val components = moduleName.split(".")
-        var path = Path.of("")
-        for ((index, component) in components.withIndex()) {
-            path = path.resolve(if (index == components.lastIndex) "$component.cp" else component)
-        }
-        return path
-    }
-
-    private fun moduleLeafPath(moduleName: String): Path =
-        Path.of("${moduleName.substringAfterLast('.')}.cp")
-
-    private fun aggregateRelativePath(moduleName: String): Path? {
-        val components = moduleName.split(".")
-        var path = Path.of("")
-        for (component in components) {
-            path = path.resolve(component)
-        }
-        return path.resolve("${components.last()}.cp")
-    }
-
-    private fun stdlibRelativePath(moduleName: String): Path? =
-        moduleName.removePrefix("std.").takeIf { it != moduleName }?.let { moduleRelativePath(it) }
-
-    private fun readText(path: String): String? =
-        runCatching {
-            Path.of(path).takeIf { Files.isRegularFile(it) }?.let { Files.readString(it) }
-        }.getOrNull()
-
-    private fun normalizedPath(path: String): String =
-        Path.of(path).toAbsolutePath().normalize().toString()
 }
-
-private fun Path?.parentsFromSelf(): Sequence<Path> =
-    generateSequence(this) { it.parent }

@@ -20,6 +20,7 @@ target_sources(cp_lexer_helper_lib
 
 target_link_libraries(cp_lexer_helper_lib
     PUBLIC
+        cp_import_resolver
         diagnostic
         lexer
         nlohmann_json::nlohmann_json

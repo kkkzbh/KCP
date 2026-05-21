@@ -102,9 +102,15 @@ val buildNativeHelper by tasks.registering(Exec::class) {
 
     dependsOn(configureNativeHelper)
     inputs.file(nativeBuildDir.file("CMakeCache.txt"))
+    inputs.file(repoRoot.file("CMakeLists.txt"))
     inputs.dir(repoRoot.dir("clion-plugin/native"))
+    inputs.dir(repoRoot.dir("compiler"))
+    inputs.dir(repoRoot.dir("diagnostic"))
+    inputs.dir(repoRoot.dir("lexer"))
     inputs.dir(repoRoot.dir("parser"))
+    inputs.dir(repoRoot.dir("preprocessor"))
     inputs.dir(repoRoot.dir("semantic"))
+    inputs.dir(repoRoot.dir("source"))
     outputs.file(nativeHelperPath)
 
     commandLine(

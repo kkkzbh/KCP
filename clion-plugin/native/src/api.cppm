@@ -11,6 +11,7 @@ import lexer;
 import parser;
 import parser.ast;
 import semantic;
+import compiler.import_resolver;
 
 export namespace cp_lexer_helper {
 
@@ -30,6 +31,17 @@ struct inspect_request
 {
     std::string active_file;
     std::vector<source_file_record> files;
+};
+
+struct resolve_request
+{
+    std::string active_file;
+    std::string target_file;
+    std::vector<std::string> entry_files;
+    std::vector<std::string> import_roots;
+    std::vector<std::string> search_roots;
+    std::vector<source_file_record> files;
+    bool follow_stdlib_imports{ true };
 };
 
 struct diagnostic_record
@@ -87,11 +99,15 @@ auto tokenize(std::string_view filename, std::string_view text) -> std::vector<t
 
 auto inspect(inspect_request request) -> inspect_result;
 
+auto resolve(resolve_request request) -> inspect_request;
+
 auto diagnostics_to_json(std::span<diagnostic_record const> diagnostics) -> std::string;
 
 auto tokens_to_json(std::span<token_record const> tokens) -> std::string;
 
 auto inspect_to_json(inspect_result const& result) -> std::string;
+
+auto inspect_request_to_json(inspect_request const& request) -> std::string;
 
 auto run_cli(std::span<std::string_view const> args, std::istream& input, std::ostream& output, std::ostream& error) -> int;
 
@@ -540,19 +556,28 @@ auto collect_expression_highlights(highlight_collector& collector, ast_arena con
         },
         [&](call_expr_syntax const& node) {
             collect_type_argument_highlights(collector, ast, checked, unit_index, node.type_arguments);
-            if(checked != nullptr) {
-                auto found = checked->builtin_calls.find(semantic_node_key{unit_index, id});
-                if(found != checked->builtin_calls.end()) {
-                    if(auto const* name = std::get_if<name_expr_syntax>(&ast.node(node.callee))) {
-                        collector.add("builtin.function.call", name->name);
-                    } else {
-                        collect_expression_highlights(collector, ast, checked, unit_index, node.callee, true);
-                    }
-                    for(auto argument : node.arguments) {
-                        collect_expression_highlights(collector, ast, checked, unit_index, argument);
-                    }
-                    return;
+            auto const builtin_call = [&]() -> bool {
+                if(checked == nullptr) {
+                    return false;
                 }
+                return checked->builtin_calls.find(semantic_node_key{unit_index, id}) != checked->builtin_calls.end();
+            }();
+            auto const builtin_escape_call = [&]() -> bool {
+                if(auto const* name = std::get_if<name_expr_syntax>(&ast.node(node.callee))) {
+                    return source_text(collector, name->name) == "builtin";
+                }
+                return false;
+            }();
+            if(builtin_call or builtin_escape_call) {
+                if(auto const* name = std::get_if<name_expr_syntax>(&ast.node(node.callee))) {
+                    collector.add("builtin.function.call", name->name);
+                } else {
+                    collect_expression_highlights(collector, ast, checked, unit_index, node.callee, true);
+                }
+                for(auto argument : node.arguments) {
+                    collect_expression_highlights(collector, ast, checked, unit_index, argument);
+                }
+                return;
             }
             collect_expression_highlights(collector, ast, checked, unit_index, node.callee, true);
             for(auto argument : node.arguments) {
@@ -1022,6 +1047,40 @@ auto enum_case_declaration_span(semantic_result const& checked, semantic_enum_ca
     return std::nullopt;
 }
 
+auto module_name_text(source_manager const& sources, module_name_syntax const& name) -> std::string
+{
+    return ast_source_view{sources}.module_name(name);
+}
+
+auto module_declaration_spans(source_manager const& sources, std::span<parse_result const> parsed_units) -> std::map<std::string, source_span>
+{
+    auto declarations = std::map<std::string, source_span>{};
+    for(auto const& parsed : parsed_units) {
+        if(not parsed.root or not parsed.root->module_header) {
+            continue;
+        }
+        auto const& name = parsed.root->module_header->name;
+        declarations.emplace(module_name_text(sources, name), name.full_span);
+    }
+    return declarations;
+}
+
+auto collect_import_navigation(navigation_collector& collector, std::span<parse_result const> parsed_units, std::size_t unit_index) -> void
+{
+    auto const declarations = module_declaration_spans(collector.sources, parsed_units);
+    auto const& parsed = parsed_units[unit_index];
+    if(not parsed.root) {
+        return;
+    }
+
+    for(auto const& import : parsed.root->imports) {
+        auto const found = declarations.find(module_name_text(collector.sources, import.name));
+        if(found != declarations.end()) {
+            collector.add("import.name", import.name.full_span, found->second);
+        }
+    }
+}
+
 auto exact_symbol_span(semantic_result const& checked, std::string_view name, symbol_kind kind) -> std::optional<source_span>
 {
     auto found = std::optional<source_span>{};
@@ -1450,11 +1509,161 @@ auto collect_ast_navigation(navigation_collector& collector, parse_result const&
     }
 }
 
+auto parsed_unit_index_for_file(std::span<file_id const> parsed_file_ids, file_id file) -> std::optional<std::size_t>
+{
+    auto found = std::ranges::find(parsed_file_ids, file);
+    if(found == parsed_file_ids.end()) {
+        return std::nullopt;
+    }
+    return static_cast<std::size_t>(std::distance(parsed_file_ids.begin(), found));
+}
+
+auto unit_imports_module(source_manager const& sources, parse_result const& parsed, std::string_view module_name) -> bool
+{
+    if(not parsed.root) {
+        return false;
+    }
+
+    return std::ranges::any_of(parsed.root->imports, [&](import_syntax const& import) {
+        return module_name_text(sources, import.name) == module_name;
+    });
+}
+
+auto active_module_name(source_manager const& sources, parse_result const& parsed) -> std::optional<std::string>
+{
+    if(not parsed.root or not parsed.root->module_header) {
+        return std::nullopt;
+    }
+    return module_name_text(sources, parsed.root->module_header->name);
+}
+
+auto non_exported_free_functions(source_manager const& sources, parse_result const& parsed) -> std::map<std::string, source_span>
+{
+    auto result = std::map<std::string, source_span>{};
+    if(not parsed.root) {
+        return result;
+    }
+
+    for(auto id : parsed.root->functions) {
+        auto const& function = parsed.ast.node(id);
+        if(function.exported or function.kind == function_syntax_kind::lambda) {
+            continue;
+        }
+        result.emplace(std::string{sources.slice(function.name)}, function.name);
+    }
+    return result;
+}
+
+auto make_unexported_declaration_record(source_manager const& sources, byte_pos active_start, source_span declaration, std::string_view name, std::string_view module_name) -> diagnostic_record
+{
+    auto const position = sources.position(declaration.start);
+    return diagnostic_record {
+        .stage = "semantic",
+        .code = "unexported_name",
+        .message = std::format("function '{}' is used through import '{}' but is not exported", name, module_name),
+        .severity = "error",
+        .start_offset = declaration.start - active_start,
+        .end_offset = declaration.end - active_start,
+        .line = position.line,
+        .column = position.column,
+    };
+}
+
+auto append_unexported_declaration_diagnostics(std::vector<diagnostic_record>& output, source_manager const& sources, byte_pos active_start, file_id active_file, std::span<parse_result const> parsed_units, std::span<file_id const> parsed_file_ids, std::size_t active_unit, std::span<diagnostic const> diagnostics) -> void
+{
+    auto const module_name = active_module_name(sources, parsed_units[active_unit]);
+    if(not module_name) {
+        return;
+    }
+
+    auto declarations = non_exported_free_functions(sources, parsed_units[active_unit]);
+    if(declarations.empty()) {
+        return;
+    }
+
+    auto emitted = std::set<std::string>{};
+    for(auto const& diagnostic : diagnostics) {
+        if(diagnostic.kind != diagnostic_kind::unknown_name and diagnostic.kind != diagnostic_kind::unexported_name) {
+            continue;
+        }
+
+        auto const use_file = span_file(sources, diagnostic.primary_span);
+        if(use_file == active_file) {
+            continue;
+        }
+
+        auto use_unit = parsed_unit_index_for_file(parsed_file_ids, use_file);
+        if(not use_unit or not unit_imports_module(sources, parsed_units[*use_unit], *module_name)) {
+            continue;
+        }
+
+        auto name = std::string{sources.slice(diagnostic.primary_span)};
+        auto declaration = declarations.find(name);
+        if(declaration == declarations.end() or not emitted.emplace(name).second) {
+            continue;
+        }
+
+        output.emplace_back(make_unexported_declaration_record(sources, active_start, declaration->second, name, *module_name));
+    }
+}
+
 auto read_all(std::istream& input) -> std::string
 {
     return std::string {
         std::istreambuf_iterator<char>(input),
         std::istreambuf_iterator<char>()};
+}
+
+auto parse_source_files(nlohmann::ordered_json const& payload, std::ostream& error, bool require_field)
+    -> std::optional<std::vector<source_file_record>>
+{
+    auto result = std::vector<source_file_record>{};
+    auto const files = payload.find("files");
+    if(files == payload.end()) {
+        if(require_field) {
+            error << "request must contain files array\n";
+            return std::nullopt;
+        }
+        return result;
+    }
+    if(not files->is_array()) {
+        error << "files must be an array\n";
+        return std::nullopt;
+    }
+
+    for(auto const& file : *files) {
+        if(not file.is_object()) {
+            error << "file entry must be an object\n";
+            return std::nullopt;
+        }
+        result.emplace_back(
+            file.value("path", std::string{}),
+            file.value("text", std::string{})
+        );
+    }
+    return result;
+}
+
+auto parse_string_array(nlohmann::ordered_json const& payload, std::string_view field, std::ostream& error)
+    -> std::optional<std::vector<std::string>>
+{
+    auto result = std::vector<std::string>{};
+    auto const array = payload.find(field);
+    if(array == payload.end()) {
+        return result;
+    }
+    if(not array->is_array()) {
+        error << field << " must be an array\n";
+        return std::nullopt;
+    }
+    for(auto const& item : *array) {
+        if(not item.is_string()) {
+            error << field << " entries must be strings\n";
+            return std::nullopt;
+        }
+        result.emplace_back(item.get<std::string>());
+    }
+    return result;
 }
 
 auto parse_inspect_request(std::string_view text, std::ostream& error) -> std::optional<inspect_request>
@@ -1463,24 +1672,11 @@ auto parse_inspect_request(std::string_view text, std::ostream& error) -> std::o
         auto const payload = nlohmann::ordered_json::parse(text);
         auto request = inspect_request{};
         request.active_file = payload.value("activeFile", std::string{});
-
-        auto const files = payload.find("files");
-        if(files == payload.end() or not files->is_array()) {
-            error << "inspect request must contain files array\n";
+        auto files = parse_source_files(payload, error, true);
+        if(not files) {
             return std::nullopt;
         }
-
-        for(auto const& file : *files) {
-            if(not file.is_object()) {
-                error << "inspect file entry must be an object\n";
-                return std::nullopt;
-            }
-            request.files.emplace_back(
-                file.value("path", std::string{}),
-                file.value("text", std::string{})
-            );
-        }
-
+        request.files = std::move(*files);
         if(request.active_file.empty() or request.files.empty()) {
             error << "inspect request must contain activeFile and at least one file\n";
             return std::nullopt;
@@ -1493,9 +1689,41 @@ auto parse_inspect_request(std::string_view text, std::ostream& error) -> std::o
     }
 }
 
+auto parse_resolve_request(std::string_view text, std::ostream& error) -> std::optional<resolve_request>
+{
+    try {
+        auto const payload = nlohmann::ordered_json::parse(text);
+        auto request = resolve_request{};
+        request.active_file = payload.value("activeFile", std::string{});
+        request.target_file = payload.value("targetFile", std::string{});
+        request.follow_stdlib_imports = payload.value("followStdlibImports", true);
+
+        auto entry_files = parse_string_array(payload, "entryFiles", error);
+        auto import_roots = parse_string_array(payload, "importRoots", error);
+        auto search_roots = parse_string_array(payload, "searchRoots", error);
+        auto files = parse_source_files(payload, error, false);
+        if(not entry_files or not import_roots or not search_roots or not files) {
+            return std::nullopt;
+        }
+        request.entry_files = std::move(*entry_files);
+        request.import_roots = std::move(*import_roots);
+        request.search_roots = std::move(*search_roots);
+        request.files = std::move(*files);
+
+        if(request.active_file.empty()) {
+            error << "resolve request must contain activeFile\n";
+            return std::nullopt;
+        }
+        return request;
+    } catch(nlohmann::json::exception const& exception) {
+        error << "invalid resolve json: " << exception.what() << '\n';
+        return std::nullopt;
+    }
+}
+
 auto usage(std::ostream& error) -> void
 {
-    error << "usage: cp-lexer-helper <analyze|tokens|inspect> --stdin [--filename <name>] --format json\n";
+    error << "usage: cp-lexer-helper <analyze|tokens|inspect|resolve> --stdin [--filename <name>] --format json\n";
 }
 
 struct cli_request
@@ -1553,8 +1781,9 @@ auto parse_cli(std::span<std::string_view const> args, std::ostream& error) -> s
         request.command == "analyze"
         or request.command == "tokens"
         or request.command == "inspect"
+        or request.command == "resolve"
     );
-    auto const needs_filename = request.command != "inspect";
+    auto const needs_filename = request.command != "inspect" and request.command != "resolve";
 
     if(not known_command
        or not request.read_stdin
@@ -1615,6 +1844,40 @@ auto tokenize(std::string_view filename, std::string_view text) -> std::vector<t
     return result;
 }
 
+auto resolve(resolve_request request) -> inspect_request
+{
+    auto native = cp_imports::resolve_request {
+        .active_file = std::move(request.active_file),
+        .target_file = std::move(request.target_file),
+        .entry_files = std::move(request.entry_files),
+        .import_roots = std::move(request.import_roots),
+        .search_roots = std::move(request.search_roots),
+        .follow_stdlib_imports = request.follow_stdlib_imports,
+    };
+    native.files.reserve(request.files.size());
+    for(auto& file : request.files) {
+        native.files.emplace_back(
+            cp_imports::source_file {
+                .path = std::move(file.path),
+                .text = std::move(file.text),
+            }
+        );
+    }
+
+    auto resolved = cp_imports::resolve_source_files(std::move(native));
+    auto output = inspect_request {
+        .active_file = std::move(resolved.active_file),
+    };
+    output.files.reserve(resolved.files.size());
+    for(auto& file : resolved.files) {
+        output.files.emplace_back(
+            std::move(file.path),
+            std::move(file.text)
+        );
+    }
+    return output;
+}
+
 auto inspect(inspect_request request) -> inspect_result
 {
     auto sources = source_manager{};
@@ -1636,6 +1899,7 @@ auto inspect(inspect_request request) -> inspect_result
 
     auto all_diagnostics = std::vector<diagnostic>{};
     auto parsed_units = std::vector<parse_result>{};
+    auto parsed_file_ids = std::vector<file_id>{};
     auto active_unit = std::optional<std::size_t>{};
     auto active_tokens = std::vector<token>{};
     auto frontend_ok = true;
@@ -1668,6 +1932,7 @@ auto inspect(inspect_request request) -> inspect_result
         if(file == *active_file) {
             active_unit = parsed_units.size();
         }
+        parsed_file_ids.emplace_back(file);
         parsed_units.emplace_back(std::move(parsed));
     }
 
@@ -1691,6 +1956,18 @@ auto inspect(inspect_request request) -> inspect_result
             result.diagnostics.emplace_back(make_diagnostic_record(sources, active_start, diagnostic));
         }
     }
+    if(active_unit) {
+        append_unexported_declaration_diagnostics(
+            result.diagnostics,
+            sources,
+            active_start,
+            *active_file,
+            std::span<parse_result const>{ parsed_units.data(), parsed_units.size() },
+            std::span<file_id const>{ parsed_file_ids.data(), parsed_file_ids.size() },
+            *active_unit,
+            std::span<diagnostic const>{ all_diagnostics.data(), all_diagnostics.size() }
+        );
+    }
 
     auto collector = highlight_collector{ sources, *active_file };
     add_token_highlights(collector, active_tokens);
@@ -1702,6 +1979,11 @@ auto inspect(inspect_request request) -> inspect_result
 
     if(active_unit and checked) {
         auto navigation = navigation_collector{ sources, *active_file };
+        collect_import_navigation(
+            navigation,
+            std::span<parse_result const>{ parsed_units.data(), parsed_units.size() },
+            *active_unit
+        );
         collect_ast_navigation(navigation, parsed_units[*active_unit], *checked, *active_unit);
         result.navigation = std::move(navigation.navigation);
     }
@@ -1756,6 +2038,19 @@ auto tokens_to_json(std::span<token_record const> tokens) -> std::string
     return json;
 }
 
+auto inspect_request_to_json(inspect_request const& request) -> std::string
+{
+    auto payload = nlohmann::ordered_json{};
+    payload["activeFile"] = request.active_file;
+    payload["files"] = nlohmann::ordered_json::array();
+    for(auto const& file : request.files) {
+        auto& item = payload["files"].emplace_back();
+        item["path"] = file.path;
+        item["text"] = file.text;
+    }
+    return payload.dump();
+}
+
 auto inspect_to_json(inspect_result const& result) -> std::string
 {
     auto payload = nlohmann::ordered_json{};
@@ -1803,6 +2098,15 @@ auto run_cli(std::span<std::string_view const> args, std::istream& input, std::o
     }
 
     auto const text = read_all(input);
+    if(request->command == "resolve") {
+        auto parsed = parse_resolve_request(text, error);
+        if(not parsed) {
+            return 2;
+        }
+        output << inspect_request_to_json(resolve(std::move(*parsed)));
+        return 0;
+    }
+
     if(request->command == "inspect") {
         auto parsed = parse_inspect_request(text, error);
         if(not parsed) {

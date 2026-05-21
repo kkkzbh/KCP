@@ -1,6 +1,7 @@
 package org.cp.lang.clion
 
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
+import com.intellij.lang.annotation.HighlightSeverity
 import com.intellij.lang.LanguageAnnotators
 import com.intellij.lang.LanguageParserDefinitions
 import com.intellij.openapi.editor.colors.TextAttributesKey
@@ -50,6 +51,46 @@ class CpAnnotatorTest : BasePlatformTestCase() {
         assertHasHighlight(file.text, highlights, "x", CpSyntaxHighlighter.PARAMETER)
         assertHasHighlight(file.text, highlights, "sum", CpSyntaxHighlighter.LOCAL_VARIABLE)
         assertHasHighlight(file.text, highlights, "i32", CpSyntaxHighlighter.TYPE)
+    }
+
+    fun testCachedHelperDiagnosticsBecomeEditorErrors() {
+        val mathSource = """
+            export module math.x;
+
+            add(x: i32, y: i32) -> i32
+            {
+                return x + y;
+            }
+            """.trimIndent()
+        val math = myFixture.addFileToProject(
+            "math.cp",
+            mathSource,
+        )
+        val file = myFixture.configureByText(
+            CpFileType.INSTANCE,
+            """
+            import math.x;
+
+            main() -> i32
+            {
+                add(1, 2);
+            }
+            """.trimIndent(),
+        )
+        val activePath = file.virtualFile.path
+        val request = CpProjectSnapshotCollector.buildRequest(
+            activePath = activePath,
+            activeText = myFixture.editor.document.text,
+            projectFiles = listOf(
+                CpSnapshotSource(math.virtualFile!!.path, mathSource),
+            ),
+        )
+        CpSemanticCache.get(project).store(request, CpHelperRunner.inspect(request), cpModificationCount(project))
+
+        val highlights = myFixture.doHighlighting()
+
+        assertHasError(file.text, highlights, "add", "unexported_name")
+        assertHasError(file.text, highlights, "main", "missing_return")
     }
 
     fun testMemberCallsAndMatchPatternsUseSpecificHighlights() {
@@ -190,6 +231,22 @@ class CpAnnotatorTest : BasePlatformTestCase() {
             highlights.any { info ->
                 info.forcedTextAttributesKey == key &&
                     source.substring(info.startOffset, info.endOffset) == text
+            },
+        )
+    }
+
+    private fun assertHasError(
+        source: String,
+        highlights: List<HighlightInfo>,
+        text: String,
+        code: String,
+    ) {
+        assertTrue(
+            "$text should have $code error",
+            highlights.any { info ->
+                info.severity == HighlightSeverity.ERROR &&
+                    info.description?.contains(code) == true &&
+                    source.substring(info.startOffset, info.endOffset).contains(text)
             },
         )
     }

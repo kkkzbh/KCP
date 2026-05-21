@@ -1,6 +1,7 @@
 package org.cp.lang.clion
 
 import com.intellij.codeInsight.editorActions.BackspaceHandlerDelegate
+import com.intellij.codeInsight.editorActions.SimpleTokenSetQuoteHandler
 import com.intellij.codeInsight.editorActions.enter.EnterHandlerDelegate
 import com.intellij.formatting.Block
 import com.intellij.formatting.ChildAttributes
@@ -57,6 +58,8 @@ class CpBraceMatcher : PairedBraceMatcher {
         )
     }
 }
+
+class CpQuoteHandler : SimpleTokenSetQuoteHandler(CpTypes.STRING_TOKENS)
 
 class CpCodeStyleSettingsProvider : LanguageCodeStyleSettingsProvider() {
     override fun getLanguage() = CpLanguage

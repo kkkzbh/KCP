@@ -225,6 +225,7 @@ private class CpRunCommandLineState(environment: ExecutionEnvironment, private v
             ?: throw ExecutionException("cp compiler was not found")
         val outputDir = Files.createTempDirectory("cp-run-")
         val executable = outputDir.resolve(source.fileName.toString().removeSuffix(".cp"))
+        val stdlibRoot = CpRunPaths.resolveStdlibRoot(configuration.project, source, compiler)
         val sources = CpRunPaths.resolveRunSources(configuration.project, source, compiler)
         val workingDirectory = CpRunPaths.resolveWorkingDirectory(configuration.project, configuration.workingDirectory, source)
         val commandLine = GeneralCommandLine("bash", "-lc", buildScript(compiler, sources, executable))
@@ -232,7 +233,7 @@ private class CpRunCommandLineState(environment: ExecutionEnvironment, private v
         CpRunPaths.resolveRuntimeLibrary(compiler)?.let {
             commandLine.withEnvironment("CP_RUNTIME_LIBRARY_PATH", it.toString())
         }
-        CpRunPaths.resolveStdlibRoot(compiler)?.let {
+        stdlibRoot?.let {
             commandLine.withEnvironment("CP_STDLIB_ROOT_PATH", it.toString())
         }
         return OSProcessHandler(commandLine)
@@ -250,24 +251,30 @@ private class CpRunCommandLineState(environment: ExecutionEnvironment, private v
 }
 
 internal object CpRunPaths {
-    private val importRegex = Regex("""(?m)^\s*(?:export\s+)?import\s+([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)*)\s*;""")
-
     fun resolveCompiler(project: Project, configured: String, source: Path): Path? =
         sequenceOf(
             configured.toPathOrNull(),
             System.getProperty("cp.compiler.path").toPathOrNull(),
             System.getenv("KCP").toPathOrNull(),
-            findExecutableOnPath("kcp"),
-            System.getProperty("user.home")?.let { Path.of(it, ".local/bin/kcp") },
             pluginNativePath("cp"),
         )
             .plus(repoCompilerCandidates(project, source))
+            .plus(
+                sequenceOf(
+                    findExecutableOnPath("kcp"),
+                    System.getProperty("user.home")?.let { Path.of(it, ".local/bin/kcp") },
+                ).filterNotNull(),
+            )
             .filterNotNull()
             .map { it.toAbsolutePath().normalize() }
             .firstOrNull { Files.isRegularFile(it) && Files.isExecutable(it) }
 
     fun resolveRunSources(project: Project, source: Path, compiler: Path): List<Path> =
-        resolveSourceClosure(source, importRoots(project, source, compiler))
+        resolveSourceClosure(
+            source = source,
+            roots = importRoots(project, source, compiler),
+            moduleSearchRoots = moduleSearchRoots(project, source, compiler),
+        )
 
     fun resolveWorkingDirectory(project: Project, configured: String, source: Path): Path {
         configured.toPathOrNull()?.let {
@@ -282,25 +289,19 @@ internal object CpRunPaths {
         return Path.of(".").toAbsolutePath().normalize()
     }
 
-    internal fun resolveSourceClosure(source: Path, roots: List<Path>): List<Path> {
-        val result = mutableListOf<Path>()
-        val loaded = mutableSetOf<Path>()
-
-        fun visit(path: Path) {
-            val normalized = path.toAbsolutePath().normalize()
-            if (!loaded.add(normalized) || !Files.isRegularFile(normalized)) {
-                return
-            }
-
-            val text = runCatching { Files.readString(normalized) }.getOrNull() ?: return
-            for (moduleName in importedModules(text)) {
-                resolveImportPath(normalized.parent, moduleName, roots)?.let(::visit)
-            }
-            result.add(normalized)
-        }
-
-        visit(source)
-        return result.ifEmpty { listOf(source.toAbsolutePath().normalize()) }
+    internal fun resolveSourceClosure(source: Path, roots: List<Path>, moduleSearchRoots: List<Path> = roots): List<Path> {
+        val normalizedSource = source.toAbsolutePath().normalize()
+        val resolved = CpHelperRunner.resolveInspectionRequest(
+            CpInspectionResolveRequest(
+                activeFile = normalizedSource.toString(),
+                targetFile = normalizedSource.toString(),
+                entryFiles = listOf(normalizedSource.toString()),
+                importRoots = roots.map { it.toString() },
+                searchRoots = moduleSearchRoots.map { it.toString() },
+                followStdlibImports = false,
+            ),
+        )?.files?.map { Path.of(it.path) }
+        return resolved?.takeIf { it.isNotEmpty() } ?: listOf(normalizedSource)
     }
 
     fun resolveRuntimeLibrary(compiler: Path): Path? =
@@ -313,68 +314,47 @@ internal object CpRunPaths {
             .filterNotNull()
             .firstOrNull { Files.isRegularFile(it) }
 
+    fun resolveStdlibRoot(project: Project, source: Path, compiler: Path): Path? =
+        stdlibRootCandidates(project, source, compiler)
+            .firstOrNull { Files.isDirectory(it) }
+
     fun resolveStdlibRoot(compiler: Path): Path? =
-        listOf(
-            System.getenv("CP_STDLIB_ROOT_PATH").toPathOrNull(),
-            compiler.parent?.resolve("std"),
-            System.getProperty("user.home")?.let { Path.of(it, ".local/share/kcp/std") },
-            compiler.parent?.parent?.parent?.resolve("std"),
-        )
-            .filterNotNull()
+        stdlibRootCandidates(project = null, source = null, compiler)
             .firstOrNull { Files.isDirectory(it) }
 
     private fun importRoots(project: Project, source: Path, compiler: Path): List<Path> =
         source.parent.parentsFromSelf()
             .plus(project.basePath?.let { sequenceOf(Path.of(it)) } ?: emptySequence())
-            .plus(resolveStdlibRoot(compiler)?.let { sequenceOf(it) } ?: emptySequence())
+            .plus(resolveStdlibRoot(project, source, compiler)?.let { sequenceOf(it) } ?: emptySequence())
             .map { it.toAbsolutePath().normalize() }
             .distinct()
             .toList()
 
-    private fun importedModules(text: String): List<String> =
-        importRegex.findAll(text).map { it.groupValues[1] }.toList()
-
-    private fun resolveImportPath(base: Path?, moduleName: String, roots: List<Path>): Path? {
-        val candidates = mutableListOf<Path>()
-        if (base != null) {
-            candidates.add(base.resolve(moduleLeafPath(moduleName)))
-            candidates.add(base.resolve(moduleRelativePath(moduleName)))
-            aggregateRelativePath(moduleName)?.let { candidates.add(base.resolve(it)) }
-        }
-        for (root in roots) {
-            candidates.add(root.resolve(moduleRelativePath(moduleName)))
-            aggregateRelativePath(moduleName)?.let { candidates.add(root.resolve(it)) }
-            stdlibRelativePath(moduleName)?.let { candidates.add(root.resolve(it)) }
-        }
-        return candidates
-            .asSequence()
+    private fun moduleSearchRoots(project: Project, source: Path, compiler: Path): List<Path> =
+        sequenceOf(
+            source.parent,
+            project.basePath?.let { Path.of(it) },
+            resolveStdlibRoot(project, source, compiler),
+        )
+            .filterNotNull()
             .map { it.toAbsolutePath().normalize() }
-            .firstOrNull { Files.isRegularFile(it) }
-    }
+            .distinct()
+            .toList()
 
-    private fun moduleRelativePath(moduleName: String): Path {
-        val components = moduleName.split(".")
-        var path = Path.of("")
-        for ((index, component) in components.withIndex()) {
-            path = path.resolve(if (index == components.lastIndex) "$component.cp" else component)
-        }
-        return path
-    }
-
-    private fun aggregateRelativePath(moduleName: String): Path? {
-        val components = moduleName.split(".")
-        var path = Path.of("")
-        for (component in components) {
-            path = path.resolve(component)
-        }
-        return path.resolve("${components.last()}.cp")
-    }
-
-    private fun moduleLeafPath(moduleName: String): Path =
-        Path.of("${moduleName.substringAfterLast('.')}.cp")
-
-    private fun stdlibRelativePath(moduleName: String): Path? =
-        moduleName.removePrefix("std.").takeIf { it != moduleName }?.let { moduleRelativePath(it) }
+    private fun stdlibRootCandidates(project: Project?, source: Path?, compiler: Path): Sequence<Path> =
+        sequenceOf(System.getenv("CP_STDLIB_ROOT_PATH").toPathOrNull())
+            .filterNotNull()
+            .plus(project?.basePath?.let { sequenceOf(Path.of(it).resolve("std")) } ?: emptySequence())
+            .plus(source?.parent.parentsFromSelf().map { it.resolve("std") })
+            .plus(
+                sequenceOf(
+                    compiler.parent?.resolve("std"),
+                    System.getProperty("user.home")?.let { Path.of(it, ".local/share/kcp/std") },
+                    compiler.parent?.parent?.parent?.resolve("std"),
+                ).filterNotNull(),
+            )
+            .map { it.toAbsolutePath().normalize() }
+            .distinct()
 
     private fun findExecutableOnPath(name: String): Path? =
         System.getenv("PATH")
@@ -407,9 +387,6 @@ internal object CpRunPaths {
         return pluginRoot.resolve("native/linux-x86_64").resolve(name)
     }
 }
-
-private fun Path.parentsFromSelf(): Sequence<Path> =
-    generateSequence(toAbsolutePath().normalize()) { it.parent }
 
 private fun PsiElement.cpTopLevelMainFunction(): PsiElement? {
     val function = if (cpElementType() == CpElements.FUNCTION) {

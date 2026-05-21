@@ -10,12 +10,12 @@ class CpReference(
     override fun getCanonicalText(): String = element.text
 
     override fun resolve(): PsiElement? =
-        CpSemanticDeclarationResolver.resolve(element, null)
-            ?: CpDeclarationResolver.resolve(element)
+        cpResolveDeclarationForReference(element)
 
     override fun isReferenceTo(element: PsiElement): Boolean =
-        resolve()?.let { target ->
-            target == element || target.manager.areElementsEquivalent(target, element)
+        (resolve() ?: CpSemanticDeclarationResolver.resolveNow(this.element, null))?.let { resolved ->
+            val target = element.cpNavigationTargetElement() ?: element
+            resolved == target || resolved.manager.areElementsEquivalent(resolved, target)
         } == true
 
     override fun handleElementRename(newElementName: String): PsiElement {

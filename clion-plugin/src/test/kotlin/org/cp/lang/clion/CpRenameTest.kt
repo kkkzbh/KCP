@@ -56,6 +56,7 @@ class CpRenameTest : BasePlatformTestCase() {
             """.trimIndent(),
         )
 
+        CpSemanticCache.get(project).computeNow(myFixture.file, myFixture.editor.document.text)
         myFixture.renameElementAtCaret("inc")
 
         assertTrue(myFixture.file.text, myFixture.file.text.contains("inc(value: i32) -> i32"))

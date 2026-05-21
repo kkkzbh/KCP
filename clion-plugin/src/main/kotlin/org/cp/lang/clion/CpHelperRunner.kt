@@ -1,6 +1,8 @@
 package org.cp.lang.clion
 
+import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.openapi.diagnostic.Logger
+import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.util.SystemInfo
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -51,6 +53,17 @@ data class CpInspectionFile(
 data class CpInspectionRequest(
     val activeFile: String,
     val files: List<CpInspectionFile>,
+)
+
+@Serializable
+data class CpInspectionResolveRequest(
+    val activeFile: String,
+    val targetFile: String = activeFile,
+    val entryFiles: List<String> = emptyList(),
+    val importRoots: List<String> = emptyList(),
+    val searchRoots: List<String> = emptyList(),
+    val files: List<CpInspectionFile> = emptyList(),
+    val followStdlibImports: Boolean = true,
 )
 
 @Serializable
@@ -114,7 +127,21 @@ object CpHelperRunner {
                 }
         }.orEmpty()
 
-    fun inspect(request: CpInspectionRequest): CpInspectionResult {
+    fun inspect(request: CpInspectionRequest): CpInspectionResult =
+        inspectOrNull(request) ?: emptyInspectionResult()
+
+    fun resolveInspectionRequest(request: CpInspectionResolveRequest): CpInspectionRequest? =
+        runHelper(
+            command = "resolve",
+            stdin = json.encodeToString(request),
+        )?.let { payload ->
+            json.decodeFromString(CpInspectionRequest.serializer(), payload)
+        }
+
+    fun inspectOrNull(request: CpInspectionRequest): CpInspectionResult? {
+        CpDiagnosticsTrace.info("helper-inspect-start:${request.activeFile}:${request.files.map { it.path }}") {
+            "cp helper inspect start active=${request.activeFile} files=${request.files.map { it.path }}"
+        }
         val activeText = request.files.firstOrNull { it.path == request.activeFile }?.text.orEmpty()
         val offsetMap = Utf8OffsetMap(activeText)
         val offsetMaps = request.files.associate { it.path to Utf8OffsetMap(it.text) }
@@ -153,18 +180,35 @@ object CpHelperRunner {
                             ?: navigation.targetEndOffset,
                     )
                 },
-            )
-        } ?: CpInspectionResult(
+            ).also { result ->
+                CpDiagnosticsTrace.info("helper-inspect-done:${request.activeFile}:${result.diagnosticSummary()}") {
+                    "cp helper inspect done active=${request.activeFile} accepted=${result.accepted} " +
+                        "diagnostics=${result.diagnosticSummary()} highlights=${result.highlights.size} " +
+                        "navigation=${result.navigation.size} ${result.navigationSummary()}"
+                }
+            }
+        }
+    }
+
+    private fun emptyInspectionResult(): CpInspectionResult =
+        CpInspectionResult(
             accepted = false,
             diagnostics = emptyList(),
             highlights = emptyList(),
             navigation = emptyList(),
         )
-    }
 
     private fun runHelper(command: String, stdin: String, filename: String? = null): String? {
-        val helper = resolveHelperPath() ?: return null
+        val helper = resolveHelperPath() ?: run {
+            CpDiagnosticsTrace.warn("helper-missing:$command") {
+                "cp helper missing for command=$command"
+            }
+            return null
+        }
         helper.toFile().setExecutable(true)
+        CpDiagnosticsTrace.info("helper-command:$command:$helper") {
+            "cp helper command=$command path=$helper"
+        }
 
         return try {
             val arguments = mutableListOf(
@@ -220,6 +264,15 @@ object CpHelperRunner {
             return null
         }
 
+        pluginDescriptorRoot()?.resolve(CpPlugin.LINUX_HELPER_RELATIVE_PATH)?.let { helper ->
+            CpDiagnosticsTrace.info("helper-descriptor-candidate:$helper") {
+                "cp helper descriptor candidate=$helper exists=${Files.isRegularFile(helper)}"
+            }
+            if (Files.isRegularFile(helper)) {
+                return helper
+            }
+        }
+
         val classLocation = runCatching {
             Path.of(CpHelperRunner::class.java.protectionDomain.codeSource.location.toURI())
         }.getOrNull() ?: return null
@@ -230,8 +283,15 @@ object CpHelperRunner {
         } ?: return null
 
         val helper = pluginRoot.resolve(CpPlugin.LINUX_HELPER_RELATIVE_PATH)
+        CpDiagnosticsTrace.info("helper-classpath-candidate:$helper") {
+            "cp helper classpath location=$classLocation root=$pluginRoot candidate=$helper " +
+                "exists=${Files.isRegularFile(helper)}"
+        }
         return helper.takeIf(Files::isRegularFile)
     }
+
+    private fun pluginDescriptorRoot(): Path? =
+        PluginManagerCore.getPlugin(PluginId.getId(CpPlugin.PLUGIN_ID))?.pluginPath
 }
 
 private fun Process.readAsync(stream: java.io.InputStream): CompletableFuture<String> =

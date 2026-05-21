@@ -20,7 +20,7 @@ SKIP_DIRS = {
     "cmake-build-release",
 }
 
-CPP_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".cppm", ".ixx"}
+CPP_SUFFIXES = {".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".cppm", ".ixx"}
 
 
 def iter_cpp_files(root: Path) -> list[Path]:

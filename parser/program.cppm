@@ -508,7 +508,7 @@ auto parser::parse_overload_operator() -> std::optional<std::pair<overload_opera
         case bang_equal: { return consume_operator(overload_operator_kind::bang_equal); }
         case less: { return consume_operator(overload_operator_kind::less); }
         case less_equal: { return consume_operator(overload_operator_kind::less_equal); }
-        case spaceship: { return consume_operator(overload_operator_kind::spaceship); }
+        case token_kind::spaceship: { return consume_operator(overload_operator_kind::spaceship); }
         case greater: { return consume_operator(overload_operator_kind::greater); }
         case greater_equal: { return consume_operator(overload_operator_kind::greater_equal); }
         case equal: { return consume_operator(overload_operator_kind::equal); }

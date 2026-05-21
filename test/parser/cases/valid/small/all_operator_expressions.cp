@@ -16,6 +16,7 @@ main()
     let not_equal = value != id<i32>(0);
     let less = value < id<i32>(20);
     let less_equal = value <= id<i32>(16);
+    let ordering = value <=> id<i32>(16);
     let greater = value > id<i32>(4);
     let greater_equal = value >= id<i32>(16);
     let shift_left = value << id<i32>(1);

@@ -1,3 +1,26 @@
+add_library(cp_import_resolver)
+
+target_sources(cp_import_resolver
+    PUBLIC
+        FILE_SET CXX_MODULES
+        FILES
+            import_resolver.cppm
+)
+
+target_link_libraries(cp_import_resolver
+    PUBLIC
+        preprocessor
+        lexer
+        parser
+)
+
+set_target_properties(cp_import_resolver PROPERTIES
+    CXX_STANDARD 26
+    CXX_EXTENSIONS OFF
+    CXX_MODULE_STD ON
+    CXX_SCAN_FOR_MODULES ON
+)
+
 add_executable(cp)
 
 target_sources(cp
@@ -7,6 +30,7 @@ target_sources(cp
 
 target_link_libraries(cp
     PRIVATE
+        cp_import_resolver
         diagnostic
         preprocessor
         lexer

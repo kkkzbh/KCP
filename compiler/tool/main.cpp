@@ -5,6 +5,7 @@ import parser;
 import semantic;
 import codegen.ir;
 import codegen.llvm;
+import compiler.import_resolver;
 
 #ifndef CP_RUNTIME_LIBRARY_PATH
 #define CP_RUNTIME_LIBRARY_PATH ""
@@ -45,76 +46,6 @@ struct parse_options_result
     std::string error{};
 };
 
-auto read_all(std::filesystem::path const& path) -> std::optional<std::string>
-{
-    auto stream = std::ifstream{ path };
-    if(not stream.is_open()) {
-        return std::nullopt;
-    }
-    return std::string(
-        std::istreambuf_iterator<char>{ stream },
-        std::istreambuf_iterator<char>{}
-    );
-}
-
-auto normalized_path(std::filesystem::path const& path) -> std::string
-{
-    auto error = std::error_code{};
-    auto canonical = std::filesystem::weakly_canonical(path, error);
-    if(error) {
-        canonical = std::filesystem::absolute(path, error);
-    }
-    return error ? path.lexically_normal().string() : canonical.lexically_normal().string();
-}
-
-auto module_name(source_manager const& sources, module_name_syntax const& name) -> std::string
-{
-    auto result = std::string{};
-    for(auto component : name.components) {
-        if(not result.empty()) {
-            result += '.';
-        }
-        result += sources.slice(component);
-    }
-    return result;
-}
-
-auto module_relative_path(std::string_view name) -> std::filesystem::path
-{
-    auto result = std::filesystem::path{};
-    auto start = 0uz;
-    while(start < name.size()) {
-        auto end = name.find('.', start);
-        if(end == std::string_view::npos) {
-            auto leaf = std::string{ name.substr(start) };
-            leaf += ".cp";
-            result /= leaf;
-            break;
-        }
-        result /= std::string{ name.substr(start, end - start) };
-        start = end + 1uz;
-    }
-    return result;
-}
-
-auto module_leaf_path(std::string_view name) -> std::filesystem::path
-{
-    auto position = name.rfind('.');
-    auto leaf = position == std::string_view::npos ? name : name.substr(position + 1uz);
-    auto result = std::string{ leaf };
-    result += ".cp";
-    return result;
-}
-
-auto stdlib_relative_path(std::string_view name) -> std::optional<std::filesystem::path>
-{
-    auto prefix = std::string_view{ "std." };
-    if(not name.starts_with(prefix)) {
-        return std::nullopt;
-    }
-    return module_relative_path(name.substr(prefix.size()));
-}
-
 auto import_roots(std::string_view executable) -> std::vector<std::filesystem::path>
 {
     auto roots = std::vector<std::filesystem::path>{ std::filesystem::current_path() };
@@ -139,29 +70,6 @@ auto import_roots(std::string_view executable) -> std::vector<std::filesystem::p
         }
     }
     return roots;
-}
-
-auto resolve_import_path(std::filesystem::path const& importer, std::string_view name, std::span<std::filesystem::path const> roots)
-    -> std::optional<std::filesystem::path>
-{
-    auto const base = importer.parent_path();
-    auto candidates = std::vector<std::filesystem::path> {
-        base / module_leaf_path(name),
-        base / module_relative_path(name),
-    };
-    for(auto const& root : roots) {
-        candidates.emplace_back(root / module_relative_path(name));
-        if(auto std_path = stdlib_relative_path(name)) {
-            candidates.emplace_back(root / *std_path);
-        }
-    }
-    for(auto const& candidate : candidates) {
-        auto error = std::error_code{};
-        if(std::filesystem::is_regular_file(candidate, error)) {
-            return candidate;
-        }
-    }
-    return std::nullopt;
 }
 
 auto print_help(std::ostream& output) -> void
@@ -518,31 +426,50 @@ auto main(int argc, char** argv) -> int
         return 0;
     }
 
-    auto sources = source_manager{};
-    auto parsed_units = std::vector<parse_result>{};
-    parsed_units.reserve(options.inputs.size());
     auto roots = import_roots(argv[0]);
-    auto pending_inputs = (
-        options.inputs
-        | std::views::transform([](std::string const& value) { return std::filesystem::path{ value }; })
-        | std::ranges::to<std::vector<std::filesystem::path>>()
+    auto root_names = (
+        roots
+        | std::views::transform([](std::filesystem::path const& value) { return value.string(); })
+        | std::ranges::to<std::vector<std::string>>()
     );
-    auto loaded_inputs = std::set<std::string>{};
-    auto parse_ok = true;
-    for(auto input_index = 0uz; input_index < pending_inputs.size(); ++input_index) {
-        auto input = pending_inputs[input_index];
-        auto normalized = normalized_path(input);
-        if(loaded_inputs.contains(normalized)) {
-            continue;
+    auto search_root_names = std::vector<std::string>{};
+    for(auto const& input : options.inputs) {
+        auto parent = std::filesystem::path{ input }.parent_path();
+        if(parent.empty()) {
+            parent = std::filesystem::current_path();
         }
-        loaded_inputs.emplace(std::move(normalized));
-
-        auto text = read_all(input);
-        if(not text) {
-            std::cerr << "failed to open " << input.string() << '\n';
+        search_root_names.emplace_back(cp_imports::normalize_path(parent));
+    }
+    std::ranges::sort(search_root_names);
+    auto const last_search_root = std::ranges::unique(search_root_names).begin();
+    search_root_names.erase(last_search_root, search_root_names.end());
+    auto resolved_sources = cp_imports::resolve_source_files(
+        cp_imports::resolve_request {
+            .entry_files = options.inputs,
+            .import_roots = root_names,
+            .search_roots = search_root_names,
+        }
+    );
+    auto resolved_paths = (
+        resolved_sources.files
+        | std::views::transform([](cp_imports::source_file const& file) {
+            return cp_imports::normalize_path(file.path);
+        })
+        | std::ranges::to<std::set<std::string>>()
+    );
+    for(auto const& input : options.inputs) {
+        if(not resolved_paths.contains(cp_imports::normalize_path(input))) {
+            std::cerr << "failed to open " << input << '\n';
             return 2;
         }
-        auto file = sources.add_source(input.string(), std::move(*text));
+    }
+
+    auto sources = source_manager{};
+    auto parsed_units = std::vector<parse_result>{};
+    parsed_units.reserve(resolved_sources.files.size());
+    auto parse_ok = true;
+    for(auto& input : resolved_sources.files) {
+        auto file = sources.add_source(std::move(input.path), std::move(input.text));
         auto preprocessed = preprocess(sources, file);
         for(auto const& diagnostic : preprocessed.diagnostics) {
             print_diagnostic(sources, diagnostic);
@@ -565,18 +492,6 @@ auto main(int argc, char** argv) -> int
         parse_ok = parse_ok and parsed.accepted;
         for(auto const& diagnostic : parsed.diagnostics) {
             print_diagnostic(sources, diagnostic);
-        }
-        if(parsed.accepted and parsed.root) {
-            for(auto const& import : parsed.root->imports) {
-                auto imported_module = module_name(sources, import.name);
-                auto resolved = resolve_import_path(input, imported_module, roots);
-                if(not resolved) {
-                    continue;
-                }
-                if(not loaded_inputs.contains(normalized_path(*resolved))) {
-                    pending_inputs.emplace_back(std::move(*resolved));
-                }
-            }
         }
         parsed_units.push_back(std::move(parsed));
     }

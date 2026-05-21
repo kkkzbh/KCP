@@ -75,6 +75,7 @@ export enum class token_kind
     bang_equal,            ///< 不等比较 `!=`。
     less,                  ///< 小于号 `<`。
     less_equal,            ///< 小于等于 `<=`。
+    spaceship,             ///< 三路比较 `<=>`。
     greater,               ///< 大于号 `>`。
     greater_equal,         ///< 大于等于 `>=`。
     amp,                   ///< 按位与 `&`。
@@ -161,6 +162,7 @@ export auto constexpr token_name_table = std::to_array<std::pair<token_kind, std
     { token_kind::bang_equal, "bang_equal" },
     { token_kind::less, "less" },
     { token_kind::less_equal, "less_equal" },
+    { token_kind::spaceship, "spaceship" },
     { token_kind::greater, "greater" },
     { token_kind::greater_equal, "greater_equal" },
     { token_kind::amp, "amp" },

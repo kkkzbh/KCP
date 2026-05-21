@@ -21,19 +21,31 @@
         <lang.psiStructureViewFactory language="cp" implementationClass="org.cp.lang.clion.CpStructureViewFactory" />
         <lang.commenter language="cp" implementationClass="org.cp.lang.clion.CpCommenter" />
         <lang.braceMatcher language="cp" implementationClass="org.cp.lang.clion.CpBraceMatcher" />
+        <lang.quoteHandler language="cp" implementationClass="org.cp.lang.clion.CpQuoteHandler" />
         <langCodeStyleSettingsProvider implementation="org.cp.lang.clion.CpCodeStyleSettingsProvider" />
         <lang.formatter language="cp" implementationClass="org.cp.lang.clion.CpFormattingModelBuilder" />
         <lang.findUsagesProvider language="cp" implementationClass="org.cp.lang.clion.CpFindUsagesProvider" />
+        <findUsagesHandlerFactory implementation="org.cp.lang.clion.CpFindUsagesHandlerFactory" />
+        <referencesSearch implementation="org.cp.lang.clion.CpReferencesSearch" />
         <lang.documentationProvider language="cp" implementationClass="org.cp.lang.clion.CpDocumentationProvider" />
+        <lang.directNavigationProvider implementationClass="org.cp.lang.clion.CpDirectNavigationProvider" />
         <gotoDeclarationHandler implementation="org.cp.lang.clion.CpGotoDeclarationHandler" />
         <renamePsiElementProcessor implementation="org.cp.lang.clion.CpRenameProcessor" />
         <backspaceHandlerDelegate implementation="org.cp.lang.clion.CpBackspaceHandler" />
         <enterHandlerDelegate implementation="org.cp.lang.clion.CpEnterHandler" />
         <externalAnnotator language="cp" implementationClass="org.cp.lang.clion.CpExternalAnnotator" />
         <completion.contributor language="cp" implementationClass="org.cp.lang.clion.CpCompletionContributor" />
-        <codeInsight.inlayProvider language="cp" implementationClass="org.cp.lang.clion.CpTypeHintsProvider" isEnabledByDefault="true" settingsKeyId="cp.type.hints" />
+        <codeInsight.declarativeInlayProvider providerId="cp.type.hints"
+                                               language="cp"
+                                               implementationClass="org.cp.lang.clion.CpTypeHintsProvider"
+                                               isEnabledByDefault="true"
+                                               group="TYPES_GROUP"
+                                               bundle="messages.CpBundle"
+                                               nameKey="cp.inlay.type.hints.name"
+                                               descriptionKey="cp.inlay.type.hints.description" />
         <highlightErrorFilter implementation="org.cp.lang.clion.CpMarkdownErrorFilter" />
         <daemon.externalAnnotatorsFilter implementation="org.cp.lang.clion.CpExternalAnnotatorsFilter" />
+        <postStartupActivity implementation="org.cp.lang.clion.CpRealtimeDiagnosticsActivity" />
         <configurationType implementation="org.cp.lang.clion.CpRunConfigurationType" />
         <runConfigurationProducer implementation="org.cp.lang.clion.CpRunConfigurationProducer" />
         <runLineMarkerContributor language="cp" implementationClass="org.cp.lang.clion.CpRunLineMarkerContributor" />
