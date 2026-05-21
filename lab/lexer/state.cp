@@ -142,11 +142,12 @@ impl lexer {
             return make_token(token_kind::pipe_pipe, start, offset);
         }
         let kind = single_punctuation_kind(ch);
-        if(kind != token_kind::invalid) {
-            return make_token(kind, start, offset);
+        if(kind == token_kind::invalid) {
+            diagnostics.report(diagnostic_kind::invalid_character, make_span(start, offset));
+            return make_token(token_kind::invalid, start, offset);
         }
-        diagnostics.report(diagnostic_kind::invalid_character, make_span(start, offset));
-        return make_token(token_kind::invalid, start, offset);
+
+        return make_token(kind, start, offset);
     }
 
     eof(self const&) -> bool
@@ -194,7 +195,7 @@ impl lexer {
         return token{
             .kind = kind,
             .span = make_span(start, end),
-            .text = string{}
+            .text = string{slice(start, end)}
         };
     }
 }

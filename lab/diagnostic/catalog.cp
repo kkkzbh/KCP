@@ -31,10 +31,50 @@ export spec(kind: diagnostic_kind) -> diagnostic_spec
             .message = "integer literal cannot have leading zeroes"
         };
     }
+    if(kind == diagnostic_kind::unterminated_block_comment) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::lexer,
+            .severity = diagnostic_severity::error,
+            .name = "unterminated_block_comment",
+            .message = "unterminated block comment"
+        };
+    }
+    if(kind == diagnostic_kind::expected_token) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::parser,
+            .severity = diagnostic_severity::error,
+            .name = "expected_token",
+            .message = "expected token"
+        };
+    }
+    if(kind == diagnostic_kind::expected_identifier) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::parser,
+            .severity = diagnostic_severity::error,
+            .name = "expected_identifier",
+            .message = "expected identifier"
+        };
+    }
+    if(kind == diagnostic_kind::expected_expression) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::parser,
+            .severity = diagnostic_severity::error,
+            .name = "expected_expression",
+            .message = "expected expression"
+        };
+    }
+    if(kind == diagnostic_kind::expected_statement) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::parser,
+            .severity = diagnostic_severity::error,
+            .name = "expected_statement",
+            .message = "expected statement"
+        };
+    }
     return diagnostic_spec{
-        .stage = diagnostic_stage::lexer,
+        .stage = diagnostic_stage::parser,
         .severity = diagnostic_severity::error,
-        .name = "unterminated_block_comment",
-        .message = "unterminated block comment"
+        .name = "unexpected_token",
+        .message = "unexpected token"
     };
 }
