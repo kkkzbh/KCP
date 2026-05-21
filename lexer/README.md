@@ -41,8 +41,8 @@ import lexer;
 - `lex_result`
   - `tokens`：完整 token 流，包含末尾 `eof`
   - `diagnostics`：词法诊断列表
-- `lex(preprocessed_file)`
-  - 对指定预处理文件执行完整词法处理，返回 `lex_result`
+- `lex(preprocessed_file const&)`
+  - 借用指定预处理文件并执行完整词法处理，返回 `lex_result`
 
 ## 阅读顺序
 

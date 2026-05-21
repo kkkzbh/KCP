@@ -71,6 +71,94 @@ export spec(kind: diagnostic_kind) -> diagnostic_spec
             .message = "expected statement"
         };
     }
+    if(kind == diagnostic_kind::duplicate_function) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::semantic,
+            .severity = diagnostic_severity::error,
+            .name = "duplicate_function",
+            .message = "function is already defined"
+        };
+    }
+    if(kind == diagnostic_kind::missing_main) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::semantic,
+            .severity = diagnostic_severity::error,
+            .name = "missing_main",
+            .message = "program must define main"
+        };
+    }
+    if(kind == diagnostic_kind::duplicate_parameter) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::semantic,
+            .severity = diagnostic_severity::error,
+            .name = "duplicate_parameter",
+            .message = "parameter is already defined"
+        };
+    }
+    if(kind == diagnostic_kind::duplicate_local) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::semantic,
+            .severity = diagnostic_severity::error,
+            .name = "duplicate_local",
+            .message = "local variable is already defined in this scope"
+        };
+    }
+    if(kind == diagnostic_kind::undeclared_variable) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::semantic,
+            .severity = diagnostic_severity::error,
+            .name = "undeclared_variable",
+            .message = "variable is not declared"
+        };
+    }
+    if(kind == diagnostic_kind::undefined_function) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::semantic,
+            .severity = diagnostic_severity::error,
+            .name = "undefined_function",
+            .message = "function is not defined"
+        };
+    }
+    if(kind == diagnostic_kind::argument_count_mismatch) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::semantic,
+            .severity = diagnostic_severity::error,
+            .name = "argument_count_mismatch",
+            .message = "function argument count does not match parameter count"
+        };
+    }
+    if(kind == diagnostic_kind::void_value) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::semantic,
+            .severity = diagnostic_severity::error,
+            .name = "void_value",
+            .message = "void function call cannot be used as an expression value"
+        };
+    }
+    if(kind == diagnostic_kind::int_return_value_missing) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::semantic,
+            .severity = diagnostic_severity::error,
+            .name = "int_return_value_missing",
+            .message = "int function must return a value"
+        };
+    }
+    if(kind == diagnostic_kind::void_return_value) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::semantic,
+            .severity = diagnostic_severity::error,
+            .name = "void_return_value",
+            .message = "void function cannot return a value"
+        };
+    }
+    if(kind == diagnostic_kind::constant_divide_by_zero) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::semantic,
+            .severity = diagnostic_severity::error,
+            .name = "constant_divide_by_zero",
+            .message = "constant expression divides by zero"
+        };
+    }
     return diagnostic_spec{
         .stage = diagnostic_stage::parser,
         .severity = diagnostic_severity::error,

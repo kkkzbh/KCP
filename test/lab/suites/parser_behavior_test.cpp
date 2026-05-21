@@ -88,10 +88,10 @@ auto module_sources(test_tools const& tools) -> std::vector<std::string>
         (tools.lab_root / "parser/ast/arena.cp").string(),
         (tools.lab_root / "parser/ast/ast.cp").string(),
         (tools.lab_root / "parser/trace.cp").string(),
+        (tools.lab_root / "parser/symbol.cp").string(),
+        (tools.lab_root / "parser/grammar.cp").string(),
+        (tools.lab_root / "parser/table.cp").string(),
         (tools.lab_root / "parser/state.cp").string(),
-        (tools.lab_root / "parser/expression.cp").string(),
-        (tools.lab_root / "parser/statement.cp").string(),
-        (tools.lab_root / "parser/program.cp").string(),
         (tools.lab_root / "parser/parser.cp").string()
     };
 }

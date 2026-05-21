@@ -1,6 +1,6 @@
 # miniC 超轻量级文法
 
-目标：保留 miniC 的函数、变量、分支、循环、返回和整数表达式，去掉数组、指针、结构体、全局变量、函数声明和复杂类型，方便后续分别实现词法分析、递归下降 LL(1)、LR(1)、语义分析和四元式生成。
+目标：保留 miniC 的函数、变量、分支、循环、返回和整数表达式，去掉数组、指针、结构体、全局变量、函数声明和复杂类型，使用规范 LR(1) 语法分析作为后续 AST、语义分析和四元式生成的主入口。
 
 ## 实验路线
 
@@ -10,23 +10,15 @@
 源程序字符流
   -> 词法分析
   -> token 序列
-  -> LL(1) 递归下降语法分析
-  -> AST
+  -> LR(1) 项目集规范族
+  -> LR(1) DFA
+  -> ACTION/GOTO 表
+  -> 移进/规约分析并同步生成 AST
   -> 语义分析
   -> 四元式
 ```
 
-同时单独实现一条 LR(1) 语法分析路线，用于实验四展示项目集规范族、DFA、ACTION/GOTO 表和分析过程：
-
-```text
-token 序列
-  -> LR(1) 项目集规范族
-  -> LR(1) DFA
-  -> ACTION/GOTO 表
-  -> 移进/规约分析过程
-```
-
-因此，LL(1) 递归下降是语义分析和中间代码生成的主入口；LR(1) 是独立语法分析实验路线，不承担后续语义分析入口。
+因此，LR(1) parser 是 miniC 的主线语法分析入口，不再把 LR(1) 放在独立展示目录中。语义分析和中间代码生成都接收 LR(1) 规约动作构造出来的 AST。
 
 ## 实现语法概览
 
@@ -153,13 +145,13 @@ G = (VN, VT, P, S)
 GminiC = (VN, VT, P, Program)
 ```
 
-下面“程序结构”“语句”“表达式”三节给出产生式集合 `P`。这些产生式是从目标语法出发，再按 LL(1) 递归下降需要消除左递归和提取左公因子后的形式。
+下面“程序结构”“语句”“表达式”三节给出产生式集合 `P`。这些产生式直接服务于规范 LR(1) 项目集、DFA、ACTION/GOTO 表和规约时 AST 构造。
 
 ## 上下文无关文法记号：parser 模块
 
 - 终结符用字面量表示，例如 `"int"`、`"("`、`identifier`。
 - `ε` 表示空串。
-- 表达式文法已消除左递归，适合递归下降实现。
+- 表达式文法保留左递归，用 LR(1) 规约自然表达左结合。
 - 这里的 `identifier`、`integer`、关键字、界符和运算符都是词法分析模块已经输出的 token 类型，不再直接处理字符。
 
 ## 程序结构：parser 模块
@@ -295,384 +287,483 @@ ArgListTail     -> "," Expr ArgListTail | ε
 - 关系运算和逻辑运算结果也是 `int`，`0` 表示 false，非 `0` 表示 true。
 - 函数调用只支持普通标识符调用，不支持函数指针和成员访问。
 
-## 文法变换：消除左递归和提取左公因子
+## LR(1) 主线构造说明
 
-`教材ppt/CHP-04-TCH.md` 中给出的 LL(1) 文法变换路线是：先消除左递归，再提取左公因子，最后再通过 SELECT 集判断是否满足 LL(1)。本 miniC 的原始目标语法如果直接按常见表达式写法，会出现左递归。
+parser 主线采用规范 LR(1) 分析，不再把预测分析作为后续阶段入口。实现结构如下：
 
-例如加法和乘法表达式的直观写法是：
+- `parser/symbol.cp`: 定义终结符、非终结符和 epsilon。
+- `parser/grammar.cp`: 在 `make_minic_grammar()` 中直接写出 miniC 产生式。
+- `parser/table.cp`: 计算 FIRST 集、closure、goto、规范 LR(1) 项目集族、DFA 转移以及 ACTION/GOTO 表。
+- `parser/state.cp`: 执行表驱动移进/规约分析，并在每条 reduce 动作上构造现有 AST。
+- `parser/parser.cp`: 暴露 `parse(tokens)` 和 `parse_with_options(tokens, options)`，供语义分析和 IR 继续使用。
 
-```text
-Additive       -> Additive "+" Multiplicative
-                | Additive "-" Multiplicative
-                | Multiplicative
+LR(1) 项目写作 `[A -> alpha . beta, a]`。其中 `A -> alpha beta` 是一条产生式，点表示已经识别到的位置，`a` 是 1 个向前看终结符。closure 遇到 `[A -> alpha . B beta, a]` 时，会加入 `B` 的所有候选产生式，并用 `FIRST(beta a)` 决定新项目的 lookahead。goto 把点前为某个符号的项目统一右移一格，再做 closure，得到自动机下一状态。
 
-Multiplicative -> Multiplicative "*" Unary
-                | Multiplicative "/" Unary
-                | Multiplicative "%" Unary
-                | Unary
-```
+填表规则为：
 
-它符合表达式左结合的直觉，但不适合递归下降分析。按照 PPT 中直接左递归消除规则：
+- DFA 的终结符边填入 `ACTION[state, terminal] = shift target`。
+- DFA 的非终结符边填入 `GOTO[state, nonterminal] = target`。
+- 完成项目 `[A -> alpha ., a]` 填入 `ACTION[state, a] = reduce A -> alpha`。
+- 增广完成项目 `[S' -> Program ., EOF]` 填入 accept。
 
-```text
-P  -> P α | β
-P  -> β Q
-Q  -> α Q | ε
-```
+运行时只维护状态栈、语义值栈和输入指针。shift 时把 token 对应的值压入语义值栈；reduce 时弹出产生式右部长度个值，按产生式编号构造 AST 节点或中间列表，再把左部非终结符的值压回栈。最终 accept 时，栈顶值就是完整 `program_syntax` 对应的 `program_id`。
 
-可把加法层改写为：
+## 实验三：算符优先分析理论与实现
 
-```text
-Additive     -> Multiplicative AdditiveTail
-AdditiveTail -> "+" Multiplicative AdditiveTail
-              | "-" Multiplicative AdditiveTail
-              | ε
-```
+实验三采用要求中的 (a) 方式：在代码中直接写出算符优先关系矩阵。实现代码只有一个文件，位于 `parser/op/main.cp`。
 
-乘法、关系、相等、逻辑与、逻辑或各层使用相同方法处理，所以最终表达式文法按优先级拆成多层 `Tail` 非终结符。
+算符优先分析属于自底向上的移进/规约分析方法。它不按递归下降方式一层层调用非终结符子程序，而是维护一个分析栈，并根据“栈顶最近终结符”和“当前输入终结符”之间的优先关系决定下一步动作：
 
-左公因子方面，语句中最容易冲突的是 `identifier` 开头的结构：
+- 若关系为 `<` 或 `=`，说明当前输入还应继续进入句柄，执行移进。
+- 若关系为 `>`，说明栈顶已经形成一个可规约句柄，执行规约。
+- 若没有关系，说明当前 token 序列不符合该算符优先文法。
 
-```text
-Stmt -> identifier "=" Expr ";"
-      | identifier "(" ArgListOpt ")" ";"
-```
+算符优先分析路线只选取 miniC 表达式中最简单的算术子集：
 
-按照 PPT 中提取左公因子的规则：
+- 支持整数、标识符、括号和二元运算 `*` `/` `%` `+` `-`。
+- 暂不支持函数调用表达式。
+- 暂不支持关系、相等、逻辑运算。
+- 暂不支持一元 `+`、一元 `-`，只演示普通二元算术表达式。
+
+使用的算符优先文法如下，其中 `identifier` 和 `integer` 都是 lexer 已经识别出的 token：
 
 ```text
-P -> α β | α γ
-P -> α Q
-Q -> β | γ
+E -> E "+" E
+   | E "-" E
+   | E "*" E
+   | E "/" E
+   | E "%" E
+   | "(" E ")"
+   | identifier
+   | integer
 ```
 
-可改写为：
+该文法用于实验三演示，优先级不靠文法层次表达，而是直接写在算符优先关系矩阵中。核心矩阵含义如下：
+
+| 栈顶终结符 | 当前输入 | 关系含义 |
+|---|---|---|
+| `EOF` | `id`、`integer`、`(`、运算符 | 移进 |
+| `id`、`integer` | 运算符、`)`、`EOF` | 规约 |
+| `+`、`-` | `id`、`integer`、`(`、`*`、`/`、`%` | 移进 |
+| `+`、`-` | `+`、`-`、`)`、`EOF` | 规约 |
+| `*`、`/`、`%` | `id`、`integer`、`(` | 移进 |
+| `*`、`/`、`%` | 运算符、`)`、`EOF` | 规约 |
+| `(` | `id`、`integer`、`(`、运算符 | 移进 |
+| `(` | `)` | 等于，用于匹配括号 |
+| `)` | 运算符、`)`、`EOF` | 规约 |
+
+其中 `EOF < 运算符` 和 `( < 运算符` 用于处理已经规约出的左操作数后继续读取二元运算符；如果表达式一开始就是 `+ value` 这类缺左操作数形式，后续句柄规约会失败并报错。
+
+当前实现接受例如 `value + 2 * (limit - 3)`，拒绝 `value + * 3` 和 `+ value`。
+
+按代码执行顺序，本实验三路线如下：
 
 ```text
-Stmt               -> IdentifierStmt
-IdentifierStmt     -> identifier IdentifierStmtTail
-IdentifierStmtTail -> "=" Expr ";"
-                    | "(" ArgListOpt ")" ";"
+parser/op/main.cp
+  -> lex_expression()
+  -> parse_expression()
+  -> relation_between()
+  -> shift 或 reduce_handle()
 ```
 
-表达式中的标识符也存在类似公共前缀：
+`parser/op/main.cp` 是唯一实现文件，内部包含：
+
+- `to_op_terminal()`：把 lexer token 转成实验三使用的终结符。
+- `relation_between()`：人工填写的算符优先关系矩阵。
+- `reduce_handle()`：识别 `id`、`E op E` 和 `(E)` 三种句柄并规约成 `E`。
+- `parse_expression()`：执行移进/规约主循环，并输出每一步动作。
+
+分析器运行时的核心循环是：
+
+1. 初始栈为 `EOF`，输入 token 串末尾也补 `EOF`。
+2. 找到栈顶最近的终结符 `a`，读取当前输入终结符 `b`。
+3. 查优先关系表 `relation_between(a, b)`。
+4. 若 `a < b` 或 `a = b`，把 `b` 移进栈，输入指针前进。
+5. 若 `a > b`，向左回溯找到句柄起点，再用某条产生式右部匹配该句柄并规约为左部非终结符。
+6. 当输入为 `EOF` 且栈为 `EOF Nonterminal` 时接受。
+
+这条路线只用于实验三展示“人工矩阵、移进规约分析过程”，不生成 AST，也不作为后续语义分析入口。后续语义分析统一使用主线 LR(1) parser 生成的 AST。
+
+## LR(0) 与 LR(1) 理论方法
+
+本节只说明 LR(0) 和 LR(1) 的构造方法。完整项目集、完整 DFA 转移和完整 ACTION/GOTO 表单独放在 [minic_lr_complete_construction.md](minic_lr_complete_construction.md)，避免理论说明被几千行状态表打断。
+
+### LR 分析的基本思想
+
+LR 分析是一种自底向上的语法分析方法。它从左到右读取 token，并通过“移进”和“规约”逐步把输入串还原成开始符号。
+
+分析栈中保存两类信息：
+
+- 状态：表示当前已经识别到文法的哪个位置。
+- 文法符号：表示已经移进或规约出来的终结符、非终结符。
+
+分析过程中每一步都看两个东西：
+
+- 栈顶状态 `I`。
+- 当前输入 token，也叫 lookahead。
+
+然后查 ACTION 表决定下一步是 shift、reduce、accept 还是 error。reduce 以后，再用 GOTO 表决定规约出的非终结符应该进入哪个新状态。
+
+### 增广文法
+
+LR 构造前要先加入一个新的开始符号：
 
 ```text
-Primary -> identifier
-         | identifier "(" ArgListOpt ")"
+S' -> Program
 ```
 
-提取左公因子后写成：
+`S'` 只出现在这一条产生式左侧。这样做的作用是让“分析成功”有唯一判断条件：当状态中出现增广产生式完成项目，并且当前输入是 `EOF` 时，分析器执行 accept。
+
+本文档里的 `Program` 已经包含 `EOF`：
 
 ```text
-Primary       -> identifier PrimarySuffix
-PrimarySuffix -> CallSuffix | ε
-CallSuffix    -> "(" ArgListOpt ")"
+Program -> FunctionList EOF
 ```
 
-完成变换后，递归下降程序在 `Stmt` 处可以用 1 个 lookahead 选择分支：看到 `"int"` 进入变量声明；看到 `"if"`、`"while"`、`"return"`、`"{"` 分别进入对应语句；看到 `identifier` 进入 `IdentifierStmt`，再用下一个 token 区分赋值语句和函数调用语句。
+所以增广产生式不能再写成 `S' -> Program EOF`，否则就会多要求一个结束符。
 
-## 按 PPT 方法计算 SELECT 并判断 LL(1)
+### LR(0) 项目
 
-`教材ppt/CHP-04-TCH.md` 中判断 LL(1) 的方法是：先计算 FIRST 集和 FOLLOW 集，再由它们计算每条产生式的 SELECT 集；如果同一非终结符的任意两个不同产生式 SELECT 集互不相交，则该文法是 LL(1) 文法。本文档中 `EOF` 对应 PPT 中的输入结束符 `#`。
+LR(0) 项目是在产生式右部插入一个点号。点号表示当前产生式已经识别到的位置。
 
-SELECT 集计算公式为：
+例如产生式：
 
 ```text
-SELECT(A -> α) = FIRST(α)                         当 ε 不属于 FIRST(α)
-SELECT(A -> α) = FIRST(α) - {ε} ∪ FOLLOW(A)       当 ε 属于 FIRST(α)
+FunctionList -> Function FunctionList
 ```
 
-LL(1) 的递归下降含义是：从左到右扫描输入，构造最左推导，并且每次只用 1 个 lookahead token 选择产生式。
-
-递归下降版本把每个非终结符实现为一个分析子程序：
-
-| 非终结符 | 递归下降子程序职责 |
-|---|---|
-| `Program` | 分析完整程序，并检查最终到达 EOF |
-| `Function` | 分析返回类型、函数名、参数列表和函数体 |
-| `Block` | 分析 `{ ... }` 包围的语句列表 |
-| `Stmt` | 根据 lookahead 分派到变量声明、赋值、调用、分支、循环、返回或块 |
-| `Expr` | 分析表达式入口 |
-| `Primary` | 分析整数、标识符、函数调用和括号表达式 |
-
-FIRST 集用于判断一个符号串可能以哪些 token 开头。当前文法中最关键的 FIRST 集如下：
-
-| 非终结符 | FIRST 集 |
-|---|---|
-| `Function` | `{ "int", "void" }` |
-| `Block` | `{ "{" }` |
-| `Stmt` | `{ "int", identifier, "if", "while", "return", "{" }` |
-| `VarDecl` | `{ "int" }` |
-| `VarDeclarator` | `{ identifier }` |
-| `VarDeclaratorTail` | `{ ",", ε }` |
-| `IdentifierStmt` | `{ identifier }` |
-| `IfStmt` | `{ "if" }` |
-| `WhileStmt` | `{ "while" }` |
-| `ReturnStmt` | `{ "return" }` |
-| `Expr` | `{ integer, identifier, "(", "+", "-" }` |
-
-FOLLOW 集用于处理可空产生式。例如 `StmtList -> Stmt StmtList | ε` 中，`StmtList` 可以为空；当 lookahead 是 `"}"` 时，表示当前块的语句列表结束，应选择空产生式。
-
-关键 FOLLOW 集如下：
-
-| 非终结符 | FOLLOW 集 |
-|---|---|
-| `FunctionList` | `{ EOF }` |
-| `ParamListOpt` | `{ ")" }` |
-| `ParamListTail` | `{ ")" }` |
-| `StmtList` | `{ "}" }` |
-| `VarDeclarator` | `{ ",", ";" }` |
-| `VarDeclaratorTail` | `{ ";" }` |
-| `VarInitOpt` | `{ ",", ";" }` |
-| `IdentifierStmtTail` | 由语句内部直接消费 `";"` |
-| `ElseOpt` | `{ "int", identifier, "if", "while", "return", "{", "}" }` |
-| `ReturnValueOpt` | `{ ";" }` |
-| `Expr` | `{ ")", ";", "," }` |
-| `PrimarySuffix` | `{ "*", "/", "%", "+", "-", "<", "<=", ">", ">=", "==", "!=", "&&", "||", ")", ";", "," }` |
-
-非单一分支和可空产生式的 SELECT 集如下：
-
-| 产生式 | SELECT 集 |
-|---|---|
-| `FunctionList -> Function FunctionList` | `{ "int", "void" }` |
-| `FunctionList -> ε` | `{ EOF }` |
-| `ReturnType -> "int"` | `{ "int" }` |
-| `ReturnType -> "void"` | `{ "void" }` |
-| `ParamListOpt -> ParamList` | `{ "int" }` |
-| `ParamListOpt -> ε` | `{ ")" }` |
-| `ParamListTail -> "," Param ParamListTail` | `{ "," }` |
-| `ParamListTail -> ε` | `{ ")" }` |
-| `StmtList -> Stmt StmtList` | `{ "int", identifier, "if", "while", "return", "{" }` |
-| `StmtList -> ε` | `{ "}" }` |
-| `Stmt -> VarDecl` | `{ "int" }` |
-| `Stmt -> IdentifierStmt` | `{ identifier }` |
-| `Stmt -> IfStmt` | `{ "if" }` |
-| `Stmt -> WhileStmt` | `{ "while" }` |
-| `Stmt -> ReturnStmt` | `{ "return" }` |
-| `Stmt -> Block` | `{ "{" }` |
-| `VarDeclaratorTail -> "," VarDeclarator VarDeclaratorTail` | `{ "," }` |
-| `VarDeclaratorTail -> ε` | `{ ";" }` |
-| `VarInitOpt -> "=" Expr` | `{ "=" }` |
-| `VarInitOpt -> ε` | `{ ",", ";" }` |
-| `IdentifierStmtTail -> "=" Expr ";"` | `{ "=" }` |
-| `IdentifierStmtTail -> "(" ArgListOpt ")" ";"` | `{ "(" }` |
-| `ElseOpt -> "else" Block` | `{ "else" }` |
-| `ElseOpt -> ε` | `{ "int", identifier, "if", "while", "return", "{", "}" }` |
-| `ReturnValueOpt -> Expr` | `{ integer, identifier, "(", "+", "-" }` |
-| `ReturnValueOpt -> ε` | `{ ";" }` |
-| `Primary -> integer` | `{ integer }` |
-| `Primary -> identifier PrimarySuffix` | `{ identifier }` |
-| `Primary -> "(" Expr ")"` | `{ "(" }` |
-| `PrimarySuffix -> CallSuffix` | `{ "(" }` |
-| `PrimarySuffix -> ε` | `{ "*", "/", "%", "+", "-", "<", "<=", ">", ">=", "==", "!=", "&&", "||", ")", ";", "," }` |
-| `ArgListOpt -> ArgList` | `{ integer, identifier, "(", "+", "-" }` |
-| `ArgListOpt -> ε` | `{ ")" }` |
-| `ArgListTail -> "," Expr ArgListTail` | `{ "," }` |
-| `ArgListTail -> ε` | `{ ")" }` |
-
-表达式各层 tail 产生式的 SELECT 集如下：
-
-| 产生式 | SELECT 集 |
-|---|---|
-| `LogicalOrTail -> "||" LogicalAnd LogicalOrTail` | `{ "||" }` |
-| `LogicalOrTail -> ε` | `{ ")", ";", "," }` |
-| `LogicalAndTail -> "&&" Equality LogicalAndTail` | `{ "&&" }` |
-| `LogicalAndTail -> ε` | `{ "||", ")", ";", "," }` |
-| `EqualityTail -> "==" Relational EqualityTail` | `{ "==" }` |
-| `EqualityTail -> "!=" Relational EqualityTail` | `{ "!=" }` |
-| `EqualityTail -> ε` | `{ "&&", "||", ")", ";", "," }` |
-| `RelationalTail -> "<" Additive RelationalTail` | `{ "<" }` |
-| `RelationalTail -> "<=" Additive RelationalTail` | `{ "<=" }` |
-| `RelationalTail -> ">" Additive RelationalTail` | `{ ">" }` |
-| `RelationalTail -> ">=" Additive RelationalTail` | `{ ">=" }` |
-| `RelationalTail -> ε` | `{ "==", "!=", "&&", "||", ")", ";", "," }` |
-| `AdditiveTail -> "+" Multiplicative AdditiveTail` | `{ "+" }` |
-| `AdditiveTail -> "-" Multiplicative AdditiveTail` | `{ "-" }` |
-| `AdditiveTail -> ε` | `{ "<", "<=", ">", ">=", "==", "!=", "&&", "||", ")", ";", "," }` |
-| `MultiplicativeTail -> "*" Unary MultiplicativeTail` | `{ "*" }` |
-| `MultiplicativeTail -> "/" Unary MultiplicativeTail` | `{ "/" }` |
-| `MultiplicativeTail -> "%" Unary MultiplicativeTail` | `{ "%" }` |
-| `MultiplicativeTail -> ε` | `{ "+", "-", "<", "<=", ">", ">=", "==", "!=", "&&", "||", ")", ";", "," }` |
-| `Unary -> "+" Unary` | `{ "+" }` |
-| `Unary -> "-" Unary` | `{ "-" }` |
-| `Unary -> Primary` | `{ integer, identifier, "(" }` |
-
-按照 PPT 中预测分析表的构造方法，对每个 `a ∈ SELECT(A -> α)`，把产生式 `A -> α` 填入 `M[A, a]`。从上面的 SELECT 集可以看出，同一非终结符的不同产生式 SELECT 集互不相交，因此预测分析表不会出现多重入口，所以该文法满足 LL(1) 递归下降分析要求。
-
-本 miniC 子集满足递归下降 LL(1) 的关键原因：
-
-- `Stmt` 各候选分支的 FIRST 集互不冲突。
-- 标识符开头的语句统一进入 `IdentifierStmt`，再通过下一个 token 区分赋值和函数调用。
-- `if` 主体强制使用块，避免悬挂 `else` 造成的二义性。
-- 表达式按优先级拆成多层非终结符，消除了直接左递归。
-- 空产生式只在明确的结束 token 上触发，例如 `")"`、`"}"`、`";"`、`,` 或 EOF。
-
-递归下降分析过程可以在报告中写成“进入非终结符、匹配终结符、退出非终结符”的轨迹。对于一个函数：
-
-```c
-int add(int a, int b) {
-    return a + b;
-}
-```
-
-分析过程的高层结构是：
+对应三个 LR(0) 项目：
 
 ```text
-Program
-  Function
-    ReturnType -> "int"
-    identifier -> add
-    ParamList -> int a, int b
-    Block
-      ReturnStmt
-        Expr -> a + b
-  EOF
+FunctionList -> . Function FunctionList
+FunctionList -> Function . FunctionList
+FunctionList -> Function FunctionList .
 ```
 
-## LR(1) 理论说明
+含义分别是：
 
-LR(1) 的含义是：从左到右扫描输入，构造最右推导的逆过程，并且每个项目带 1 个向前看符号。相比 LL(1)，LR(1) 更适合自底向上分析，能够处理更广泛的上下文无关文法。
+- 第一个项目：还没有识别 `Function`。
+- 第二个项目：已经识别出一个 `Function`，接下来需要识别 `FunctionList`。
+- 第三个项目：右部已经识别完成，可以按 `FunctionList -> Function FunctionList` 规约。
 
-LR(1) 项目的形式为：
+如果产生式右部为空，例如：
+
+```text
+FunctionList -> ε
+```
+
+它对应的完成项目写成：
+
+```text
+FunctionList -> .
+```
+
+这表示不需要移进任何 token，就可以把空串规约成 `FunctionList`。
+
+### LR(0) 闭包
+
+`closure0(I)` 用来补全一个 LR(0) 项目集。这里的 `I` 是当前已有的一组项目。
+
+闭包规则是：如果项目集中有项目：
+
+```text
+A -> α . B β
+```
+
+并且点号后面的 `B` 是非终结符，那么说明接下来要识别一个 `B`。而 `B` 可以由它自己的任意产生式推出，所以必须把 `B` 的所有产生式初始项目加入当前集合：
+
+```text
+B -> . γ
+```
+
+完整计算过程是：
+
+1. 令结果集合 `C` 等于初始项目集 `I`。
+2. 扫描 `C` 中每个项目。
+3. 如果某个项目的点号后面是非终结符 `B`，就把 `B` 的所有产生式初始项目加入 `C`。
+4. 新加入的项目也可能让点号后面出现新的非终结符，所以继续扫描。
+5. 直到没有任何新项目可以加入，`C` 就是 `closure0(I)`。
+
+闭包只负责补全“接下来可能展开什么”，不移动点号。
+
+### LR(0) 转移函数
+
+`goto0(I, X)` 表示：当前在状态 `I`，如果识别了一个文法符号 `X`，会进入哪个状态。
+
+这里的 `X` 可以是终结符，也可以是非终结符。
+
+计算 `goto0(I, X)` 时，只处理点号后面正好是 `X` 的项目。也就是找出所有形如：
+
+```text
+A -> α . X β
+```
+
+的项目，然后把点号越过 `X`：
+
+```text
+A -> α X . β
+```
+
+这些移动后的项目组成一个集合 `M`。如果 `M` 是空集，说明当前状态没有标号为 `X` 的转移。如果 `M` 非空，就对它求闭包：
+
+```text
+goto0(I, X) = closure0(M)
+```
+
+注意这里不是把状态 `I` 里所有项目都移动一格，而是只移动点号后面同为 `X` 的那一批项目。`goto0(I, X)` 本身只针对一个固定的 `X` 计算一次；真正构造 DFA 时，才会把当前状态里所有可能的 `X` 都取出来，逐个调用 `goto0(I, X)`。DFA 的一条边只能有一个边标号。
+
+### LR(0) DFA 构造
+
+LR(0) DFA 的每个状态都是一个 LR(0) 项目集。构造过程如下：
+
+1. 从初始项目开始：
+
+   ```text
+   S' -> . Program
+   ```
+
+2. 对初始项目求闭包，得到初始状态 `I0`。
+3. 把 `I0` 放入状态集合和待处理队列。
+4. 取出一个未处理状态 `I`。
+5. 找出 `I` 中所有出现在点号后面的文法符号。
+6. 对每个这样的符号 `X` 计算 `goto0(I, X)`。
+7. 如果结果项目集非空，并且以前没有出现过，就创建一个新状态。
+8. 记录一条 DFA 边：
+
+   ```text
+   I --X--> J
+   ```
+
+9. 重复处理，直到没有新状态产生。
+
+判断两个 LR(0) 状态是否相同，只比较产生式编号和点号位置。LR(0) 项目没有 lookahead，所以不需要比较向前看符号。
+
+LR(0) DFA 的意义是描述“点号如何随着识别到的文法符号向右移动”。终结符边对应 shift，非终结符边对应 reduce 以后查 GOTO 表。
+
+### LR(0) 的局限
+
+LR(0) 完成项目没有 lookahead。例如：
+
+```text
+A -> α .
+```
+
+在 LR(0) 中，这个项目只说明 `A -> α` 已经识别完成，但没有说明当前输入 token 是什么时才应该规约。
+
+因此 LR(0) 构造分析表时容易遇到冲突：
+
+- shift/reduce 冲突：同一个状态里既有可移进项目，又有完成项目。
+- reduce/reduce 冲突：同一个状态里有多个完成项目。
+
+LR(1) 的改进就是给每个项目加一个 lookahead，让规约只在指定 token 上发生。
+
+### LR(1) 项目
+
+LR(1) 项目形式是：
 
 ```text
 [A -> α . β, a]
 ```
 
-含义是：当前正在识别产生式 `A -> α β`，点号左边 `α` 已经识别完成，点号右边 `β` 还未识别，`a` 是该规约可接受的 lookahead。
-
-LR(1) 分析需要构造以下对象：
-
-- 增广文法：加入 `S' -> Program EOF` 作为唯一开始产生式。
-- 项目闭包 `closure(I)`：如果项目中点号后是非终结符，则加入该非终结符的相关产生式项目，并计算对应 lookahead。
-- 转移函数 `goto(I, X)`：项目集 `I` 在文法符号 `X` 上移动点号后形成的新项目集。
-- 项目集规范族：从初始项目集开始，反复计算 `closure` 和 `goto` 得到所有状态。
-- DFA：每个项目集是一个状态，`goto` 是状态转移。
-- ACTION/GOTO 表：终结符列进入 ACTION，非终结符列进入 GOTO。
-
-实验四要求中的三步可以对应为：
-
-### 计算项目集规范族
-
-先把文法增广为：
+其中 `a` 是 lookahead。它表示：当前正在识别 `A -> α β`，点号左侧 `α` 已经识别完成；如果这个项目最后变成：
 
 ```text
-S' -> Program EOF
+[A -> α β ., a]
 ```
 
-初始 LR(1) 项目为：
+那么只有当前输入 token 是 `a` 时，才允许按 `A -> α β` 规约。
 
-```text
-[S' -> . Program EOF, EOF]
-```
+LR(1) 和 LR(0) 的区别是：
 
-对初始项目求闭包得到初始项目集 `I0`。然后对每个项目集 `I` 和每个可能的文法符号 `X` 计算 `goto(I, X)`；如果得到的新项目集非空且还没有出现过，就加入项目集规范族。反复执行，直到不再产生新项目集。
+- LR(0) 项目只记录产生式和点号位置。
+- LR(1) 项目记录产生式、点号位置和 lookahead。
+- LR(1) 中点号位置相同但 lookahead 不同的项目，仍然是不同项目。
 
-LR(1) 闭包中 lookahead 的传播规则是：若项目为
+### FIRST(β a)
+
+LR(1) 闭包需要计算 `FIRST(β a)`。
+
+在项目：
 
 ```text
 [A -> α . B β, a]
 ```
 
-则对 `B` 的每个产生式 `B -> γ`，加入：
+中，点号后面是非终结符 `B`。如果要展开 `B`，就要知道 `B` 推导出来的内容后面可能跟哪些 token。
+
+这些 token 来自 `β a`：
+
+- 如果 `β` 能推出某些开头终结符，就用这些终结符作为 `B` 新项目的 lookahead。
+- 如果 `β` 可以推出空串，就还要把原项目的 lookahead `a` 传给 `B`。
+- 如果 `β` 本来就是空串，也直接把 `a` 传给 `B`。
+
+计算 `FIRST(β a)` 的步骤是：
+
+1. 从 `β` 的第一个符号开始扫描。
+2. 如果遇到终结符 `t`，把 `t` 加入结果并停止。
+3. 如果遇到非终结符 `N`，把 `FIRST(N)` 中除 `ε` 以外的符号加入结果。
+4. 如果 `N` 不能推出 `ε`，停止。
+5. 如果扫描完 `β` 后仍然可能为空，把 `a` 加入结果。
+
+### LR(1) 闭包
+
+`closure1(I)` 是 LR(1) 项目集闭包。
+
+如果项目集中有：
+
+```text
+[A -> α . B β, a]
+```
+
+并且 `B` 是非终结符，那么对 `B` 的每条产生式：
+
+```text
+B -> γ
+```
+
+以及每个：
+
+```text
+b ∈ FIRST(β a)
+```
+
+都加入一个新项目：
 
 ```text
 [B -> . γ, b]
 ```
 
-其中 `b` 属于 `FIRST(β a)`。这就是 LR(1) 比 LR(0) 更精确的地方：项目不仅记录点号位置，还记录该项目未来允许规约的向前看符号。
+完整计算过程是：
 
-### 构造 LR(0) 的 DFA
+1. 令结果集合 `C` 等于初始 LR(1) 项目集 `I`。
+2. 扫描 `C` 中每个项目。
+3. 如果某个项目点号后面是非终结符，就根据 `FIRST(β a)` 加入带 lookahead 的新项目。
+4. 新加入的项目也可能继续展开，所以继续扫描。
+5. 直到没有任何新项目可以加入，`C` 就是 `closure1(I)`。
 
-LR(0) 项目忽略 lookahead，形式为：
+LR(1) 闭包和 LR(0) 闭包的主要差别是：LR(1) 展开非终结符时必须同时传播 lookahead。
 
-```text
-A -> α . β
-```
+### LR(1) 转移函数
 
-LR(0) DFA 的状态是 LR(0) 项目集，边由 `goto(I, X)` 给出。构造步骤和 LR(1) 类似：
+`goto1(I, X)` 和 `goto0(I, X)` 的结构相同，也是沿着一个文法符号 `X` 移动点号。
 
-- 从增广项目 `S' -> . Program EOF` 的闭包开始。
-- 对每个项目集和每个文法符号计算 `goto`。
-- 每个不同项目集对应 DFA 的一个状态。
-- `goto(I, X) = J` 对应 DFA 中一条从 `I` 到 `J`、标号为 `X` 的边。
-
-该 DFA 描述的是“点号在产生式右部如何移动”。当边标号是终结符时，对应输入 token 的移进；当边标号是非终结符时，对应规约后查 GOTO 表进入的新状态。
-
-### 改造 DFA 适合 LR(1)
-
-LR(1) 可以理解为在 LR(0) DFA 的核心结构上附加 lookahead 信息：
-
-- LR(0) core 相同：产生式和点号位置相同。
-- LR(1) item 额外带 lookahead：`[A -> α . β, a]`。
-- 规约动作不再对所有终结符都有效，只在对应 lookahead 上有效。
-
-构造 ACTION/GOTO 表时：
-
-- 若状态 `I` 中存在 `[A -> α . t β, a]`，且 `t` 是终结符，`goto(I, t) = J`，则 `ACTION[I, t] = shift J`。
-- 若状态 `I` 中存在 `[A -> α ., a]`，且 `A` 不是增广开始符号，则 `ACTION[I, a] = reduce A -> α`。
-- 若状态 `I` 中存在 `[S' -> Program EOF ., EOF]`，则 `ACTION[I, EOF] = accept`。
-- 若 `A` 是非终结符且 `goto(I, A) = J`，则 `GOTO[I, A] = J`。
-
-如果同一个表格位置出现多个动作，则说明存在冲突：
-
-- shift/reduce 冲突：同一位置既要移进又要规约。
-- reduce/reduce 冲突：同一位置有多个可规约产生式。
-
-无冲突时，该文法可按 LR(1) 方式分析。
-
-### LALR(1) 说明
-
-LALR(1) 是 LR(1) 的状态压缩形式。它把 LR(0) core 相同的 LR(1) 项目集合并，并把 lookahead 集合取并集。
-
-例如：
+计算时仍然只找点号后面正好是 `X` 的项目：
 
 ```text
-[A -> α ., ";"]
-[A -> α ., ")"]
+[A -> α . X β, a]
 ```
 
-如果它们处在 LR(0) core 相同的状态中，LALR(1) 会合并成同一个 core 状态，并保留 lookahead 集 `{ ";", ")" }`。
-
-LALR(1) 的状态数通常接近 LR(0)，比完整 LR(1) 少；但合并 lookahead 后可能引入新的 reduce/reduce 冲突。因此能力关系是：
+移动点号以后保留原 lookahead：
 
 ```text
-SLR(1) < LALR(1) < LR(1)
+[A -> α X . β, a]
 ```
 
-本实验选择实现 LR(1)，报告中可以说明：如果要改造成 LALR(1)，就在 LR(1) 项目集规范族构造完成后，合并 LR(0) core 相同的状态，并重新生成 ACTION/GOTO 表。
-
-LR(1) 中 lookahead 的理论作用是限制规约发生的条件。对于同一个核心项目：
+所有移动后的项目组成集合 `M`。如果 `M` 为空，就没有这条转移。如果 `M` 非空，则：
 
 ```text
-[A -> α ., ";"]
-[A -> α ., ")"]
+goto1(I, X) = closure1(M)
 ```
 
-它们的点号位置和产生式相同，但 lookahead 不同，因此在 LR(1) 中是不同项目。只有输入符号匹配对应 lookahead 时才允许规约，这比 LR(0) 和 SLR(1) 更精确。
+所以 `goto1` 可以理解为两步：
 
-分析表动作分为四类：
+1. 沿边标号 `X` 统一移动点号。
+2. 对移动后的项目集合做 LR(1) 闭包。
 
-| 动作 | 含义 |
-|---|---|
-| shift | 当前 token 可以移入状态栈 |
-| reduce | 根据某条产生式规约 |
-| accept | 输入被完整接受 |
-| error | 当前状态和 token 组合不合法 |
+这里同样要区分“转移函数”和“构造 DFA”：`goto1(I, X)` 是固定一个 `X` 的计算；构造某个状态 `I` 的所有出边时，要对 `I` 中所有出现在点号后面的符号 `X` 都计算一遍 `goto1(I, X)`。
 
-LR(1) 分析栈通常保存状态栈和符号栈。每一步根据栈顶状态和当前输入 token 查询 ACTION 表：
+### LR(1) DFA 构造
 
-- shift：把 token 和新状态压栈，输入前进。
-- reduce：弹出产生式右部长度对应的符号和状态，再根据左部非终结符查 GOTO 表压入新状态。
-- accept：分析成功。
-- error：分析失败并输出错误位置。
+规范 LR(1) DFA 的构造过程如下：
 
-本实验中 LR(1) 路线用于展示自底向上语法分析能力，可以输出项目集、DFA 边、ACTION/GOTO 表和移进/规约过程。语义分析不依赖 LR(1) 结果，而是使用 LL(1) 递归下降得到的 AST。
+1. 从初始 LR(1) 项目开始：
+
+   ```text
+   [S' -> . Program, EOF]
+   ```
+
+2. 对它求 `closure1`，得到初始状态 `I0`。
+3. 把 `I0` 放入状态集合和待处理队列。
+4. 取出一个未处理状态 `I`。
+5. 找出 `I` 中所有出现在点号后面的文法符号。
+6. 对每个这样的符号 `X` 计算 `goto1(I, X)`。
+7. 如果结果项目集非空，并且以前没有出现过，就创建一个新状态。
+8. 记录 DFA 边：
+
+   ```text
+   I --X--> J
+   ```
+
+9. 重复处理，直到没有新状态产生。
+
+判断两个 LR(1) 状态是否相同，必须比较完整项目集合。产生式编号、点号位置和 lookahead 都相同，两个状态才相同。
+
+不能先构造 LR(0) DFA，再给每个状态随便补 lookahead。规范 LR(1) 必须从 `[S' -> . Program, EOF]` 开始，让 lookahead 在 `closure1` 和 `goto1` 中逐步传播。
+
+### LR(1) ACTION/GOTO 表
+
+LR(1) DFA 构造完成后，根据状态项目和 DFA 转移生成分析表。
+
+如果状态 `I` 有终结符转移：
+
+```text
+I --t--> J
+```
+
+则填入移进动作：
+
+```text
+ACTION[I, t] = shift J
+```
+
+如果状态 `I` 中有完成项目：
+
+```text
+[A -> α ., a]
+```
+
+并且 `A` 不是 `S'`，则填入规约动作：
+
+```text
+ACTION[I, a] = reduce A -> α
+```
+
+注意规约动作只填在这个项目自己的 lookahead `a` 上，不填在所有终结符上。
+
+如果状态 `I` 中有增广完成项目：
+
+```text
+[S' -> Program ., EOF]
+```
+
+则填入接受动作：
+
+```text
+ACTION[I, EOF] = accept
+```
+
+如果状态 `I` 有非终结符转移：
+
+```text
+I --A--> J
+```
+
+则填入：
+
+```text
+GOTO[I, A] = J
+```
+
+如果同一个 ACTION 表格位置被填入多个不同动作，就说明发生冲突：
+
+- 同时出现 shift 和 reduce，是 shift/reduce 冲突。
+- 同时出现多个 reduce，是 reduce/reduce 冲突。
+
+本 miniC 文法的完整构造结果见 [minic_lr_complete_construction.md](minic_lr_complete_construction.md)。其中完整列出了产生式编号、LR(0) DFA、LR(1) DFA 和 LR(1) ACTION/GOTO 表。
 
 ## 语义分析理论说明
 
-语义分析接收 LL(1) 递归下降生成的 AST，检查上下文相关规则。语法分析只能判断结构是否符合文法，不能判断名字是否声明、函数参数是否匹配、返回值是否合理。
+语义分析接收 LR(1) parser 规约生成的 AST，检查上下文相关规则。语法分析只能判断结构是否符合文法，不能判断名字是否声明、函数参数是否匹配、返回值是否合理。
 
 本 miniC 子集的语义对象包括：
 
@@ -706,6 +797,19 @@ int main() {
 ```
 
 该程序词法和语法都合法，但 `x` 未声明，所以应在语义分析阶段报错。
+
+当前实验五实现按主编译器的模块边界拆分，但不提供聚合模块：
+
+- `semantic/type.cp` 定义 `int`、`void`、`error` 三类语义类型。
+- `semantic/symbol.cp` 定义函数、参数和局部变量符号。
+- `semantic/result.cp` 保存函数表、符号表、表达式类型、常量值、语句绑定和诊断。
+- `semantic/state.cp` 保存分析过程中的源码、AST、诊断收集器和作用域栈。
+- `semantic/function.cp` 负责函数收集、`main` 检查、参数绑定和函数体入口。
+- `semantic/statement.cp` 负责块、声明、赋值、调用、分支、循环和返回语句检查。
+- `semantic/expression.cp` 负责名字解析、函数调用检查、表达式类型和常量值计算。
+- `semantic/program.cp` 提供公共入口 `analyze_semantics(file, parsed)`。
+
+语义分析采用两遍结构：第一遍收集所有函数定义，因此函数体内可以调用后面才出现的函数；第二遍进入每个函数体，先绑定参数，再按块级作用域检查语句和表达式。表达式常量值保存在 `semantic_result.expression_infos` 中，例如 `1 + 2 * 3` 会得到常量值 `7`。
 
 ## 四元式理论说明
 
@@ -770,6 +874,26 @@ ret value, _, _
 ```
 
 实验五中可以同时输出四元式序列和表达式语义值。对于纯算术表达式，可以在语义分析阶段或四元式解释阶段计算结果；对于包含变量、函数和控制流的程序，则主要展示四元式生成过程。
+
+当前四元式实现同样按职责拆分，不提供 `ir` 聚合模块：
+
+- `ir/quad.cp` 定义四元式记录 `(op, arg1, arg2, result)`。
+- `ir/result.cp` 定义四元式生成结果。
+- `ir/state.cp` 保存临时变量、标签和输出序列。
+- `ir/expression.cp` 负责表达式、参数传递和函数调用翻译。
+- `ir/statement.cp` 负责声明、赋值、调用语句、`if`、`while` 和 `return` 翻译。
+- `ir/program.cp` 提供公共入口 `emit_quads(file, parsed, semantics)`。
+- `ir/format.cp` 提供 `dump_quads(quads)`，按 `(op, arg1, arg2, result)` 逐行输出。
+
+四元式中的空位统一写作 `_`，临时变量命名为 `t1`、`t2`、...，标签命名为 `L1`、`L2`、...。函数边界输出为：
+
+```text
+(func, _, _, main)
+...
+(end, _, _, main)
+```
+
+`lab/ir/main.cp` 是实验五样例入口，会读取 `lab/test.c`，依次执行预处理、词法分析、LR(1) 语法分析、语义分析和四元式生成，并输出语义统计、可计算表达式值以及四元式序列。
 
 ## 最小样例
 

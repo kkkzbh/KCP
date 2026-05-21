@@ -2,6 +2,7 @@ import std;
 import preprocessor;
 import lexer;
 import parser;
+import parser.table;
 
 read_source(path: str) -> string
 {
@@ -119,7 +120,7 @@ main() -> i32
     let source = read_source("lab/test.c");
     let file = source_file{"lab/test.c", source.as_str()};
     let preprocessed = preprocess(file);
-    println("mini c parser input bytes: {}", source.size());
+    println("mini c LR(1) parser input bytes: {}", source.size());
     println("mini c preprocessor diagnostics: {}", preprocessed.diagnostics.size());
     if(preprocessed.diagnostics.size() != 0) {
         println("mini c parser failed: preprocessor diagnostics were produced");
@@ -132,6 +133,16 @@ main() -> i32
     if(lexical.diagnostics.size() != 0) {
         println("mini c parser failed: lexer diagnostics were produced");
         return 2;
+    }
+
+    let tables = build_parser_tables();
+    println("mini c LR(1) state count: {}", tables.states.size());
+    println("mini c LR(1) action count: {}", tables.action_table.size());
+    println("mini c LR(1) goto count: {}", tables.goto_table.size());
+    println("mini c LR(1) conflict count: {}", tables.conflicts.size());
+    if(tables.conflicts.size() != 0) {
+        println("mini c parser failed: LR(1) table has conflicts");
+        return 3;
     }
 
     let result = parse_with_options(move lexical.tokens, parse_options{ .trace_enabled = true });
@@ -149,30 +160,30 @@ main() -> i32
 
     if(not result.accepted or result.diagnostics.size() != 0) {
         println("mini c parser failed: parser diagnostics were produced");
-        return 3;
+        return 4;
     }
     if(program.functions.size() != 2) {
         println("mini c parser failed: expected add and main functions");
-        return 4;
+        return 5;
     }
 
     let add_function = result.ast.functions[program.functions[0 as usize].value];
     let main_function = result.ast.functions[program.functions[1 as usize].value];
     if(file.slice(add_function.name) != "add") {
         println("mini c parser failed: first function is not add");
-        return 5;
+        return 6;
     }
     if(file.slice(main_function.name) != "main") {
         println("mini c parser failed: second function is not main");
-        return 6;
+        return 7;
     }
     if(result.ast.statements.size() < 10) {
         println("mini c parser failed: statement tree is too small");
-        return 7;
+        return 8;
     }
     if(result.ast.expressions.size() < 12) {
         println("mini c parser failed: expression tree is too small");
-        return 8;
+        return 9;
     }
 
     println("mini c parser ok");

@@ -6,175 +6,299 @@ import diagnostic;
 import lexer.token;
 import parser.ast;
 import parser.trace;
+import parser.table;
 
-export struct parser {
+export struct parser_value {
+    token: token;
+    span: source_span;
+    program: program_id;
+    functions: vector<function_id>;
+    function: function_id;
+    return_type: return_type_kind;
+    parameters: vector<parameter_syntax>;
+    parameter: parameter_syntax;
+    statements: vector<stmt_id>;
+    statement: stmt_id;
+    declarations: vector<var_decl_item>;
+    declaration: var_decl_item;
+    expression: expr_id;
+    arguments: vector<expr_id>;
+    else_branch: optional<stmt_id>;
+    return_value: optional<expr_id>;
+}
+
+impl parser_value {
+    parser_value()
+    {
+        return parser_value{
+            .token = token{},
+            .span = source_span{},
+            .program = program_id{},
+            .functions = vector<function_id>{},
+            .function = function_id{},
+            .return_type = return_type_kind::int_type,
+            .parameters = vector<parameter_syntax>{},
+            .parameter = parameter_syntax{},
+            .statements = vector<stmt_id>{},
+            .statement = stmt_id{},
+            .declarations = vector<var_decl_item>{},
+            .declaration = var_decl_item{},
+            .expression = expr_id{},
+            .arguments = vector<expr_id>{},
+            .else_branch = optional<stmt_id>::none,
+            .return_value = optional<expr_id>::none
+        };
+    }
+}
+
+export struct parser_state_result {
+    accepted: bool;
+    ast: ast_arena;
+    root: program_id;
+    diagnostics: vector<diagnostic>;
+    trace: vector<trace_record>;
+}
+
+export struct parser_state {
     tokens: vector<token>;
-    index: usize;
+    options: parse_options;
+    state_stack: vector<usize>;
+    value_stack: vector<parser_value>;
     arena: ast_arena;
+    root: program_id;
     diagnostics: diagnostic_collector;
-    trace_enabled: bool;
-    trace_depth: usize;
     trace_next_step: usize;
     trace: vector<trace_record>;
 }
 
-impl parser {
-    parser(items: vector<token>)
-    {
-        return parser{move items, parse_options{}};
-    }
+rhs_value(values: vector<parser_value> const&, index: usize) -> parser_value
+{
+    return values[values.size() - 1 - index];
+}
 
-    parser(items: vector<token>, options: parse_options)
+rhs_token(values: vector<parser_value> const&, index: usize) -> token
+{
+    let value = rhs_value(values, index);
+    return value.token;
+}
+
+rhs_functions(values: vector<parser_value> const&, index: usize) -> vector<function_id>
+{
+    let value = rhs_value(values, index);
+    return value.functions;
+}
+
+rhs_function(values: vector<parser_value> const&, index: usize) -> function_id
+{
+    let value = rhs_value(values, index);
+    return value.function;
+}
+
+rhs_return_type(values: vector<parser_value> const&, index: usize) -> return_type_kind
+{
+    let value = rhs_value(values, index);
+    return value.return_type;
+}
+
+rhs_parameters(values: vector<parser_value> const&, index: usize) -> vector<parameter_syntax>
+{
+    let value = rhs_value(values, index);
+    return value.parameters;
+}
+
+rhs_parameter(values: vector<parser_value> const&, index: usize) -> parameter_syntax
+{
+    let value = rhs_value(values, index);
+    return value.parameter;
+}
+
+rhs_statements(values: vector<parser_value> const&, index: usize) -> vector<stmt_id>
+{
+    let value = rhs_value(values, index);
+    return value.statements;
+}
+
+rhs_statement(values: vector<parser_value> const&, index: usize) -> stmt_id
+{
+    let value = rhs_value(values, index);
+    return value.statement;
+}
+
+rhs_declarations(values: vector<parser_value> const&, index: usize) -> vector<var_decl_item>
+{
+    let value = rhs_value(values, index);
+    return value.declarations;
+}
+
+rhs_declaration(values: vector<parser_value> const&, index: usize) -> var_decl_item
+{
+    let value = rhs_value(values, index);
+    return value.declaration;
+}
+
+rhs_expression(values: vector<parser_value> const&, index: usize) -> expr_id
+{
+    let value = rhs_value(values, index);
+    return value.expression;
+}
+
+rhs_arguments(values: vector<parser_value> const&, index: usize) -> vector<expr_id>
+{
+    let value = rhs_value(values, index);
+    return value.arguments;
+}
+
+rhs_else_branch(values: vector<parser_value> const&, index: usize) -> optional<stmt_id>
+{
+    let value = rhs_value(values, index);
+    return value.else_branch;
+}
+
+rhs_return_value(values: vector<parser_value> const&, index: usize) -> optional<expr_id>
+{
+    let value = rhs_value(values, index);
+    return value.return_value;
+}
+
+value_with_token(item: token) -> parser_value
+{
+    let result = parser_value{};
+    result.token = item;
+    result.span = item.span;
+    return result;
+}
+
+value_with_program(span: source_span, id: program_id) -> parser_value
+{
+    let result = parser_value{};
+    result.span = span;
+    result.program = id;
+    return result;
+}
+
+value_with_functions(functions: vector<function_id>) -> parser_value
+{
+    let result = parser_value{};
+    result.functions = functions;
+    return result;
+}
+
+value_with_function(span: source_span, id: function_id) -> parser_value
+{
+    let result = parser_value{};
+    result.span = span;
+    result.function = id;
+    return result;
+}
+
+value_with_return_type(span: source_span, kind: return_type_kind) -> parser_value
+{
+    let result = parser_value{};
+    result.span = span;
+    result.return_type = kind;
+    return result;
+}
+
+value_with_parameters(parameters: vector<parameter_syntax>) -> parser_value
+{
+    let result = parser_value{};
+    result.parameters = parameters;
+    return result;
+}
+
+value_with_parameter(span: source_span, parameter: parameter_syntax) -> parser_value
+{
+    let result = parser_value{};
+    result.span = span;
+    result.parameter = parameter;
+    return result;
+}
+
+value_with_statements(statements: vector<stmt_id>) -> parser_value
+{
+    let result = parser_value{};
+    result.statements = statements;
+    return result;
+}
+
+value_with_statement(span: source_span, id: stmt_id) -> parser_value
+{
+    let result = parser_value{};
+    result.span = span;
+    result.statement = id;
+    return result;
+}
+
+value_with_declarations(declarations: vector<var_decl_item>) -> parser_value
+{
+    let result = parser_value{};
+    result.declarations = declarations;
+    return result;
+}
+
+value_with_declaration(span: source_span, declaration: var_decl_item) -> parser_value
+{
+    let result = parser_value{};
+    result.span = span;
+    result.declaration = declaration;
+    return result;
+}
+
+value_with_expression(span: source_span, id: expr_id) -> parser_value
+{
+    let result = parser_value{};
+    result.span = span;
+    result.expression = id;
+    return result;
+}
+
+value_with_arguments(arguments: vector<expr_id>) -> parser_value
+{
+    let result = parser_value{};
+    result.arguments = arguments;
+    return result;
+}
+
+value_with_else_branch(span: source_span, branch: optional<stmt_id>) -> parser_value
+{
+    let result = parser_value{};
+    result.span = span;
+    result.else_branch = branch;
+    return result;
+}
+
+value_with_return_value(span: source_span, value: optional<expr_id>) -> parser_value
+{
+    let result = parser_value{};
+    result.span = span;
+    result.return_value = value;
+    return result;
+}
+
+impl parser_state {
+    parser_state(items: vector<token>, parse_options_value: parse_options)
     {
-        assert(items.size() != 0, "parser requires eof token");
-        assert(items[items.size() - 1].kind == token_kind::eof, "parser requires eof token");
-        return parser{
+        assert(items.size() != 0, "LR(1) parser requires eof token");
+        assert(items[items.size() - 1].kind == token_kind::eof, "LR(1) parser requires eof token");
+        return parser_state{
             .tokens = move items,
-            .index = 0 as usize,
+            .options = parse_options_value,
+            .state_stack = vector<usize>{},
+            .value_stack = vector<parser_value>{},
             .arena = ast_arena{},
+            .root = program_id{},
             .diagnostics = diagnostic_collector{},
-            .trace_enabled = options.trace_enabled,
-            .trace_depth = 0 as usize,
             .trace_next_step = 1 as usize,
             .trace = vector<trace_record>{}
         };
     }
 
-    peek(self const&, distance: usize = 0 as usize) -> token
+    current_token(self const&, index: usize) -> token
     {
-        let cursor = index + distance;
-        if(cursor >= tokens.size()) {
+        if(index >= tokens.size()) {
             return tokens[tokens.size() - 1];
         }
-        return tokens[cursor];
-    }
-
-    check(self const&, kind: token_kind) -> bool
-    {
-        let current = peek();
-        return current.kind == kind;
-    }
-
-    check_any(self const&, first: token_kind, second: token_kind) -> bool
-    {
-        return check(first) or check(second);
-    }
-
-    consume(self&) -> token
-    {
-        let current = peek();
-        if(index < tokens.size()) {
-            index += 1;
-        }
-        return current;
-    }
-
-    trace_event_at(self&, action: str, subject: str, detail: str, kind: token_kind, text: str) -> void
-    {
-        if(not trace_enabled) {
-            return;
-        }
-
-        trace.push_back(trace_record{
-            .step = trace_next_step,
-            .depth = trace_depth,
-            .action = string{action},
-            .subject = string{subject},
-            .detail = string{detail},
-            .lookahead_kind = kind,
-            .lookahead_text = string{text}
-        });
-        trace_next_step += 1;
-    }
-
-    trace_event(self&, action: str, subject: str, detail: str) -> void
-    {
-        let current = peek();
-        trace_event_at(action, subject, detail, current.kind, current.text.as_str());
-    }
-
-    trace_enter(self&, subject: str) -> void
-    {
-        if(not trace_enabled) {
-            return;
-        }
-
-        trace_event("enter", subject, subject);
-        trace_depth += 1;
-    }
-
-    trace_select(self&, subject: str, detail: str) -> void
-    {
-        trace_event("select", subject, detail);
-    }
-
-    trace_match(self&, item: token const&) -> void
-    {
-        if(not trace_enabled) {
-            return;
-        }
-
-        let detail = string{"match "};
-        detail.append(token_kind_name(item.kind));
-        trace_event_at("match", token_kind_name(item.kind), detail.as_str(), item.kind, item.text.as_str());
-    }
-
-    trace_exit(self&, subject: str, accepted: bool) -> void
-    {
-        if(not trace_enabled) {
-            return;
-        }
-
-        if(trace_depth > 0 as usize) {
-            trace_depth -= 1;
-        }
-        if(accepted) {
-            trace_event("exit", subject, "ok");
-        } else {
-            trace_event("exit", subject, "fail");
-        }
-    }
-
-    trace_error(self&, subject: str, detail: str) -> void
-    {
-        trace_event("error", subject, detail);
-    }
-
-    trace_accept(self&) -> void
-    {
-        trace_event("accept", "Program", "accepted");
-    }
-
-    report_current(self&, kind: diagnostic_kind) -> void
-    {
-        let current = peek();
-        diagnostics.report(kind, current.span);
-    }
-
-    expect(self&, kind: token_kind) -> optional<token>
-    {
-        if(not check(kind)) {
-            trace_error("expected token", token_kind_name(kind));
-            report_current(diagnostic_kind::expected_token);
-            return optional<token>::none;
-        }
-
-        let current = consume();
-        trace_match(current);
-        return optional<token>::some(current);
-    }
-
-    expect_identifier(self&) -> optional<token>
-    {
-        if(not check(token_kind::identifier)) {
-            trace_error("expected identifier", "identifier");
-            report_current(diagnostic_kind::expected_identifier);
-            return optional<token>::none;
-        }
-
-        let current = consume();
-        trace_match(current);
-        return optional<token>::some(current);
+        return tokens[index];
     }
 
     combine(self const&, first: source_span, second: source_span) -> source_span
@@ -182,32 +306,486 @@ impl parser {
         return source_span{ .start = first.start, .end = second.end };
     }
 
-    starts_function(self const&) -> bool
+    trace_event_at(self&, action: str, subject: str, detail: str, item: token const&) -> void
     {
-        return check(token_kind::kw_int) or check(token_kind::kw_void);
+        if(not options.trace_enabled) {
+            return;
+        }
+        trace.push_back(trace_record{
+            .step = trace_next_step,
+            .depth = 0 as usize,
+            .action = string{action},
+            .subject = string{subject},
+            .detail = string{detail},
+            .lookahead_kind = item.kind,
+            .lookahead_text = item.text
+        });
+        trace_next_step += 1;
     }
 
-    synchronize_statement(self&) -> void
+    trace_start(self&) -> void
     {
-        while(not check(token_kind::eof)) {
-            if(check(token_kind::semicolon)) {
-                consume();
-                return;
-            }
-            if(check(token_kind::r_brace)) {
-                return;
-            }
-            consume();
-        }
+        let item = current_token(0 as usize);
+        trace_event_at("enter", "Program", "LR(1) parse", item);
     }
 
-    synchronize_function(self&) -> void
+    trace_shift(self&, item: token const&) -> void
     {
-        while(not check(token_kind::eof)) {
-            if(starts_function()) {
-                return;
-            }
-            consume();
-        }
+        trace_event_at("match", token_kind_name(item.kind), "shift", item);
     }
+
+    trace_reduce(self&, production: usize, lookahead: token const&) -> void
+    {
+        if(not options.trace_enabled) {
+            return;
+        }
+        trace_event_at("reduce", "LR(1)", "reduce", lookahead);
+    }
+
+    trace_accept(self&, lookahead: token const&) -> void
+    {
+        trace_event_at("accept", "Program", "accepted", lookahead);
+    }
+
+    ensure_root(self&) -> void
+    {
+        if(arena.programs.size() != 0 as usize) {
+            return;
+        }
+        let end = tokens[tokens.size() - 1].span;
+        root = arena.add_program(program_syntax{
+            .full_span = end,
+            .functions = vector<function_id>{}
+        });
+    }
+
+    finish(self&, accepted: bool) -> parser_state_result
+    {
+        ensure_root();
+        return parser_state_result{
+            .accepted = accepted and diagnostics.empty(),
+            .ast = move arena,
+            .root = root,
+            .diagnostics = diagnostics.take(),
+            .trace = move trace
+        };
+    }
+
+    program_span(self const&, functions: vector<function_id> const&) -> source_span
+    {
+        if(functions.size() == 0 as usize) {
+            return tokens[tokens.size() - 1].span;
+        }
+        let first = arena.function_span(functions[0 as usize]);
+        let last = arena.function_span(functions[functions.size() - 1]);
+        return combine(first, last);
+    }
+
+    add_binary(self&, kind: token_kind, left: expr_id, right: expr_id) -> expr_id
+    {
+        let syntax = binary_expr{
+            .full_span = combine(arena.expr_span(left), arena.expr_span(right)),
+            .operator_kind = kind,
+            .left = left,
+            .right = right
+        };
+        return arena.add_expr(expr_syntax::binary(syntax));
+    }
+
+    reduce_program(self&, functions: vector<function_id>) -> parser_value
+    {
+        let full_span = program_span(functions);
+        let id = arena.add_program(program_syntax{
+            .full_span = full_span,
+            .functions = functions
+        });
+        root = id;
+        return value_with_program(full_span, id);
+    }
+
+    reduce_value(self&, production: usize, rhs: vector<parser_value> const&) -> parser_value
+    {
+        if(production == 0 as usize) {
+            return rhs_value(rhs, 0 as usize);
+        }
+        if(production == 1 as usize) {
+            return reduce_program(rhs_functions(rhs, 0 as usize));
+        }
+        if(production == 2 as usize) {
+            let functions = rhs_functions(rhs, 0 as usize);
+            functions.push_back(rhs_function(rhs, 1 as usize));
+            return value_with_functions(functions);
+        }
+        if(production == 3 as usize) {
+            return value_with_functions(vector<function_id>{});
+        }
+        if(production == 4 as usize) {
+            let return_type = rhs_value(rhs, 0 as usize);
+            let name = rhs_token(rhs, 1 as usize);
+            let parameters = rhs_parameters(rhs, 3 as usize);
+            let body = rhs_statement(rhs, 5 as usize);
+            let full_span = combine(return_type.span, arena.stmt_span(body));
+            let id = arena.add_function(function_syntax{
+                .full_span = full_span,
+                .return_type = rhs_return_type(rhs, 0 as usize),
+                .name = name.span,
+                .parameters = parameters,
+                .body = body
+            });
+            return value_with_function(full_span, id);
+        }
+        if(production == 5 as usize) {
+            let item = rhs_token(rhs, 0 as usize);
+            return value_with_return_type(item.span, return_type_kind::int_type);
+        }
+        if(production == 6 as usize) {
+            let item = rhs_token(rhs, 0 as usize);
+            return value_with_return_type(item.span, return_type_kind::void_type);
+        }
+        if(production == 7 as usize) {
+            return rhs_value(rhs, 0 as usize);
+        }
+        if(production == 8 as usize) {
+            return value_with_parameters(vector<parameter_syntax>{});
+        }
+        if(production == 9 as usize) {
+            let parameters = rhs_parameters(rhs, 0 as usize);
+            parameters.push_back(rhs_parameter(rhs, 2 as usize));
+            return value_with_parameters(parameters);
+        }
+        if(production == 10 as usize) {
+            let parameters = vector<parameter_syntax>{};
+            parameters.push_back(rhs_parameter(rhs, 0 as usize));
+            return value_with_parameters(parameters);
+        }
+        if(production == 11 as usize) {
+            let first = rhs_token(rhs, 0 as usize);
+            let name = rhs_token(rhs, 1 as usize);
+            let parameter = parameter_syntax{
+                .full_span = combine(first.span, name.span),
+                .name = name.span
+            };
+            return value_with_parameter(parameter.full_span, parameter);
+        }
+        if(production == 12 as usize) {
+            let open = rhs_token(rhs, 0 as usize);
+            let statements = rhs_statements(rhs, 1 as usize);
+            let close = rhs_token(rhs, 2 as usize);
+            let syntax = block_statement{
+                .full_span = combine(open.span, close.span),
+                .statements = statements
+            };
+            let id = arena.add_stmt(stmt_syntax::block(syntax));
+            return value_with_statement(syntax.full_span, id);
+        }
+        if(production == 13 as usize) {
+            let statements = rhs_statements(rhs, 0 as usize);
+            statements.push_back(rhs_statement(rhs, 1 as usize));
+            return value_with_statements(statements);
+        }
+        if(production == 14 as usize) {
+            return value_with_statements(vector<stmt_id>{});
+        }
+        if(
+            production == 15 as usize
+            or production == 16 as usize
+            or production == 17 as usize
+            or production == 18 as usize
+            or production == 19 as usize
+            or production == 20 as usize
+        ) {
+            return rhs_value(rhs, 0 as usize);
+        }
+        if(production == 21 as usize) {
+            let start = rhs_token(rhs, 0 as usize);
+            let declarations = rhs_declarations(rhs, 1 as usize);
+            let semicolon = rhs_token(rhs, 2 as usize);
+            let syntax = var_decl_statement{
+                .full_span = combine(start.span, semicolon.span),
+                .declarations = declarations
+            };
+            let id = arena.add_stmt(stmt_syntax::var_decl(syntax));
+            return value_with_statement(syntax.full_span, id);
+        }
+        if(production == 22 as usize) {
+            let declarations = rhs_declarations(rhs, 0 as usize);
+            declarations.push_back(rhs_declaration(rhs, 2 as usize));
+            return value_with_declarations(declarations);
+        }
+        if(production == 23 as usize) {
+            let declarations = vector<var_decl_item>{};
+            declarations.push_back(rhs_declaration(rhs, 0 as usize));
+            return value_with_declarations(declarations);
+        }
+        if(production == 24 as usize) {
+            let name = rhs_token(rhs, 0 as usize);
+            let item = var_decl_item{
+                .full_span = name.span,
+                .name = name.span,
+                .initializer = optional<expr_id>::none
+            };
+            return value_with_declaration(item.full_span, item);
+        }
+        if(production == 25 as usize) {
+            let name = rhs_token(rhs, 0 as usize);
+            let expression = rhs_expression(rhs, 2 as usize);
+            let item = var_decl_item{
+                .full_span = combine(name.span, arena.expr_span(expression)),
+                .name = name.span,
+                .initializer = optional<expr_id>::some(expression)
+            };
+            return value_with_declaration(item.full_span, item);
+        }
+        if(production == 26 as usize) {
+            let name = rhs_token(rhs, 0 as usize);
+            let value = rhs_expression(rhs, 2 as usize);
+            let semicolon = rhs_token(rhs, 3 as usize);
+            let syntax = assign_statement{
+                .full_span = combine(name.span, semicolon.span),
+                .name = name.span,
+                .value = value
+            };
+            let id = arena.add_stmt(stmt_syntax::assign(syntax));
+            return value_with_statement(syntax.full_span, id);
+        }
+        if(production == 27 as usize) {
+            let name = rhs_token(rhs, 0 as usize);
+            let arguments = rhs_arguments(rhs, 2 as usize);
+            let semicolon = rhs_token(rhs, 4 as usize);
+            let syntax = call_statement{
+                .full_span = combine(name.span, semicolon.span),
+                .callee = name.span,
+                .arguments = arguments
+            };
+            let id = arena.add_stmt(stmt_syntax::call(syntax));
+            return value_with_statement(syntax.full_span, id);
+        }
+        if(production == 28 as usize) {
+            let start = rhs_token(rhs, 0 as usize);
+            let condition = rhs_expression(rhs, 2 as usize);
+            let then_branch = rhs_statement(rhs, 4 as usize);
+            let else_branch = rhs_else_branch(rhs, 5 as usize);
+            let end = arena.stmt_span(then_branch);
+            if(else_branch.has_value()) {
+                end = arena.stmt_span(*else_branch);
+            }
+            let syntax = if_statement{
+                .full_span = combine(start.span, end),
+                .condition = condition,
+                .then_branch = then_branch,
+                .else_branch = else_branch
+            };
+            let id = arena.add_stmt(stmt_syntax::if_stmt(syntax));
+            return value_with_statement(syntax.full_span, id);
+        }
+        if(production == 29 as usize) {
+            let branch = rhs_statement(rhs, 1 as usize);
+            return value_with_else_branch(arena.stmt_span(branch), optional<stmt_id>::some(branch));
+        }
+        if(production == 30 as usize) {
+            return value_with_else_branch(source_span{}, optional<stmt_id>::none);
+        }
+        if(production == 31 as usize) {
+            let start = rhs_token(rhs, 0 as usize);
+            let condition = rhs_expression(rhs, 2 as usize);
+            let body = rhs_statement(rhs, 4 as usize);
+            let syntax = while_statement{
+                .full_span = combine(start.span, arena.stmt_span(body)),
+                .condition = condition,
+                .body = body
+            };
+            let id = arena.add_stmt(stmt_syntax::while_stmt(syntax));
+            return value_with_statement(syntax.full_span, id);
+        }
+        if(production == 32 as usize) {
+            let start = rhs_token(rhs, 0 as usize);
+            let value = rhs_return_value(rhs, 1 as usize);
+            let semicolon = rhs_token(rhs, 2 as usize);
+            let syntax = return_statement{
+                .full_span = combine(start.span, semicolon.span),
+                .value = value
+            };
+            let id = arena.add_stmt(stmt_syntax::return_stmt(syntax));
+            return value_with_statement(syntax.full_span, id);
+        }
+        if(production == 33 as usize) {
+            let expression = rhs_expression(rhs, 0 as usize);
+            return value_with_return_value(arena.expr_span(expression), optional<expr_id>::some(expression));
+        }
+        if(production == 34 as usize) {
+            return value_with_return_value(source_span{}, optional<expr_id>::none);
+        }
+        if(
+            production == 35 as usize
+            or production == 37 as usize
+            or production == 39 as usize
+            or production == 42 as usize
+            or production == 47 as usize
+            or production == 50 as usize
+            or production == 54 as usize
+            or production == 57 as usize
+            or production == 62 as usize
+        ) {
+            return rhs_value(rhs, 0 as usize);
+        }
+        if(
+            production == 36 as usize
+            or production == 38 as usize
+            or production == 40 as usize
+            or production == 41 as usize
+            or production == 43 as usize
+            or production == 44 as usize
+            or production == 45 as usize
+            or production == 46 as usize
+            or production == 48 as usize
+            or production == 49 as usize
+            or production == 51 as usize
+            or production == 52 as usize
+            or production == 53 as usize
+        ) {
+            let left = rhs_expression(rhs, 0 as usize);
+            let op = rhs_token(rhs, 1 as usize);
+            let right = rhs_expression(rhs, 2 as usize);
+            let id = add_binary(op.kind, left, right);
+            return value_with_expression(arena.expr_span(id), id);
+        }
+        if(production == 55 as usize or production == 56 as usize) {
+            let op = rhs_token(rhs, 0 as usize);
+            let operand = rhs_expression(rhs, 1 as usize);
+            let syntax = unary_expr{
+                .full_span = combine(op.span, arena.expr_span(operand)),
+                .operator_kind = op.kind,
+                .operand = operand
+            };
+            let id = arena.add_expr(expr_syntax::unary(syntax));
+            return value_with_expression(syntax.full_span, id);
+        }
+        if(production == 58 as usize) {
+            let item = rhs_token(rhs, 0 as usize);
+            let id = arena.add_expr(expr_syntax::integer(integer_expr{ .full_span = item.span }));
+            return value_with_expression(item.span, id);
+        }
+        if(production == 59 as usize) {
+            let item = rhs_token(rhs, 0 as usize);
+            let id = arena.add_expr(expr_syntax::name(name_expr{ .full_span = item.span, .name = item.span }));
+            return value_with_expression(item.span, id);
+        }
+        if(production == 60 as usize) {
+            let name = rhs_token(rhs, 0 as usize);
+            let arguments = rhs_arguments(rhs, 2 as usize);
+            let close = rhs_token(rhs, 3 as usize);
+            let syntax = call_expr{
+                .full_span = combine(name.span, close.span),
+                .callee = name.span,
+                .arguments = arguments
+            };
+            let id = arena.add_expr(expr_syntax::call(syntax));
+            return value_with_expression(syntax.full_span, id);
+        }
+        if(production == 61 as usize) {
+            let open = rhs_token(rhs, 0 as usize);
+            let expression = rhs_expression(rhs, 1 as usize);
+            let close = rhs_token(rhs, 2 as usize);
+            let syntax = grouped_expr{
+                .full_span = combine(open.span, close.span),
+                .expression = expression
+            };
+            let id = arena.add_expr(expr_syntax::grouped(syntax));
+            return value_with_expression(syntax.full_span, id);
+        }
+        if(production == 63 as usize) {
+            return value_with_arguments(vector<expr_id>{});
+        }
+        if(production == 64 as usize) {
+            let arguments = rhs_arguments(rhs, 0 as usize);
+            arguments.push_back(rhs_expression(rhs, 2 as usize));
+            return value_with_arguments(arguments);
+        }
+        if(production == 65 as usize) {
+            let arguments = vector<expr_id>{};
+            arguments.push_back(rhs_expression(rhs, 0 as usize));
+            return value_with_arguments(arguments);
+        }
+
+        return parser_value{};
+    }
+
+    reduce(self&, action: parser_action, tables: parser_tables const&) -> bool
+    {
+        let production = tables.grammar.productions[action.production];
+        let rhs = vector<parser_value>{};
+        let count: usize = 0;
+        while(count < production.rhs.size()) {
+            assert(state_stack.size() != 0 as usize, "LR(1) state stack underflow");
+            assert(value_stack.size() != 0 as usize, "LR(1) value stack underflow");
+            state_stack.pop_back();
+            rhs.push_back(value_stack.back());
+            value_stack.pop_back();
+            count += 1;
+        }
+
+        let goto_state = state_stack.back();
+        let target = tables.goto_table.find(goto_key{ .state = goto_state, .nonterminal = production.lhs });
+        if(not target.has_value()) {
+            diagnostics.report(diagnostic_kind::unexpected_token, tokens[tokens.size() - 1].span);
+            return false;
+        }
+
+        let value = reduce_value(action.production, rhs);
+        value_stack.push_back(value);
+        state_stack.push_back(*target);
+        return true;
+    }
+
+    run(self&, tables: parser_tables const&) -> parser_state_result
+    {
+        state_stack.push_back(0 as usize);
+        trace_start();
+
+        let input_index: usize = 0;
+        while(true) {
+            let lookahead = current_token(input_index);
+            let state = state_stack.back();
+            let action = tables.action_table.find(action_key{ .state = state, .terminal = lookahead.kind });
+            if(not action.has_value()) {
+                diagnostics.report(diagnostic_kind::unexpected_token, lookahead.span);
+                return finish(false);
+            }
+
+            let current_action = *action;
+            if(current_action.kind == parser_action_kind::shift) {
+                value_stack.push_back(value_with_token(lookahead));
+                state_stack.push_back(current_action.target_state);
+                trace_shift(lookahead);
+                input_index += 1;
+                continue;
+            }
+            if(current_action.kind == parser_action_kind::reduce) {
+                trace_reduce(current_action.production, lookahead);
+                if(not reduce(current_action, tables)) {
+                    return finish(false);
+                }
+                continue;
+            }
+            if(current_action.kind == parser_action_kind::accept) {
+                trace_accept(lookahead);
+                if(tables.conflicts.size() != 0 as usize) {
+                    diagnostics.report(diagnostic_kind::unexpected_token, lookahead.span);
+                    return finish(false);
+                }
+                return finish(true);
+            }
+
+            diagnostics.report(diagnostic_kind::unexpected_token, lookahead.span);
+            return finish(false);
+        }
+        return finish(false);
+    }
+}
+
+export parse_lr(tokens: vector<token>, options: parse_options) -> parser_state_result
+{
+    let tables = build_parser_tables();
+    let state = parser_state{move tokens, options};
+    return state.run(tables);
 }

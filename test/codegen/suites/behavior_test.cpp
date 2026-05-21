@@ -78,6 +78,30 @@ answer() -> i32
     test_parser::assert_true(emitted.ir.contains("ret i32"), "LLVM IR should return i32");
 }
 
+auto check_direct_array_initializer_codegen() -> void
+{
+    auto sources = source_manager{};
+    auto parsed = parse_source(
+        sources,
+        "direct_array_initializer.cp",
+        R"(answer() -> i32
+{
+    let values = [1, 2, 3];
+    return values[1];
+})");
+    auto checked = analyze_single(sources, parsed);
+    test_parser::assert_true(checked.accepted(), "direct array initializer source should pass semantic analysis");
+
+    auto ir = emit_ir(sources, parsed, checked);
+    test_parser::assert_true(ir.accepted, ir.error.empty() ? "IR emission should pass" : ir.error);
+    auto text = dump_ir(ir.module);
+    test_parser::assert_true(text.contains("element_address"), "MIR dump should initialize array elements in place");
+    test_parser::assert_true(not text.contains("aggregate_undef"), "direct array initializer should avoid aggregate temporary construction");
+
+    auto emitted = emit_llvm_ir(ir.module);
+    test_parser::assert_true(emitted.verified, emitted.error.empty() ? "LLVM module should verify" : emitted.error);
+}
+
 auto check_extern_c_codegen() -> void
 {
     auto sources = source_manager{};
@@ -172,8 +196,9 @@ auto check_aggregate_literals() -> void
     auto ir = emit_ir(sources, parsed, checked);
     test_parser::assert_true(ir.accepted, ir.error.empty() ? "IR emission should pass" : ir.error);
     auto text = dump_ir(ir.module);
-    test_parser::assert_true(text.contains("aggregate_undef"), "MIR dump should contain aggregate_undef");
-    test_parser::assert_true(text.contains("insert_value"), "MIR dump should contain insert_value");
+    test_parser::assert_true(text.contains("element_address"), "MIR dump should directly initialize array elements");
+    test_parser::assert_true(text.contains("field_address"), "MIR dump should directly initialize tuple fields");
+    test_parser::assert_true(not text.contains("aggregate_undef"), "declaration aggregate literals should avoid aggregate temporaries");
 
     auto emitted = emit_llvm_ir(ir.module);
     test_parser::assert_true(emitted.verified, emitted.error.empty() ? "LLVM module should verify" : emitted.error);
@@ -486,6 +511,7 @@ auto main() -> int
 {
     check_return_literal();
     check_locals_assignment_and_call();
+    check_direct_array_initializer_codegen();
     check_extern_c_codegen();
     check_if_control_flow();
     check_short_circuit_control_flow();

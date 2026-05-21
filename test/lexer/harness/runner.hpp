@@ -84,8 +84,8 @@ auto inline run_case(lexer_case const& current_case) -> void
         current_case.source_text);
 
     auto preprocessed = preprocess(sources, file);
-    auto result = lex(preprocessed);
     contract_assert(preprocessed.diagnostics.empty());
+    auto result = lex(preprocessed);
     assert_invalid_tokens_match_diagnostics(result.tokens, result.diagnostics);
 
     auto actual_tokens = std::vector<expected_token>{};

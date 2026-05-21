@@ -38,6 +38,6 @@ impl diagnostic_collector {
     take(self&) -> vector<diagnostic>
     {
         let result = move diagnostics;
-        return move result;
+        return result;
     }
 }

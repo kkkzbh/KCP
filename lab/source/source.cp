@@ -58,10 +58,17 @@ impl source_file {
     position(self const&, offset: usize) -> source_position
     {
         assert(offset <= text.size(), "source position out of bounds");
-        let line_index: usize = 0;
-        while(line_index + 1 < line_starts.size() and line_starts[line_index + 1] <= offset) {
-            ++line_index;
+        let left: usize = 0;
+        let right = line_starts.size();
+        while(left < right) {
+            let mid = left + (right - left) / 2;
+            if(line_starts[mid] <= offset) {
+                left = mid + 1;
+            } else {
+                right = mid;
+            }
         }
+        let line_index = left - 1;
         let line_start = line_starts[line_index];
         return source_position{
             .offset = offset,

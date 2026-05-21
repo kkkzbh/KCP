@@ -55,10 +55,9 @@ auto main() -> int
 
     auto const unterminated_block = sources.add_source("unterminated_block_runtime.lex", "/* block\ncomment");
     auto block_preprocessed = preprocess(sources, unterminated_block);
-    auto block_result = lex(block_preprocessed);
-
     test_lexer::assert_true(block_preprocessed.diagnostics.size() == 1,
         "unterminated block comment should produce preprocessor diagnostic");
+    auto block_result = lex(block_preprocessed);
     test_lexer::assert_true(block_result.diagnostics.empty(),
         "unterminated block comment should not produce lexer diagnostic");
     test_lexer::assert_true(block_result.tokens.front().kind == token_kind::eof,

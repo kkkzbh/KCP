@@ -1,5 +1,5 @@
 /// @brief 词法分析器公共 facade。
-/// @details 对外提供一次性 `lex(preprocessed_file)` 入口。
+/// @details 对外提供一次性 `lex(preprocessed_file const&)` 入口。
 export module lexer;
 
 import std;
@@ -16,7 +16,7 @@ export struct lex_result
     std::vector<diagnostic> diagnostics{};
 };
 
-/// @brief 对指定预处理文件执行完整词法处理。
+/// @brief 借用指定预处理文件并执行完整词法处理。
 export auto lex(preprocessed_file const& file) -> lex_result
 {
     auto state = lexer{ file };

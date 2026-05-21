@@ -6,7 +6,6 @@ export import diagnostic;
 export import parser.ast;
 export import parser.trace;
 import parser.state;
-import parser.program;
 
 export struct parse_result {
     accepted: bool;
@@ -18,19 +17,13 @@ export struct parse_result {
 
 export parse_with_options(tokens: vector<token>, options: parse_options) -> parse_result
 {
-    let state = parser{move tokens, options};
-    let root = state.parse_program();
-    let current = state.peek();
-    let accepted = state.diagnostics.empty() and current.kind == token_kind::eof;
-    if(accepted) {
-        state.trace_accept();
-    }
+    let result = parse_lr(move tokens, options);
     return parse_result{
-        .accepted = accepted,
-        .ast = move state.arena,
-        .root = root,
-        .diagnostics = state.diagnostics.take(),
-        .trace = move state.trace
+        .accepted = result.accepted,
+        .ast = move result.ast,
+        .root = result.root,
+        .diagnostics = move result.diagnostics,
+        .trace = move result.trace
     };
 }
 

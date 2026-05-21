@@ -1,6 +1,7 @@
 export module std.io.format;
 
 import std.io.raw;
+import std.text.str;
 export import std.text.string;
 
 export variant format_error {
