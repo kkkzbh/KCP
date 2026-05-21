@@ -137,6 +137,37 @@ auto semantic_analyzer::bind_active_function_generic_parameters(std::size_t unit
     }
 }
 
+auto semantic_analyzer::inferred_parameter_generic_name(std::size_t index) const -> std::string
+{
+    return std::format("$parameter.{}", index);
+}
+
+auto semantic_analyzer::inferred_parameter_generic_names(function_syntax const& function) const
+    -> std::vector<std::string>
+{
+    if(function.kind == function_syntax_kind::lambda) {
+        return {};
+    }
+
+    auto names = std::vector<std::string>{};
+    for(auto index = 0uz; index < function.parameters.size(); ++index) {
+        auto const& parameter = function.parameters[index];
+        if(parameter.is_self_receiver or parameter.type) {
+            continue;
+        }
+        names.emplace_back(inferred_parameter_generic_name(index));
+    }
+    return names;
+}
+
+auto semantic_analyzer::implicit_function_generic_names(std::vector<std::string> leading, function_syntax const& function) const
+    -> std::vector<std::string>
+{
+    auto inferred = inferred_parameter_generic_names(function);
+    leading.insert(leading.end(), inferred.begin(), inferred.end());
+    return leading;
+}
+
 auto semantic_analyzer::function_generic_parameter_names(std::size_t unit_index, function_id id) const
     -> std::vector<std::string>
 {
@@ -614,6 +645,9 @@ auto semantic_analyzer::validate_parameter_defaults(std::size_t unit_index, func
             seen_default = true;
             if(function.kind == function_syntax_kind::lambda) {
                 report(diagnostic_kind::invalid_type_argument, parameter.full_span, "lambda parameter default values are not supported");
+            }
+            if(function.kind != function_syntax_kind::lambda and not parameter.is_self_receiver and not parameter.type) {
+                report(diagnostic_kind::invalid_type_argument, parameter.full_span, "inferred function parameter cannot have a default value");
             }
             if(parameter.is_pack) {
                 report(diagnostic_kind::invalid_type_argument, parameter.full_span, "parameter pack cannot have a default value");

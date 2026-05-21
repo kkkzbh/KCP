@@ -426,6 +426,32 @@ auto semantic_analyzer::lower_parameter_type(ast_arena const& ast, parameter_syn
         : semantic_type_ids::inferred;
 }
 
+auto semantic_analyzer::lower_function_parameter_type(ast_arena const& ast, function_syntax const& function, std::size_t index, std::optional<semantic_type_id> self_type) -> semantic_type_id
+{
+    auto const& parameter = function.parameters[index];
+    if(parameter.type or parameter.is_self_receiver or function.kind == function_syntax_kind::lambda) {
+        return lower_parameter_type(ast, parameter, self_type);
+    }
+
+    auto name = inferred_parameter_generic_name(index);
+    auto found = active_generic_parameters.find(name);
+    auto lowered = found == active_generic_parameters.end()
+        ? semantic_type_ids::error
+        : found->second;
+    if(not parameter.inferred_is_reference) {
+        return lowered;
+    }
+
+    auto kind = parameter.inferred_reference_is_move
+        ? reference_type::kind::move
+        : reference_type::kind::regular;
+    return result.types.intern(reference_type {
+        lowered,
+        parameter.inferred_reference_is_const,
+        kind,
+    });
+}
+
 auto semantic_analyzer::materialize_like_type(semantic_type_id type, bool is_const) -> semantic_type_id
 {
     auto const& kind = result.types.get(type);
@@ -790,7 +816,11 @@ auto semantic_analyzer::method_symbol(semantic_type_id owner, std::string_view n
             return found->second;
         }
     }
-    if(auto found_methods = extension_methods.find(type); found_methods != extension_methods.end()) {
+    auto const* unit = active_unit_index < units.size() ? &units[active_unit_index] : active_unit;
+    if(unit == nullptr) {
+        return std::nullopt;
+    }
+    if(auto found_methods = unit->visible_extension_methods.find(type); found_methods != unit->visible_extension_methods.end()) {
         if(auto found = found_methods->second.find(key); found != found_methods->second.end()) {
             return found->second;
         }
@@ -1431,7 +1461,7 @@ auto semantic_analyzer::literal_type(source_span span) -> semantic_type_id
     return semantic_type_ids::i32;
 }
 
-auto semantic_analyzer::unary_type(token_kind operator_kind, expression_info operand) -> expression_info
+auto semantic_analyzer::unary_type(token_kind operator_kind, unary_position position, expression_info operand) -> expression_info
 {
     auto operand_value = read_type(operand.type);
     using enum token_kind;
@@ -1474,8 +1504,17 @@ auto semantic_analyzer::unary_type(token_kind operator_kind, expression_info ope
         case plus:
         case minus:
         case tilde:
-        case plus_plus:
+            return expression_info{ .type = operand_value };
         case minus_minus:
+        case plus_plus:
+            if(position == unary_position::prefix) {
+                auto reference = intern_type(reference_type { operand_value, target_const(operand.type, operand.is_const) });
+                return expression_info {
+                    .type = reference,
+                    .is_lvalue = true,
+                    .is_const = target_const(reference, operand.is_const),
+                };
+            }
             return expression_info{ .type = operand_value };
         default:
             return expression_info{ .type = semantic_type_ids::error };
@@ -1494,6 +1533,7 @@ auto semantic_analyzer::binary_type(token_kind operator_kind, semantic_type_id l
         case bang_equal:
         case less:
         case less_equal:
+        case spaceship:
         case greater:
         case greater_equal:
             return expression_info{ .type = semantic_type_ids::bool_ };

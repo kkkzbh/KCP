@@ -151,6 +151,22 @@ max<T: comparable<T>>(left: T, right: T) -> T
 }
 ```
 
+普通函数参数也可以省略类型，编译器会为每个省略类型的参数引入一个由调用实参推导的隐藏类型参数。需要借用形态时，把引用后缀留在参数名后：
+
+```cp
+read(value const&) -> i32
+{
+    return value;
+}
+
+add(left, right) -> i32
+{
+    return left + right;
+}
+```
+
+显式类型和省略类型不能混写；`value&: i32` 应写成 `value: i32&` 或 `value&`。
+
 `impl concept for Type` 给具体类型实现协议；标准库也可以提供由编译器识别的内建 concept。
 
 相关参考：[泛型](generic.md)、[Concept](concept.md)。

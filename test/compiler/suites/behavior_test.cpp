@@ -1134,6 +1134,35 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 22, "generic function binary should return monomorphized value");
 }
 
+auto check_inferred_parameter_generic_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("inferred-parameter-generic");
+    auto source = dir / "inferred_parameter_generic.cp";
+    auto app = dir / "inferred_parameter_generic";
+    write_source(
+        source,
+        R"(read(value const&) -> i32
+{
+    return value;
+}
+
+add(left, right) -> i32
+{
+    return left + right;
+}
+
+main() -> i32
+{
+    let value = 20;
+    return add(read(const ref value), 22);
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile inferred parameter generic binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "inferred parameter generic binary should return 42");
+}
+
 auto check_const_generic_array_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("const-generic-array");
@@ -1690,6 +1719,47 @@ main() -> i32
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status == 0, "cp should compile operator overload binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "operator overload binary should return computed value");
+}
+
+auto check_builtin_operator_escape_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("builtin-operator-escape");
+    auto source = dir / "builtin_operator_escape.cp";
+    auto app = dir / "builtin_operator_escape";
+    write_source (
+        source,
+        R"(plus10(value: i32&) -> void
+{
+    value += 10;
+}
+
+operator +(left: i32, right: i32) -> i32
+{
+    return builtin(left + right + 1);
+}
+
+impl i32 {
+    bump(self&) -> void
+    {
+        self += 1;
+    }
+}
+
+main() -> i32
+{
+    let value = 2;
+    value.plus10();
+    value.bump();
+    let table: [[i32; 2]; 1] = [[1, 2]];
+    let custom = value + 3;
+    let raw = builtin(value + 3 + table[0][1]);
+    return custom + raw + 5;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile builtin operator escape binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "builtin operator escape binary should return computed value");
 }
 
 auto check_update_operator_overload_binary(test_tools const& tools) -> void
@@ -2996,6 +3066,7 @@ auto main(int argc, char** argv) -> int
     check_generic_struct_binary(tools);
     check_const_generic_struct_binary(tools);
     check_generic_function_binary(tools);
+    check_inferred_parameter_generic_binary(tools);
     check_const_generic_array_binary(tools);
     check_imported_generic_function_binary(tools);
     check_parameter_pack_binary(tools);
@@ -3008,6 +3079,7 @@ auto main(int argc, char** argv) -> int
     check_io_format_errors_binary(tools);
     check_file_io_binary(tools);
     check_operator_overload_binary(tools);
+    check_builtin_operator_escape_binary(tools);
     check_update_operator_overload_binary(tools);
     check_std_sort_binary(tools);
     check_iota_public_import_binary(tools);

@@ -870,6 +870,19 @@ auto check_anonymous_modules() -> void
             "anonymous units should not see each other's local functions");
     }
 
+    {
+        auto sources = source_manager{};
+        auto units = std::array {
+            parse_source(sources, "math.cp", "export module math;\nadd(x: i32, y: i32) -> i32 { return x + y; }"),
+            parse_source(sources, "main.cp", "import math;\nmain() -> i32 { return add(1, 2); }"),
+        };
+
+        auto checked = analyze_semantics(sources, std::span<parse_result const>{ units });
+        test_parser::assert_true(
+            has_diagnostic(checked, diagnostic_kind::unexported_name),
+            "imports should explain when a referenced declaration exists but is not exported");
+    }
+
     expect_diagnostic(
         "anonymous_export.cp",
         "export helper() { return; }",
@@ -1259,6 +1272,39 @@ main() -> i32
     );
     test_parser::assert_true(default_result.accepted(), "generic function default argument source should pass semantic analysis");
 
+    auto inferred_parameter_result = analyze_one(
+        "inferred_parameter_generic_function.cp",
+        R"(read(value const&) -> i32
+{
+    return value;
+}
+
+borrow(value&) -> i32
+{
+    return value;
+}
+
+take(value move&) -> i32
+{
+    return value;
+}
+
+add(left, right) -> i32
+{
+    return left + right;
+}
+
+main() -> i32
+{
+    let value = 4;
+    return read(const ref value) + borrow(ref value) + take(move value) + add(20, 5);
+})"
+    );
+    test_parser::assert_true(inferred_parameter_result.accepted(), "inferred parameter generic functions should pass semantic analysis");
+    test_parser::assert_true(
+        inferred_parameter_result.function_instances.size() == 4,
+        "inferred parameter generic calls should create concrete function instances");
+
     using enum diagnostic_kind;
     expect_diagnostic(
         "generic_function_too_many_type_args.cp",
@@ -1284,6 +1330,16 @@ main() -> i32
         "generic_function_inferred_return.cp",
         "id<T>(input: T) { return input; } main() -> i32 { return id(1); }",
         cannot_infer_return_type
+    );
+    expect_diagnostic(
+        "inferred_parameter_default_value.cp",
+        "touch(value = 1) -> i32 { return value; } main() -> i32 { return touch(); }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "inferred_parameter_explicit_type_argument.cp",
+        "read(value const&) -> i32 { return value; } main() -> i32 { return read<i32>(1); }",
+        invalid_type_argument
     );
 }
 
@@ -2242,6 +2298,42 @@ main()
 })"
     );
     test_parser::assert_true(compare_result.accepted(), "str should satisfy equality and three-way comparable concepts");
+
+    auto builtin_extension = analyze_one(
+        "builtin_extension_operators.cp",
+        R"(plus10(value: i32&) -> void
+{
+    value += 10;
+}
+
+operator +(left: i32, right: i32) -> i32
+{
+    return builtin(left + right);
+}
+
+impl i32 {
+    bump(self&) -> void
+    {
+        self += 1;
+    }
+}
+
+main() -> i32
+{
+    let value = 2;
+    value.plus10();
+    value.bump();
+    let table: [[i32; 2]; 1] = [[1, 2]];
+    let custom = value + 3;
+    let raw = builtin(value + 3 + table[0][1]);
+    return custom + raw;
+})"
+    );
+    test_parser::assert_true(builtin_extension.accepted(), "builtin types should allow impl, UFCS, operator override, and builtin escape");
+    test_parser::assert_true(
+        builtin_extension.expression_operators.size() == 2uz,
+        "builtin(...) should suppress user operator selection across the whole expression tree"
+    );
 }
 
 auto check_operator_import_semantics() -> void
@@ -2279,6 +2371,72 @@ main() -> i32
         auto checked = analyze_semantics(sources, std::span<parse_result const>{ units });
         test_parser::assert_true(checked.accepted(), "exported top-level operator should be visible after import");
         test_parser::assert_true(not checked.expression_operators.empty(), "imported operator expression should record selected overload");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto units = std::vector<parse_result> {
+            parse_source(
+                sources,
+                "ints.cp",
+                R"(export module ints;
+
+impl i32 {
+    bump(self&) -> void
+    {
+        self += 1;
+    }
+
+    operator +(self, rhs: i32) -> i32
+    {
+        return builtin(self + rhs);
+    }
+})"),
+            parse_source(
+                sources,
+                "main.cp",
+                R"(import ints;
+
+main()
+{
+    let value = 1;
+    value.bump();
+    let next = value + 2;
+})")
+        };
+        auto checked = analyze_semantics(sources, std::span<parse_result const>{ units });
+        test_parser::assert_true(checked.accepted(), "imported builtin extension methods and operators should be visible");
+        test_parser::assert_true(not checked.expression_operators.empty(), "imported builtin extension operator should be selected");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto units = std::vector<parse_result> {
+            parse_source(
+                sources,
+                "ints.cp",
+                R"(export module ints;
+
+impl i32 {
+    hidden(self&) -> void
+    {
+        self += 1;
+    }
+})"),
+            parse_source(
+                sources,
+                "main.cp",
+                R"(main()
+{
+    let value = 1;
+    value.hidden();
+})")
+        };
+        auto checked = analyze_semantics(sources, std::span<parse_result const>{ units });
+        test_parser::assert_true(
+            has_diagnostic(checked, diagnostic_kind::unknown_member),
+            "unimported builtin extension method should not be visible"
+        );
     }
 
     {
@@ -2333,32 +2491,6 @@ operator +(left: marker const&, right: marker const&) -> marker
 operator +(left: marker const&, right: marker const&) -> marker
 {
     return marker{ left.value - right.value };
-}
-
-main()
-{
-    let a = marker{ 1 };
-    let b = marker{ 2 };
-    let c = a + b;
-})",
-        invalid_operator
-    );
-    expect_diagnostic (
-        "operator_layer_no_fallback.cp",
-        R"(struct marker {
-    value: i32;
-}
-
-impl marker {
-    operator +(self const&, rhs: bool) -> this
-    {
-        return marker{ value };
-    }
-}
-
-operator +(left: marker const&, right: marker const&) -> marker
-{
-    return marker{ left.value + right.value };
 }
 
 main()
@@ -2439,6 +2571,7 @@ auto check_negative_cases() -> void
     expect_diagnostic("float_increment.cp", "main() { let value = 1.0; value++; }", invalid_operator);
     expect_diagnostic("bad_condition.cp", "main() { if(1) { return; } }", condition_not_bool);
     expect_diagnostic("bad_return.cp", "main() -> i32 { return true; }", return_type_mismatch);
+    expect_diagnostic("missing_return.cp", "main() -> i32 { let value = 1; }", missing_return);
     expect_diagnostic("bad_void_value.cp", "main() { let value: void = {}; }", unknown_type);
     expect_diagnostic (
         "mixed_inferred_return.cp",
@@ -2460,11 +2593,7 @@ auto check_negative_cases() -> void
     expect_diagnostic("bad_ref_initializer.cp", "main() { let ref value = 1 + 2; }", invalid_assignment_target);
     expect_diagnostic("bad_destructure_initializer.cp", "main() { let (a, b) = 1; }", type_mismatch);
     expect_diagnostic("lambda_parameter_infer.cp", "main() { let f = f(x) => x; }", type_mismatch);
-    expect_diagnostic (
-        "operator_builtin_only.cp",
-        "operator +(left: i32, right: i32) -> i32 { return left + right; }",
-        invalid_operator
-    );
+    expect_diagnostic("builtin_bad_arg_count.cp", "main() { let value = builtin(); }", argument_count_mismatch);
     expect_diagnostic (
         "operator_bad_assign_self.cp",
         "struct value { item: i32; } impl value { operator =(self const&, rhs: this const&) { } }",

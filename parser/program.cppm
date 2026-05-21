@@ -190,7 +190,7 @@ auto parser::parse_translation_unit_node() -> std::optional<translation_unit_syn
 
     unit.functions.insert(unit.functions.end(), synthetic_functions.begin(), synthetic_functions.end());
     unit.full_span = combine_spans(start, peek().span);
-    return std::move(unit);
+    return unit;
 }
 
 auto parser::parse_module_header() -> std::optional<module_header_syntax>
@@ -462,6 +462,35 @@ auto parser::parse_overload_operator() -> std::optional<std::pair<overload_opera
     auto consume_operator = [&](overload_operator_kind kind) {
         return std::pair{ kind, consume().span };
     };
+    auto consume_positioned_update_operator = [&](overload_operator_kind plus_kind, overload_operator_kind minus_kind) -> std::optional<std::pair<overload_operator_kind, source_span>> {
+        auto position = consume();
+        if(check(plus_plus)) {
+            auto operation = consume();
+            return std::pair{ plus_kind, combine_spans(position.span, operation.span) };
+        }
+        if(check(minus_minus)) {
+            auto operation = consume();
+            return std::pair{ minus_kind, combine_spans(position.span, operation.span) };
+        }
+        report_current(
+            diagnostic_kind::unexpected_token,
+            std::format("expected '++' or '--' after operator {}, got {}", position.text, token_name(peek().kind))
+        );
+        return std::nullopt;
+    };
+
+    if(check_contextual("prefix")) {
+        return consume_positioned_update_operator(
+            overload_operator_kind::prefix_plus_plus,
+            overload_operator_kind::prefix_minus_minus
+        );
+    }
+    if(check_contextual("postfix")) {
+        return consume_positioned_update_operator(
+            overload_operator_kind::postfix_plus_plus,
+            overload_operator_kind::postfix_minus_minus
+        );
+    }
 
     switch(current.kind) {
         case plus: { return consume_operator(overload_operator_kind::plus); }
@@ -479,6 +508,7 @@ auto parser::parse_overload_operator() -> std::optional<std::pair<overload_opera
         case bang_equal: { return consume_operator(overload_operator_kind::bang_equal); }
         case less: { return consume_operator(overload_operator_kind::less); }
         case less_equal: { return consume_operator(overload_operator_kind::less_equal); }
+        case spaceship: { return consume_operator(overload_operator_kind::spaceship); }
         case greater: { return consume_operator(overload_operator_kind::greater); }
         case greater_equal: { return consume_operator(overload_operator_kind::greater_equal); }
         case equal: { return consume_operator(overload_operator_kind::equal); }
@@ -492,6 +522,18 @@ auto parser::parse_overload_operator() -> std::optional<std::pair<overload_opera
         case caret_equal: { return consume_operator(overload_operator_kind::caret_equal); }
         case less_less_equal: { return consume_operator(overload_operator_kind::less_less_equal); }
         case greater_greater_equal: { return consume_operator(overload_operator_kind::greater_greater_equal); }
+        case plus_plus:
+        case minus_minus:
+            report_current(
+                diagnostic_kind::unexpected_token,
+                std::format(
+                    "operator {} must be declared as operator prefix {} or operator postfix {}",
+                    token_name(current.kind),
+                    token_name(current.kind),
+                    token_name(current.kind)
+                )
+            );
+            return std::nullopt;
         case l_bracket: {
             auto open = consume();
             auto close = expect(token_kind::r_bracket);
@@ -1490,23 +1532,62 @@ auto parser::parse_parameter() -> std::optional<parameter_syntax>
         };
     }
 
-    auto colon = expect(token_kind::colon);
-    if(not colon) {
-        return std::nullopt;
-    }
-
-    if(not expect_type_start()) {
-        return std::nullopt;
-    }
-    auto type = parse_type();
-    if(not type) {
-        return std::nullopt;
-    }
+    auto type = std::optional<type_id>{};
     auto is_pack = false;
-    auto end = arena.span(*type);
-    if(auto ellipsis = consume_ellipsis()) {
-        is_pack = true;
-        end = *ellipsis;
+    auto inferred_is_reference = false;
+    auto inferred_reference_is_const = false;
+    auto inferred_reference_is_move = false;
+    auto end = name->span;
+    if(check(token_kind::colon)) {
+        consume();
+        if(not expect_type_start()) {
+            return std::nullopt;
+        }
+        type = parse_type();
+        if(not type) {
+            return std::nullopt;
+        }
+        end = arena.span(*type);
+        if(auto ellipsis = consume_ellipsis()) {
+            is_pack = true;
+            end = *ellipsis;
+        }
+    } else if(check(token_kind::kw_const)) {
+        consume();
+        auto amp = expect(token_kind::amp);
+        if(not amp) {
+            return std::nullopt;
+        }
+        inferred_is_reference = true;
+        inferred_reference_is_const = true;
+        end = amp->span;
+    } else if(check(token_kind::amp)) {
+        inferred_is_reference = true;
+        end = consume().span;
+    } else if(check(token_kind::kw_move)) {
+        consume();
+        auto amp = expect(token_kind::amp);
+        if(not amp) {
+            return std::nullopt;
+        }
+        inferred_is_reference = true;
+        inferred_reference_is_move = true;
+        end = amp->span;
+    }
+    if(not type and check(token_kind::colon)) {
+        report_current(
+            diagnostic_kind::unexpected_token,
+            "inferred parameter suffix cannot be combined with an explicit type; write the suffix in the type instead"
+        );
+        consume();
+        if(not expect_type_start()) {
+            return std::nullopt;
+        }
+        type = parse_type();
+        if(not type) {
+            return std::nullopt;
+        }
+        end = arena.span(*type);
     }
     auto default_value = std::optional<expr_id>{};
     if(check(token_kind::equal)) {
@@ -1522,8 +1603,11 @@ auto parser::parse_parameter() -> std::optional<parameter_syntax>
         .full_span = combine_spans(full_start, end),
         .is_const = is_const,
         .is_pack = is_pack,
+        .inferred_is_reference = inferred_is_reference,
+        .inferred_reference_is_const = inferred_reference_is_const,
+        .inferred_reference_is_move = inferred_reference_is_move,
         .name = name->span,
-        .type = *type,
+        .type = type,
         .default_value = default_value,
     };
 }
@@ -1685,6 +1769,17 @@ auto parser::parse_generic_parameter() -> std::optional<generic_parameter_syntax
         }
         while(parameter_kind == generic_parameter_syntax::kind::type and check(token_kind::kw_and)) {
             consume();
+            if(check(token_kind::identifier) and peek(1uz).kind == token_kind::colon) {
+                if(peek().text != name->text) {
+                    report_current(
+                        diagnostic_kind::invalid_type_argument,
+                        "inline concept bound target must match the generic parameter name"
+                    );
+                    return std::nullopt;
+                }
+                consume();
+                consume();
+            }
             auto next = parse_concept_id();
             if(not next) {
                 return std::nullopt;

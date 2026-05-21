@@ -144,6 +144,28 @@ auto semantic_analyzer::resolve_imports() -> void
                         }
                     }
                 }
+                if(auto found_methods = module_extension_method_exports.find(module_name); found_methods != module_extension_method_exports.end()) {
+                    auto& exports = module_extension_method_exports[state.module_name];
+                    for(auto const& [type, methods] : found_methods->second) {
+                        for(auto const& [name, symbol] : methods) {
+                            changed = exports[type].emplace(name, symbol).second or changed;
+                        }
+                    }
+                }
+                if(auto found_extension_operators = module_extension_operator_exports.find(module_name); found_extension_operators != module_extension_operator_exports.end()) {
+                    auto& exports = module_extension_operator_exports[state.module_name];
+                    for(auto const& [type, operators] : found_extension_operators->second) {
+                        for(auto const& [kind, symbols] : operators) {
+                            auto& exported_symbols = exports[type][kind];
+                            for(auto symbol : symbols) {
+                                if(not std::ranges::contains(exported_symbols, symbol)) {
+                                    exported_symbols.emplace_back(symbol);
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                }
                 if(auto found_types = module_type_exports.find(module_name); found_types != module_type_exports.end()) {
                     auto& exports = module_type_exports[state.module_name];
                     for(auto const& [name, symbol] : found_types->second) {
@@ -174,6 +196,19 @@ auto semantic_analyzer::resolve_imports() -> void
                 );
             }
         }
+        if(auto local = module_extension_methods.find(state.module_key); local != module_extension_methods.end()) {
+            for(auto const& [type, methods] : local->second) {
+                state.visible_extension_methods[type].insert_range(methods);
+            }
+        }
+        if(auto local = module_extension_operators.find(state.module_key); local != module_extension_operators.end()) {
+            for(auto const& [type, operators] : local->second) {
+                for(auto const& [kind, symbols] : operators) {
+                    auto& target = state.visible_extension_operators[type][kind];
+                    target.insert(target.end(), symbols.begin(), symbols.end());
+                }
+            }
+        }
         if(auto local = module_types.find(state.module_key); local != module_types.end()) {
             state.visible_types.insert_range(local->second);
         }
@@ -192,12 +227,16 @@ auto semantic_analyzer::resolve_imports() -> void
             }
             auto found_functions = module_exports.find(module_name);
             auto found_operators = module_operator_exports.find(module_name);
+            auto found_methods = module_extension_method_exports.find(module_name);
+            auto found_extension_operators = module_extension_operator_exports.find(module_name);
             auto found_types = module_type_exports.find(module_name);
             auto found_concepts = module_concept_exports.find(module_name);
             if (
                 not named_modules.contains(module_name)
                 and found_functions == module_exports.end()
                 and found_operators == module_operator_exports.end()
+                and found_methods == module_extension_method_exports.end()
+                and found_extension_operators == module_extension_operator_exports.end()
                 and found_types == module_type_exports.end()
                 and found_concepts == module_concept_exports.end()
             ) {
@@ -239,6 +278,53 @@ auto semantic_analyzer::resolve_imports() -> void
                     if(import.exported and state.named_module) {
                         auto& exported_operators = module_operator_exports[state.module_name][kind];
                         exported_operators.insert(exported_operators.end(), symbols.begin(), symbols.end());
+                    }
+                }
+            }
+
+            if(found_methods != module_extension_method_exports.end()) {
+                for(auto const& [type, methods] : found_methods->second) {
+                    for(auto const& [name, symbol] : methods) {
+                        auto& visible_methods = state.visible_extension_methods[type];
+                        if(auto existing = visible_methods.find(name); existing != visible_methods.end()) {
+                            if(existing->second == symbol) {
+                                if(import.exported and state.named_module) {
+                                    module_extension_method_exports[state.module_name][type].emplace(name, symbol);
+                                }
+                                continue;
+                            }
+                            report(
+                                diagnostic_kind::import_conflict,
+                                import.full_span,
+                                std::format("imported builtin extension method '{}' conflicts with an existing visible method", name)
+                            );
+                            continue;
+                        }
+                        visible_methods.emplace(name, symbol);
+                        if(import.exported and state.named_module) {
+                            module_extension_method_exports[state.module_name][type].emplace(name, symbol);
+                        }
+                    }
+                }
+            }
+
+            if(found_extension_operators != module_extension_operator_exports.end()) {
+                for(auto const& [type, operators] : found_extension_operators->second) {
+                    for(auto const& [kind, symbols] : operators) {
+                        auto& target = state.visible_extension_operators[type][kind];
+                        for(auto symbol : symbols) {
+                            if(not std::ranges::contains(target, symbol)) {
+                                target.emplace_back(symbol);
+                            }
+                        }
+                        if(import.exported and state.named_module) {
+                            auto& exported_operators = module_extension_operator_exports[state.module_name][type][kind];
+                            for(auto symbol : symbols) {
+                                if(not std::ranges::contains(exported_operators, symbol)) {
+                                    exported_operators.emplace_back(symbol);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -451,14 +537,19 @@ auto semantic_analyzer::collect_concept_items(std::size_t unit_index, ast_arena 
                     }
                     for(auto index = 0uz; index < value.parameters.size(); ++index) {
                         auto const& parameter = value.parameters[index];
-                        if(ast_source.slice(parameter.name) != "self") {
-                            continue;
-                        }
-                        if(index != 0uz or not parameter.is_self_receiver) {
+                        if(ast_source.slice(parameter.name) == "self") {
+                            if(index != 0uz or not parameter.is_self_receiver) {
+                                report(
+                                    diagnostic_kind::invalid_self_parameter,
+                                    parameter.full_span,
+                                    "concept self parameter must use receiver syntax"
+                                );
+                            }
+                        } else if(not parameter.type) {
                             report(
-                                diagnostic_kind::invalid_self_parameter,
+                                diagnostic_kind::invalid_type_argument,
                                 parameter.full_span,
-                                "concept self parameter must use receiver syntax"
+                                "concept function requirement parameters must declare a type"
                             );
                         }
                     }
@@ -605,17 +696,23 @@ auto semantic_analyzer::collect_function_declaration(std::size_t unit_index, ast
     validate_function_pack_shape(unit_index, id);
     validate_parameter_defaults(unit_index, id);
     record_function_parameter_defaults(0uz, unit_index, id);
+    auto all_generic_parameters = implicit_function_generic_names({}, function);
+    for(auto const& parameter : function.generic_parameters) {
+        all_generic_parameters.emplace_back(ast_source.identifier(parameter.name));
+    }
+    if(auto implicit_parameters = inferred_parameter_generic_names(function); not implicit_parameters.empty()) {
+        implicit_function_generic_parameters[function_key(unit_index, id)] = std::move(implicit_parameters);
+    }
     auto body_kind = semantic_body_kind(function);
     auto old_parameters = std::move(active_generic_parameters);
     auto old_packs = std::move(active_generic_parameter_packs);
     bind_active_function_generic_parameters(unit_index, id);
 
-    auto parameter_types = (
-        function.parameters
-        | std::views::transform([&](parameter_syntax const& parameter) {
-            return lower_parameter_type(ast, parameter);
-        }) | std::ranges::to<std::vector<semantic_type_id>>()
-    );
+    auto parameter_types = std::vector<semantic_type_id>{};
+    parameter_types.reserve(function.parameters.size());
+    for(auto index = 0uz; index < function.parameters.size(); ++index) {
+        parameter_types.emplace_back(lower_function_parameter_type(ast, function, index));
+    }
     auto inferred_return = not function.return_type and semantic_function_body_has_source(body_kind);
     auto return_type = semantic_type_ids::inferred;
     if(function.return_type) {
@@ -638,8 +735,8 @@ auto semantic_analyzer::collect_function_declaration(std::size_t unit_index, ast
         })
     );
     result.function_signatures.emplace(semantic_node_key{unit_index, id}, signature_id);
-    if(not function.generic_parameters.empty()) {
-        result.function_generic_parameter_counts.emplace(semantic_node_key{unit_index, id}, function.generic_parameters.size());
+    if(not all_generic_parameters.empty()) {
+        result.function_generic_parameter_counts.emplace(semantic_node_key{unit_index, id}, all_generic_parameters.size());
     }
 
     auto function_type_id = (
@@ -690,15 +787,21 @@ auto semantic_analyzer::collect_operator_declaration(std::size_t unit_index, ast
     validate_function_pack_shape(unit_index, id);
     validate_parameter_defaults(unit_index, id);
     record_function_parameter_defaults(0uz, unit_index, id);
+    auto all_generic_parameters = implicit_function_generic_names({}, function);
+    for(auto const& parameter : function.generic_parameters) {
+        all_generic_parameters.emplace_back(ast_source.identifier(parameter.name));
+    }
+    if(auto implicit_parameters = inferred_parameter_generic_names(function); not implicit_parameters.empty()) {
+        implicit_function_generic_parameters[function_key(unit_index, id)] = std::move(implicit_parameters);
+    }
     auto old_parameters = std::move(active_generic_parameters);
     auto old_packs = std::move(active_generic_parameter_packs);
     bind_active_function_generic_parameters(unit_index, id);
-    auto parameter_types = (
-        function.parameters
-        | std::views::transform([&](parameter_syntax const& parameter) {
-            return lower_parameter_type(ast, parameter);
-        }) | std::ranges::to<std::vector<semantic_type_id>>()
-    );
+    auto parameter_types = std::vector<semantic_type_id>{};
+    parameter_types.reserve(function.parameters.size());
+    for(auto index = 0uz; index < function.parameters.size(); ++index) {
+        parameter_types.emplace_back(lower_function_parameter_type(ast, function, index));
+    }
     auto return_type = semantic_type_ids::unit;
     auto inferred_return = false;
     if(function.return_type) {
@@ -710,15 +813,15 @@ auto semantic_analyzer::collect_operator_declaration(std::size_t unit_index, ast
     active_generic_parameters = std::move(old_parameters);
     active_generic_parameter_packs = std::move(old_packs);
 
-    auto has_nominal_parameter = std::ranges::any_of(parameter_types, [&](semantic_type_id type) {
+    auto has_operator_owner_parameter = std::ranges::any_of(parameter_types, [&](semantic_type_id type) {
         auto read = read_type(type);
-        return struct_index_of(read) or variant_index_of(read);
+        return struct_index_of(read) or variant_index_of(read) or opaque_index_of(read) or as_builtin(read);
     });
-    if(not has_nominal_parameter) {
+    if(not has_operator_owner_parameter) {
         report(
             diagnostic_kind::invalid_operator,
             function.full_span,
-            "top-level operator requires a user-defined parameter type"
+            "top-level operator requires a user-defined or builtin parameter type"
         );
     }
 
@@ -737,8 +840,8 @@ auto semantic_analyzer::collect_operator_declaration(std::size_t unit_index, ast
         .inferred_return = inferred_return,
     });
     result.function_signatures.emplace(semantic_node_key{unit_index, id}, signature_id);
-    if(not function.generic_parameters.empty()) {
-        result.function_generic_parameter_counts.emplace(semantic_node_key{unit_index, id}, function.generic_parameters.size());
+    if(not all_generic_parameters.empty()) {
+        result.function_generic_parameter_counts.emplace(semantic_node_key{unit_index, id}, all_generic_parameters.size());
     }
 
     auto name = std::format("operator.{}.{}", std::to_underlying(*function.overload_operator), id.value);
@@ -845,8 +948,7 @@ auto semantic_analyzer::collect_impl_declarations(std::size_t unit_index, ast_ar
     auto type = lower_type(ast, impl.type);
     active_generic_parameters = std::move(old_parameters);
     active_generic_parameter_packs = std::move(old_packs);
-    auto builtin_target = as_builtin(read_type(type));
-    auto builtin_impl_allowed = builtin_target and *builtin_target == builtin_type_kind::str;
+    auto builtin_impl_allowed = as_builtin(read_type(type));
     if(not struct_index_of(type) and not variant_index_of(type) and not opaque_index_of(type) and not builtin_impl_allowed) {
         report(
             diagnostic_kind::unknown_type,
@@ -901,7 +1003,7 @@ auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena 
     auto variant_index = variant_index_of(impl_type);
     auto opaque_index = opaque_index_of(impl_type);
     auto target_builtin = as_builtin(read_type(impl_type));
-    auto builtin_impl_allowed = target_builtin and *target_builtin == builtin_type_kind::str;
+    auto builtin_impl_allowed = target_builtin;
     if(not struct_index and not variant_index and not opaque_index and not builtin_impl_allowed) {
         return;
     }
@@ -928,11 +1030,11 @@ auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena 
         return;
     }
 
-    auto all_generic_parameters = impl_generic_parameters;
+    auto all_generic_parameters = implicit_function_generic_names(impl_generic_parameters, function);
     for(auto const& parameter : function.generic_parameters) {
         all_generic_parameters.emplace_back(ast_source.identifier(parameter.name));
     }
-    implicit_function_generic_parameters[function_key(unit_index, id)] = impl_generic_parameters;
+    implicit_function_generic_parameters[function_key(unit_index, id)] = implicit_function_generic_names(impl_generic_parameters, function);
     function_impl_target_patterns[function_key(unit_index, id)] = impl_type;
     if(impl.requires_clause) {
         function_impl_requires[function_key(unit_index, id)] = *impl.requires_clause;
@@ -1011,7 +1113,10 @@ auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena 
             } else if(opaque_index) {
                 duplicate = result.opaque_aliases[*opaque_index].methods.contains(name);
             } else {
-                duplicate = extension_methods[impl_type].contains(name);
+                auto const& state = units[unit_index];
+                if(auto found_type = module_extension_methods[state.module_key].find(impl_type); found_type != module_extension_methods[state.module_key].end()) {
+                    duplicate = found_type->second.contains(name);
+                }
             }
             duplicate = duplicate or associated_types[impl_type].contains(name);
             if(duplicate) {
@@ -1019,7 +1124,7 @@ auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena 
             }
         } else {
             if(target_builtin) {
-                report(diagnostic_kind::invalid_self_parameter, function.full_span, "compiler-recognized std type impl functions must use self receiver");
+                report(diagnostic_kind::invalid_self_parameter, function.full_span, "builtin type impl functions must use self receiver");
                 return;
             }
             auto duplicate = false;
@@ -1045,12 +1150,11 @@ auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena 
     auto old_packs = std::move(active_generic_parameter_packs);
     active_self_type = impl_type;
     bind_active_function_generic_parameters(unit_index, id);
-    auto parameter_types = (
-        function.parameters
-        | std::views::transform([&](parameter_syntax const& parameter) {
-            return lower_parameter_type(ast, parameter, impl_type);
-        }) | std::ranges::to<std::vector<semantic_type_id>>()
-    );
+    auto parameter_types = std::vector<semantic_type_id>{};
+    parameter_types.reserve(function.parameters.size());
+    for(auto index = 0uz; index < function.parameters.size(); ++index) {
+        parameter_types.emplace_back(lower_function_parameter_type(ast, function, index, impl_type));
+    }
     active_self_type = old_self;
     active_generic_parameters = std::move(old_parameters);
     active_generic_parameter_packs = std::move(old_packs);
@@ -1100,7 +1204,11 @@ auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena 
         } else if(opaque_index) {
             result.opaque_aliases[*opaque_index].methods.emplace(name, symbol);
         } else {
-            extension_methods[impl_type].emplace(name, symbol);
+            auto const& state = units[unit_index];
+            module_extension_methods[state.module_key][impl_type].emplace(name, symbol);
+            if(state.named_module) {
+                module_extension_method_exports[state.module_name][impl_type].emplace(name, symbol);
+            }
         }
     } else {
         if(struct_index) {
@@ -1119,15 +1227,17 @@ auto semantic_analyzer::collect_impl_operator(std::size_t unit_index, ast_arena 
     auto const& function = ast.node(id);
     auto struct_index = struct_index_of(impl_type);
     auto variant_index = variant_index_of(impl_type);
-    if(not function.overload_operator or (not struct_index and not variant_index)) {
+    auto target_builtin = as_builtin(read_type(impl_type));
+    auto builtin_impl_allowed = target_builtin;
+    if(not function.overload_operator or (not struct_index and not variant_index and not builtin_impl_allowed)) {
         return;
     }
 
-    auto all_generic_parameters = impl_generic_parameters;
+    auto all_generic_parameters = implicit_function_generic_names(impl_generic_parameters, function);
     for(auto const& parameter : function.generic_parameters) {
         all_generic_parameters.emplace_back(ast_source.identifier(parameter.name));
     }
-    implicit_function_generic_parameters[function_key(unit_index, id)] = impl_generic_parameters;
+    implicit_function_generic_parameters[function_key(unit_index, id)] = implicit_function_generic_names(impl_generic_parameters, function);
     function_impl_target_patterns[function_key(unit_index, id)] = impl_type;
     if(impl.requires_clause) {
         function_impl_requires[function_key(unit_index, id)] = *impl.requires_clause;
@@ -1142,12 +1252,11 @@ auto semantic_analyzer::collect_impl_operator(std::size_t unit_index, ast_arena 
     auto old_packs = std::move(active_generic_parameter_packs);
     active_self_type = impl_type;
     bind_active_function_generic_parameters(unit_index, id);
-    auto parameter_types = (
-        function.parameters
-        | std::views::transform([&](parameter_syntax const& parameter) {
-            return lower_parameter_type(ast, parameter, impl_type);
-        }) | std::ranges::to<std::vector<semantic_type_id>>()
-    );
+    auto parameter_types = std::vector<semantic_type_id>{};
+    parameter_types.reserve(function.parameters.size());
+    for(auto index = 0uz; index < function.parameters.size(); ++index) {
+        parameter_types.emplace_back(lower_function_parameter_type(ast, function, index, impl_type));
+    }
     auto return_type = semantic_type_ids::unit;
     auto inferred_return = false;
     if(function.return_type) {
@@ -1223,13 +1332,20 @@ auto semantic_analyzer::collect_impl_operator(std::size_t unit_index, ast_arena 
         .function = id,
         .struct_index = struct_index.value_or(std::numeric_limits<std::uint32_t>::max()),
         .variant_index = variant_index.value_or(std::numeric_limits<std::uint32_t>::max()),
+        .owner_type = builtin_impl_allowed ? impl_type : semantic_type_id{},
         .function_kind = function_kind,
     });
     result.function_symbols.emplace(semantic_node_key{unit_index, id}, symbol);
     if(struct_index) {
         result.structs[*struct_index].operators[*function.overload_operator].emplace_back(symbol);
-    } else {
+    } else if(variant_index) {
         result.variants[*variant_index].operators[*function.overload_operator].emplace_back(symbol);
+    } else {
+        auto const& state = units[unit_index];
+        module_extension_operators[state.module_key][impl_type][*function.overload_operator].emplace_back(symbol);
+        if(state.named_module) {
+            module_extension_operator_exports[state.module_name][impl_type][*function.overload_operator].emplace_back(symbol);
+        }
     }
 }
 
@@ -1320,7 +1436,8 @@ auto semantic_analyzer::collect_concept_impl_declarations(std::size_t unit_index
     }
 
     for(auto function_id : impl.functions) {
-        implicit_function_generic_parameters[function_key(unit_index, function_id)] = impl_generic_parameters;
+        auto const& function = ast.node(function_id);
+        implicit_function_generic_parameters[function_key(unit_index, function_id)] = implicit_function_generic_names(impl_generic_parameters, function);
         function_impl_target_patterns[function_key(unit_index, function_id)] = target_type;
         if(impl.requires_clause) {
             function_impl_requires[function_key(unit_index, function_id)] = *impl.requires_clause;
@@ -1329,7 +1446,6 @@ auto semantic_analyzer::collect_concept_impl_declarations(std::size_t unit_index
         if(not symbol) {
             continue;
         }
-        auto const& function = ast.node(function_id);
         concept_impl.functions.emplace(std::string{ ast_source.identifier(function.name) }, *symbol);
     }
 
@@ -1391,7 +1507,10 @@ auto semantic_analyzer::collect_concept_impl_function(std::size_t unit_index, as
         } else if(variant_index) {
             duplicate = result.variants[*variant_index].methods.contains(name);
         } else {
-            duplicate = extension_methods[target_type].contains(name);
+            auto const& state = units[unit_index];
+            if(auto found_type = module_extension_methods[state.module_key].find(target_type); found_type != module_extension_methods[state.module_key].end()) {
+                duplicate = found_type->second.contains(name);
+            }
         }
         duplicate = duplicate or associated_types[target_type].contains(name);
         if(duplicate) {
@@ -1424,12 +1543,11 @@ auto semantic_analyzer::collect_concept_impl_function(std::size_t unit_index, as
         all_generic_parameters.emplace_back(ast_source.identifier(parameter.name));
     }
     bind_active_function_generic_parameters(unit_index, id);
-    auto parameter_types = (
-        function.parameters
-        | std::views::transform([&](parameter_syntax const& parameter) {
-            return lower_parameter_type(ast, parameter, target_type);
-        }) | std::ranges::to<std::vector<semantic_type_id>>()
-    );
+    auto parameter_types = std::vector<semantic_type_id>{};
+    parameter_types.reserve(function.parameters.size());
+    for(auto index = 0uz; index < function.parameters.size(); ++index) {
+        parameter_types.emplace_back(lower_function_parameter_type(ast, function, index, target_type));
+    }
     auto return_type = function.return_type ? lower_return_type(ast, *function.return_type) : semantic_type_ids::unit;
     active_generic_parameters = std::move(old_parameters);
     active_generic_parameter_packs = std::move(old_packs);
@@ -1470,7 +1588,11 @@ auto semantic_analyzer::collect_concept_impl_function(std::size_t unit_index, as
         } else if(variant_index) {
             result.variants[*variant_index].methods.emplace(name, symbol);
         } else {
-            extension_methods[target_type].emplace(name, symbol);
+            auto const& state = units[unit_index];
+            module_extension_methods[state.module_key][target_type].emplace(name, symbol);
+            if(state.named_module) {
+                module_extension_method_exports[state.module_name][target_type].emplace(name, symbol);
+            }
         }
     } else {
         if(struct_index) {
@@ -1746,6 +1868,24 @@ auto semantic_analyzer::target_implements_builtin_concept(std::string_view conce
         }
         return is_strict_weak_order_type(target_type, concept_arguments.front(), source_span{});
     }
+    if(concept_name == "equality_comparable") {
+        if(concept_arguments.size() != 1uz) {
+            return false;
+        }
+        return is_equality_comparable_type(target_type, concept_arguments.front(), source_span{});
+    }
+    if(concept_name == "three_way_comparable") {
+        if(concept_arguments.size() != 2uz) {
+            return false;
+        }
+        return is_three_way_comparable_type(target_type, concept_arguments[0uz], concept_arguments[1uz], source_span{});
+    }
+    if(concept_name == "incrementable") {
+        if(not concept_arguments.empty()) {
+            return false;
+        }
+        return is_incrementable_type(target_type, source_span{});
+    }
     return std::nullopt;
 }
 
@@ -1844,6 +1984,87 @@ auto semantic_analyzer::is_strict_weak_order_type(semantic_type_id type, semanti
         }
     }
     return false;
+}
+
+auto semantic_analyzer::is_equality_comparable_type(semantic_type_id type, semantic_type_id rhs_type, source_span span) -> bool
+{
+    auto left_value = read_type(type);
+    auto right_value = read_type(rhs_type);
+    if(try_builtin_binary_operator(token_kind::equal_equal, left_value, right_value)) {
+        return true;
+    }
+
+    auto left_argument = result.types.intern(reference_type{ left_value, true });
+    auto right_argument = result.types.intern(reference_type{ right_value, true });
+    auto arguments = std::vector<expression_info> {
+        expression_info {
+            .type = left_argument,
+            .is_lvalue = true,
+            .is_const = true,
+        },
+        expression_info {
+            .type = right_argument,
+            .is_lvalue = true,
+            .is_const = true,
+        },
+    };
+    auto owners = std::array{ left_value, right_value };
+    auto symbol = resolve_operator(overload_operator_kind::equal_equal, owners, arguments, span);
+    if(not symbol) {
+        return false;
+    }
+    auto const* callable = std::get_if<function_type>(&result.types.get(result.symbols[symbol->value].type));
+    return callable != nullptr and can_implicitly_convert(callable->returns, semantic_type_ids::bool_);
+}
+
+auto semantic_analyzer::is_three_way_comparable_type(semantic_type_id type, semantic_type_id rhs_type, semantic_type_id category_type, source_span span) -> bool
+{
+    auto left_value = read_type(type);
+    auto right_value = read_type(rhs_type);
+    auto left_argument = result.types.intern(reference_type{ left_value, true });
+    auto right_argument = result.types.intern(reference_type{ right_value, true });
+    auto arguments = std::vector<expression_info> {
+        expression_info {
+            .type = left_argument,
+            .is_lvalue = true,
+            .is_const = true,
+        },
+        expression_info {
+            .type = right_argument,
+            .is_lvalue = true,
+            .is_const = true,
+        },
+    };
+    auto owners = std::array{ left_value, right_value };
+    auto symbol = resolve_operator(overload_operator_kind::spaceship, owners, arguments, span);
+    if(not symbol) {
+        return false;
+    }
+    auto const* callable = std::get_if<function_type>(&result.types.get(result.symbols[symbol->value].type));
+    return callable != nullptr and can_implicitly_convert(callable->returns, category_type);
+}
+
+auto semantic_analyzer::is_incrementable_type(semantic_type_id type, source_span span) -> bool
+{
+    auto value = read_type(type);
+    if(auto builtin = as_builtin(value); builtin and is_integer(*builtin)) {
+        return true;
+    }
+
+    auto self_type = result.types.intern(reference_type{ value });
+    auto arguments = std::vector<expression_info> {
+        expression_info {
+            .type = self_type,
+            .is_lvalue = true,
+        },
+    };
+    auto owners = std::array{ value };
+    auto symbol = resolve_operator(overload_operator_kind::prefix_plus_plus, owners, arguments, span);
+    if(not symbol) {
+        return false;
+    }
+    auto const* callable = std::get_if<function_type>(&result.types.get(result.symbols[symbol->value].type));
+    return callable != nullptr and can_implicitly_convert(callable->returns, self_type);
 }
 
 auto semantic_analyzer::target_implements(std::size_t unit_index, ast_arena const& ast, concept_id_syntax const& concept_ref, semantic_type_id target_type) -> bool

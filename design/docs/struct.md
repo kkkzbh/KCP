@@ -218,6 +218,19 @@ impl vec2 {
 }
 ```
 
+固有 `impl` 可以作用于结构体、variant、opaque alias 和内建类型。内建类型没有用户可导入的类型声明模块，因此内建类型扩展方法跟随所在模块的导入导出关系可见；未导入该模块时，不参与成员查找。
+
+```cp
+export module int_ext;
+
+impl i32 {
+    plus10(self&) -> void
+    {
+        self += 10;
+    }
+}
+```
+
 `self` 参数规则：
 
 - 接收者参数必须是第一个参数。

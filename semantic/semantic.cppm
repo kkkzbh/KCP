@@ -21,6 +21,9 @@ struct loop_label
 struct return_state
 {
     std::optional<semantic_type_id> declared_return{};
+    symbol_id nrvo_candidate{};
+    bool nrvo_possible{ true };
+    std::vector<stmt_id> nrvo_return_statements{};
 };
 
 struct expression_info
@@ -76,6 +79,12 @@ struct lambda_capture_context
     std::map<symbol_id, std::uint32_t> capture_indices{};
 };
 
+struct unexported_imported_symbol
+{
+    std::string module_name;
+    symbol_id symbol{};
+};
+
 struct semantic_unit_state
 {
     semantic_unit_state(ast_arena const& ast, translation_unit_syntax const& root) :
@@ -89,6 +98,8 @@ struct semantic_unit_state
     bool named_module{};
     std::map<std::string, symbol_id> visible_functions{};
     std::map<overload_operator_kind, std::vector<symbol_id>> visible_operators{};
+    std::map<semantic_type_id, std::map<std::string, symbol_id>> visible_extension_methods{};
+    std::map<semantic_type_id, std::map<overload_operator_kind, std::vector<symbol_id>>> visible_extension_operators{};
     std::map<std::string, symbol_id> visible_types{};
     std::map<std::string, symbol_id> visible_concepts{};
 };
@@ -224,6 +235,9 @@ private:
     auto target_implements_builtin_concept(std::string_view concept_name, std::vector<semantic_type_id> const& concept_arguments, semantic_type_id target_type) -> std::optional<bool>;
     auto is_mutable_object_type(semantic_type_id type) const -> bool;
     auto is_strict_weak_order_type(semantic_type_id type, semantic_type_id value_type, source_span span) -> bool;
+    auto is_equality_comparable_type(semantic_type_id type, semantic_type_id rhs_type, source_span span) -> bool;
+    auto is_three_way_comparable_type(semantic_type_id type, semantic_type_id rhs_type, semantic_type_id category_type, source_span span) -> bool;
+    auto is_incrementable_type(semantic_type_id type, source_span span) -> bool;
     auto concept_impl_applies(semantic_concept_impl const& impl, semantic_type_id target_type)
         -> std::optional<std::vector<semantic_type_id>>;
     auto concept_impl_applies(semantic_concept_impl const& impl, std::vector<semantic_type_id> const& concept_arguments, semantic_type_id target_type)
@@ -237,6 +251,9 @@ private:
     auto bind_active_generic_parameters(std::vector<std::string> const& names) -> void;
     auto bind_active_generic_parameters(std::vector<generic_parameter_syntax> const& parameters) -> void;
     auto bind_active_function_generic_parameters(std::size_t unit_index, function_id id) -> void;
+    auto inferred_parameter_generic_name(std::size_t index) const -> std::string;
+    auto inferred_parameter_generic_names(function_syntax const& function) const -> std::vector<std::string>;
+    auto implicit_function_generic_names(std::vector<std::string> leading, function_syntax const& function) const -> std::vector<std::string>;
     auto function_key(std::size_t unit_index, function_id id) const -> return_inference_key;
     auto function_generic_parameter_names(std::size_t unit_index, function_id id) const -> std::vector<std::string>;
     auto function_implicit_generic_count(std::size_t unit_index, function_id id) const -> std::size_t;
@@ -290,14 +307,16 @@ private:
     auto method_symbol(semantic_type_id owner, std::string_view name) const -> std::optional<symbol_id>;
     auto concrete_method_symbol(symbol_id symbol, semantic_type_id receiver_type, std::vector<expression_info> const& arguments, source_span span) -> std::optional<symbol_id>;
     auto resolve_operator(overload_operator_kind kind, std::span<semantic_type_id const> owner_types, std::vector<expression_info> const& arguments, source_span span) -> std::optional<symbol_id>;
-    auto choose_operator(std::span<symbol_id const> candidates, std::vector<expression_info> const& arguments, std::optional<semantic_type_id> receiver_type, source_span span) -> std::optional<symbol_id>;
+    auto choose_operator(std::span<symbol_id const> candidates, std::vector<expression_info> const& arguments, std::optional<semantic_type_id> receiver_type, source_span span, bool report_no_match = true) -> std::optional<symbol_id>;
     auto operator_score(symbol_id symbol, std::vector<expression_info> const& arguments, std::optional<semantic_type_id> receiver_type, source_span span) -> std::optional<operator_match>;
     auto operator_expression_info(symbol_id symbol) -> expression_info;
     auto operator_token(overload_operator_kind kind) const -> token_kind;
     auto overload_kind(token_kind kind) const -> std::optional<overload_operator_kind>;
+    auto overload_kind(token_kind kind, unary_position position) const -> std::optional<overload_operator_kind>;
     auto pointer_pointee(semantic_type_id type) -> std::optional<expression_info>;
     auto target_const(semantic_type_id type, bool lvalue_const) -> bool;
     auto lower_parameter_type(ast_arena const& ast, parameter_syntax const& parameter, std::optional<semantic_type_id> self_type = std::nullopt) -> semantic_type_id;
+    auto lower_function_parameter_type(ast_arena const& ast, function_syntax const& function, std::size_t index, std::optional<semantic_type_id> self_type = std::nullopt) -> semantic_type_id;
     auto read_type(semantic_type_id type) const -> semantic_type_id;
     auto can_qualification_convert(semantic_type_id from, semantic_type_id to) const -> bool;
     auto can_implicitly_convert(expression_info const& from, semantic_type_id to) -> bool;
@@ -317,7 +336,7 @@ private:
     auto parse_length(source_span span) -> std::uint64_t;
 
     auto literal_type(source_span span) -> semantic_type_id;
-    auto unary_type(token_kind operator_kind, expression_info operand) -> expression_info;
+    auto unary_type(token_kind operator_kind, unary_position position, expression_info operand) -> expression_info;
     auto binary_type(token_kind operator_kind, semantic_type_id left, semantic_type_id right) -> expression_info;
     auto try_builtin_binary_operator(token_kind operator_kind, semantic_type_id left_type, semantic_type_id right_type) -> std::optional<expression_info>;
     auto check_builtin_call(ast_arena const& ast, call_expr_syntax const& node, name_expr_syntax const& callee, expr_id id)
@@ -378,6 +397,7 @@ private:
     auto bind_symbol(semantic_symbol symbol) -> symbol_id;
     auto bind_type_alias(source_span name, semantic_type_id type) -> void;
     auto resolve(std::string_view name) const -> symbol_id;
+    auto unexported_imported_function(std::string_view name) const -> std::optional<unexported_imported_symbol>;
     auto resolve_type_alias(std::string_view name) const -> std::optional<semantic_type_id>;
     auto push_scope() -> void;
     auto pop_scope() -> void;
@@ -385,8 +405,14 @@ private:
     auto pop_loop() -> void;
     auto check_statement(stmt_id id, return_state& returns) -> void;
     auto statement_can_complete_normally(stmt_id id) const -> bool;
+    auto expression_can_complete_normally(expr_id id) const -> bool;
     auto check_template_for_statement(template_for_statement_syntax const& node, stmt_id id, return_state& returns)
         -> void;
+    auto stripped_expression(expr_id id) const -> expr_id;
+    auto direct_initializer_expression(expr_id id) const -> bool;
+    auto nrvo_candidate_for_return(expr_id value, expression_info const& returned, return_state const& returns) -> symbol_id;
+    auto record_direct_initializer(stmt_id id, expr_id initializer) -> void;
+    auto finish_nrvo(function_id id, return_state const& returns) -> void;
     auto check_condition(expr_id condition) -> void;
     auto check_loop_jump(source_span span, std::optional<source_span> label, bool is_break) -> void;
     auto self_symbol() const -> symbol_id;
@@ -454,12 +480,15 @@ private:
     std::map<std::string, std::map<std::string, symbol_id>> module_concepts{}; ///< 按内部模块 key 索引的本模块 concept 符号表。
     std::map<std::string, std::map<std::string, symbol_id>> module_concept_exports{}; ///< 按模块名索引的导出 concept 符号表。
     std::map<semantic_type_id, std::map<std::string, semantic_type_id>> associated_types{}; ///< 类型的扁平关联类型命名空间。
-    std::map<semantic_type_id, std::map<std::string, symbol_id>> extension_methods{}; ///< 内建类型 concept impl 提供的成员函数。
+    std::map<std::string, std::map<semantic_type_id, std::map<std::string, symbol_id>>> module_extension_methods{}; ///< 按模块 key 索引的内建类型扩展成员函数。
+    std::map<std::string, std::map<semantic_type_id, std::map<std::string, symbol_id>>> module_extension_method_exports{}; ///< 按模块名索引的导出内建类型扩展成员函数。
+    std::map<std::string, std::map<semantic_type_id, std::map<overload_operator_kind, std::vector<symbol_id>>>> module_extension_operators{}; ///< 按模块 key 索引的内建类型扩展 operator。
+    std::map<std::string, std::map<semantic_type_id, std::map<overload_operator_kind, std::vector<symbol_id>>>> module_extension_operator_exports{}; ///< 按模块名索引的导出内建类型扩展 operator。
     std::map<std::tuple<symbol_id, std::vector<semantic_type_id>, semantic_type_id>, std::size_t> concept_impl_index{}; ///< concept + concept arguments + concrete type 的实现事实索引。
     std::vector<std::size_t> generic_concept_impl_indices{}; ///< 目标类型模式含泛型参数的 concept impl。
     std::map<std::size_t, std::vector<std::string>> concept_impl_generic_parameters{}; ///< concept impl 显式泛型参数。
     std::map<std::size_t, concept_requires_syntax> concept_impl_requires{}; ///< 条件 concept impl 的 requires 子句。
-    std::map<return_inference_key, std::vector<std::string>> implicit_function_generic_parameters{}; ///< impl 目标类型模式引入的函数泛型参数。
+    std::map<return_inference_key, std::vector<std::string>> implicit_function_generic_parameters{}; ///< impl 目标类型模式和省略参数类型引入的函数泛型参数。
     std::map<return_inference_key, semantic_type_id> function_impl_target_patterns{}; ///< impl 函数所属目标类型模式，用于从 receiver 推导隐式泛型实参。
     std::map<return_inference_key, concept_requires_syntax> function_impl_requires{}; ///< 条件 impl 的 requires 子句。
     std::map<std::string, semantic_type_id> active_generic_parameters{}; ///< 当前声明中可见的泛型形参。
@@ -484,6 +513,7 @@ private:
     std::map<return_inference_key, return_inference_state> return_states{}; ///< 函数返回类型推断状态表。
     std::vector<std::map<std::string, return_inference_binding>> return_scopes{}; ///< 返回类型推断阶段的词法绑定栈。
     std::size_t return_unit{}; ///< 当前返回类型推断所在的翻译单元下标。
+    bool active_builtin_operator_only{}; ///< 当前表达式树是否只允许内建 operator 解析。
 };
 
 export auto analyze_semantics(source_manager const& sources, std::span<parse_result const> units) -> semantic_result

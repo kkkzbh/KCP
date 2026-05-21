@@ -64,6 +64,8 @@ export auto spec(diagnostic_kind kind) -> diagnostic_spec
             return { semantic, error, "duplicate_symbol"sv, "duplicate symbol"sv };
         case unknown_name:
             return { semantic, error, "unknown_name"sv, "unknown name"sv };
+        case unexported_name:
+            return { semantic, error, "unexported_name"sv, "unexported name"sv };
         case unknown_module:
             return { semantic, error, "unknown_module"sv, "unknown module"sv };
         case import_conflict:
@@ -102,6 +104,8 @@ export auto spec(diagnostic_kind kind) -> diagnostic_spec
             return { semantic, error, "invalid_cast"sv, "invalid cast"sv };
         case return_type_mismatch:
             return { semantic, error, "return_type_mismatch"sv, "return type mismatch"sv };
+        case missing_return:
+            return { semantic, error, "missing_return"sv, "missing return"sv };
         case cannot_infer_return_type:
             return { semantic, error, "cannot_infer_return_type"sv, "cannot infer return type"sv };
         case duplicate_field:

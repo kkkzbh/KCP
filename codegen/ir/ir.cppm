@@ -765,10 +765,13 @@ struct function_lowerer
         cleanups.emplace_back(symbol, address, read_type(type), destructor);
     }
 
-    auto emit_cleanups_to(std::size_t depth) -> void
+    auto emit_cleanups_to(std::size_t depth, symbol_id skipped_symbol = {}) -> void
     {
         for(auto index = cleanups.size(); index > depth; --index) {
             auto const& cleanup = cleanups[index - 1uz];
+            if(skipped_symbol.valid() and cleanup.symbol == skipped_symbol) {
+                continue;
+            }
             emit_void(ir_instruction {
                 .opcode = ir_opcode::call,
                 .type = semantic_type_ids::unit,
@@ -824,6 +827,13 @@ struct function_lowerer
                         emit_store(address, initializer, type);
                         return true;
                     }
+                    if(semantics.direct_initializer_of(current_context_index(), unit_index, id)) {
+                        if(not emit_initialize_expression(node.initializer, address, type)) {
+                            return current_block().terminated();
+                        }
+                        register_cleanup(symbol, address, type);
+                        return true;
+                    }
                     auto initializer = emit_expression(node.initializer);
                     if(not initializer.valid()) {
                         return current_block().terminated();
@@ -858,7 +868,8 @@ struct function_lowerer
                         if(not is_reference(function->returns)) {
                             value = materialize_conversion(*node.value, value);
                         }
-                        emit_cleanups_to(0uz);
+                        auto nrvo_candidate = semantics.nrvo_return_of(current_context_index(), unit_index, id);
+                        emit_cleanups_to(0uz, nrvo_candidate);
                         emit_void(ir_instruction {
                             .opcode = ir_opcode::return_,
                             .type = function->returns,
@@ -1396,6 +1407,175 @@ struct function_lowerer
         return materialize_conversion(id, value);
     }
 
+    auto emit_initialize_expression(expr_id id, ir_value_id address, semantic_type_id target_type) -> bool
+    {
+        auto const& expression = parsed->ast.node(stripped_expression(id));
+        if(auto const* array = std::get_if<array_literal_expr_syntax>(&expression)) {
+            return emit_initialize_array_literal(array->elements, address, target_type);
+        }
+        if(auto const* tuple = std::get_if<tuple_literal_expr_syntax>(&expression)) {
+            return emit_initialize_tuple_literal(tuple->elements, address, target_type);
+        }
+        if(auto const* initializer = std::get_if<struct_init_expr_syntax>(&expression)) {
+            return emit_initialize_struct_initializer(*initializer, stripped_expression(id), address, target_type);
+        }
+
+        auto value = emit_expression(id);
+        if(not value.valid()) {
+            return false;
+        }
+        emit_store(address, materialize_conversion(id, value), target_type);
+        return true;
+    }
+
+    auto emit_initialize_array_literal(std::vector<expr_id> const& elements, ir_value_id address, semantic_type_id type) -> bool
+    {
+        auto shape = aggregate_shape_of(type);
+        if(not shape) {
+            return fail("array literal direct initialization requires array type metadata");
+        }
+        for(auto index = 0uz; index < elements.size(); ++index) {
+            auto index_value = emit_integer_literal(semantic_type_ids::builtin(builtin_type_kind::usize), index);
+            auto element_address = emit_element_address(address, index_value, type, shape->element);
+            auto value = emit_expression(elements[index]);
+            if(not element_address.valid() or not value.valid()) {
+                return false;
+            }
+            emit_store(element_address, materialize_conversion(elements[index], value), shape->element);
+        }
+        return true;
+    }
+
+    auto emit_initialize_tuple_literal(std::vector<expr_id> const& elements, ir_value_id address, semantic_type_id type) -> bool
+    {
+        auto const* tuple = std::get_if<tuple_type>(&module.types.get(type));
+        if(tuple == nullptr) {
+            return fail("tuple literal direct initialization requires tuple type metadata");
+        }
+        for(auto index = 0uz; index < elements.size(); ++index) {
+            auto element_address = emit_field_address(address, type, tuple->elements[index], index);
+            auto value = emit_expression(elements[index]);
+            if(not element_address.valid() or not value.valid()) {
+                return false;
+            }
+            emit_store(element_address, materialize_conversion(elements[index], value), tuple->elements[index]);
+        }
+        return true;
+    }
+
+    auto emit_initialize_struct_initializer(struct_init_expr_syntax const& node, expr_id id, ir_value_id address, semantic_type_id type) -> bool
+    {
+        auto constructor = resolved_name(id);
+        if(constructor.valid() and not semantic_function_body_is_defaulted(semantics.symbols[constructor.value].body_kind)) {
+            auto value = emit_expression(id);
+            if(not value.valid()) {
+                return false;
+            }
+            emit_store(address, value, type);
+            return true;
+        }
+
+        auto default_value = emit_default_value(type);
+        emit_store(address, default_value, type);
+        if(type == semantic_type_ids::str) {
+            auto positional_index = 0uz;
+            for(auto const& initializer : node.initializers) {
+                auto field = std::optional<std::uint64_t>{};
+                auto value_id = expr_id{};
+                if(auto const* named = std::get_if<named_field_initializer_syntax>(&initializer)) {
+                    value_id = named->value;
+                    if(ast_source.slice(named->name) == "ptr") {
+                        field = 0uz;
+                    } else if(ast_source.slice(named->name) == "len") {
+                        field = 1uz;
+                    }
+                } else {
+                    value_id = std::get<positional_initializer_syntax>(initializer).value;
+                    field = positional_index++;
+                }
+                if(not field or *field >= 2uz) {
+                    continue;
+                }
+                auto field_address = emit_field_address(address, type, str_field_type(static_cast<std::uint32_t>(*field)), *field);
+                auto value = emit_expression(value_id);
+                if(not field_address.valid() or not value.valid()) {
+                    return false;
+                }
+                emit_store(field_address, materialize_conversion(value_id, value), str_field_type(static_cast<std::uint32_t>(*field)));
+            }
+            return true;
+        }
+        if(auto shape = aggregate_shape_of(type)) {
+            auto positional = positional_initializers(node);
+            for(auto index = 0uz; index < positional.size(); ++index) {
+                auto index_value = emit_integer_literal(semantic_type_ids::builtin(builtin_type_kind::usize), index);
+                auto element_address = emit_element_address(address, index_value, type, shape->element);
+                auto value = emit_expression(positional[index]);
+                if(not element_address.valid() or not value.valid()) {
+                    return false;
+                }
+                emit_store(element_address, materialize_conversion(positional[index], value), shape->element);
+            }
+            return true;
+        }
+
+        auto const* instance = std::get_if<struct_type>(&module.types.get(type));
+        if(instance == nullptr) {
+            return true;
+        }
+        auto struct_index = instance->index;
+        auto positional_index = 0uz;
+        for(auto const& initializer : node.initializers) {
+            auto field = std::optional<std::uint64_t>{};
+            auto value_id = expr_id{};
+            if(auto const* named = std::get_if<named_field_initializer_syntax>(&initializer)) {
+                value_id = named->value;
+                auto const& item = module.structs[struct_index];
+                for(auto index = 0uz; index < item.fields.size(); ++index) {
+                    if(item.fields[index].name == ast_source.slice(named->name)) {
+                        field = index;
+                        break;
+                    }
+                }
+            } else {
+                value_id = std::get<positional_initializer_syntax>(initializer).value;
+                field = positional_index++;
+            }
+            if(not field) {
+                continue;
+            }
+            auto field_access = semantic_field_access {
+                .struct_index = struct_index,
+                .field_index = static_cast<std::uint32_t>(*field),
+            };
+            auto field_type = struct_field_type(type, field_access);
+            auto field_address = emit_field_address(address, type, field_type, *field);
+            auto value = is_reference(field_type) ? emit_address(value_id) : emit_expression(value_id);
+            if(not field_address.valid() or not value.valid()) {
+                return false;
+            }
+            emit_store(
+                field_address,
+                is_reference(field_type) ? value : materialize_conversion(value_id, value),
+                field_type
+            );
+        }
+        return true;
+    }
+
+    auto stripped_expression(expr_id id) const -> expr_id
+    {
+        auto current = id;
+        while(true) {
+            auto const& expression = parsed->ast.node(current);
+            if(auto const* grouped = std::get_if<grouped_expr_syntax>(&expression)) {
+                current = grouped->expression;
+                continue;
+            }
+            return current;
+        }
+    }
+
     auto emit_array_like_literal(std::vector<expr_id> const& elements, semantic_type_id type) -> ir_value_id
     {
         auto shape = aggregate_shape_of(type);
@@ -1789,24 +1969,32 @@ struct function_lowerer
         return emit_symbol_read(symbol, info_of(id).read_type);
     }
 
+    auto emit_builtin_update_expression(unary_expr_syntax const& node, expr_id id, bool address_result) -> ir_value_id
+    {
+        auto address = emit_address(node.operand);
+        if(not address.valid()) {
+            return {};
+        }
+        auto type = info_of(id).read_type;
+        auto current_value = emit_load(address, type);
+        if(not current_value.valid()) {
+            return {};
+        }
+        auto instruction = emit_value_instruction(ir_opcode::unary, type);
+        instruction.operator_kind = node.operator_kind;
+        instruction.operands = { current_value };
+        auto updated_value = emit(std::move(instruction));
+        emit_store(address, updated_value, type);
+        if(address_result) {
+            return address;
+        }
+        return node.position == unary_position::postfix ? current_value : updated_value;
+    }
+
     auto emit_unary_expression(unary_expr_syntax const& node, expr_id id) -> ir_value_id
     {
         if(node.operator_kind == token_kind::plus_plus or node.operator_kind == token_kind::minus_minus) {
-            auto address = emit_address(node.operand);
-            if(not address.valid()) {
-                return {};
-            }
-            auto type = info_of(id).read_type;
-            auto current_value = emit_load(address, type);
-            if(not current_value.valid()) {
-                return {};
-            }
-            auto instruction = emit_value_instruction(ir_opcode::unary, type);
-            instruction.operator_kind = node.operator_kind;
-            instruction.operands = { current_value };
-            auto updated_value = emit(std::move(instruction));
-            emit_store(address, updated_value, type);
-            return node.position == unary_position::postfix ? current_value : updated_value;
+            return emit_builtin_update_expression(node, id, false);
         }
         if(node.operator_kind == token_kind::amp) {
             return emit_address(node.operand);
@@ -2011,6 +2199,7 @@ struct function_lowerer
             case bang_equal:
             case less:
             case less_equal:
+            case spaceship:
             case greater:
             case greater_equal:
                 return common_operand_type(
@@ -2134,6 +2323,13 @@ struct function_lowerer
         }
 
         auto const& callee_syntax = parsed->ast.node(node.callee);
+        if(auto const* name = std::get_if<name_expr_syntax>(&callee_syntax); name != nullptr and ast_source.identifier(name->name) == "builtin") {
+            if(node.arguments.empty()) {
+                return unsupported_expression("builtin expression is missing argument");
+            }
+            return emit_expression(node.arguments.front());
+        }
+
         auto variant_case = variant_case_of(node.callee);
         if(variant_case.valid()) {
             return emit_variant_case_value(id, variant_case, node.arguments);
@@ -2562,6 +2758,12 @@ struct function_lowerer
                     return unsupported_expression("value-returning unary operator has no address");
                 }
                 return emit_operator_call(id, std::vector<expr_id>{ unary->operand });
+            }
+            if(
+                (unary->operator_kind == token_kind::plus_plus or unary->operator_kind == token_kind::minus_minus)
+                and unary->position == unary_position::prefix
+            ) {
+                return emit_builtin_update_expression(*unary, id, true);
             }
             if(unary->operator_kind == token_kind::star) {
                 return emit_expression(unary->operand);

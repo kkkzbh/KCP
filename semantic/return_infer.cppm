@@ -193,7 +193,7 @@ auto semantic_analyzer::infer_statement_returns(ast_arena const& ast, stmt_id id
                     }
                     return;
                 }
-                auto binding_type = declared.value_or(initializer.type);
+                auto binding_type = declared.value_or(read_type(initializer.type));
                 if(node.is_ref) {
                     binding_type = result.types.intern(reference_type {
                         read_type(binding_type),
@@ -278,7 +278,7 @@ auto semantic_analyzer::infer_expression_type(ast_arena const& ast, expr_id id, 
             },
             [&](unary_expr_syntax const& node) {
                 auto operand = infer_expression_type(ast, node.operand, std::nullopt);
-                return unary_type(node.operator_kind, operand);
+                return unary_type(node.operator_kind, node.position, operand);
             },
             [&](binary_expr_syntax const& node) {
                 auto left = infer_expression_type(ast, node.left, std::nullopt).type;
@@ -582,6 +582,15 @@ auto semantic_analyzer::infer_call_expression(ast_arena const& ast, call_expr_sy
             }
             return expression_info{ .type = semantic_type_ids::unit };
         }
+        if(name == "builtin") {
+            if(node.arguments.size() != 1uz) {
+                for(auto argument : node.arguments) {
+                    infer_expression_type(ast, argument, std::nullopt);
+                }
+                return expression_info{ .type = semantic_type_ids::error };
+            }
+            return infer_expression_type(ast, node.arguments.front(), std::nullopt);
+        }
     }
 
     if(auto const* associated = std::get_if<associated_name_expr_syntax>(&callee_syntax)) {
@@ -605,19 +614,17 @@ auto semantic_analyzer::infer_call_expression(ast_arena const& ast, call_expr_sy
     }
     if(auto const* member = std::get_if<member_expr_syntax>(&callee_syntax)) {
         auto object = infer_expression_type(ast, member->object, std::nullopt);
-        auto owner = struct_index_of(object.type);
         for(auto argument : node.arguments) {
             infer_expression_type(ast, argument, std::nullopt);
         }
-        if(not owner) {
-            return expression_info{ .type = semantic_type_ids::error };
-        }
         auto name = std::string{ ast_source.identifier(member->name) };
-        auto found = result.structs[*owner].methods.find(name);
-        if(found == result.structs[*owner].methods.end()) {
-            return expression_info{ .type = semantic_type_ids::error };
+        if(auto method = method_symbol(object.type, name)) {
+            return expression_info{ .type = infer_callable_return(*method) };
         }
-        return expression_info{ .type = infer_callable_return(found->second) };
+        if(auto function = resolve_visible_function(name)) {
+            return expression_info{ .type = infer_callable_return(*function) };
+        }
+        return expression_info{ .type = semantic_type_ids::error };
     }
 
     if(auto function = callee_function_symbol(ast, node.callee)) {

@@ -385,6 +385,55 @@ requires T...: display
     auto const& grouped_type = grouped.ast.node(*grouped_parameter.type);
     test_parser::assert_true(grouped_type.is_grouped_type, "(T) should parse as a grouped type");
 
+    auto const inferred_parameter_source = sources.add_source (
+        "api_inferred_parameter_type.cp",
+        R"(id(value) -> i32
+{
+    return value;
+}
+
+borrow(value&) -> i32
+{
+    return value;
+}
+
+read(value const&) -> i32
+{
+    return value;
+}
+
+take(value move&) -> i32
+{
+    return value;
+})");
+    auto inferred_parameters = parse_source(sources, inferred_parameter_source);
+    test_parser::assert_true(inferred_parameters.accepted, "inferred parameter type source should parse");
+    test_parser::assert_true(inferred_parameters.root->functions.size() == 4, "inferred parameter type source should keep functions");
+    auto const& inferred_value = inferred_parameters.ast.node(inferred_parameters.root->functions[0]).parameters.front();
+    test_parser::assert_true(inferred_value.type == std::nullopt, "plain inferred parameter should omit its type node");
+    test_parser::assert_true(not inferred_value.inferred_is_reference, "plain inferred parameter should not record a reference suffix");
+    auto const& inferred_borrow = inferred_parameters.ast.node(inferred_parameters.root->functions[1]).parameters.front();
+    test_parser::assert_true(
+        inferred_borrow.type == std::nullopt and inferred_borrow.inferred_is_reference,
+        "inferred reference parameter should omit its type node and record '&'");
+    auto const& inferred_read = inferred_parameters.ast.node(inferred_parameters.root->functions[2]).parameters.front();
+    test_parser::assert_true(
+        inferred_read.inferred_is_reference and inferred_read.inferred_reference_is_const,
+        "inferred const reference parameter should record 'const&'");
+    auto const& inferred_take = inferred_parameters.ast.node(inferred_parameters.root->functions[3]).parameters.front();
+    test_parser::assert_true(
+        inferred_take.inferred_is_reference and inferred_take.inferred_reference_is_move,
+        "inferred move reference parameter should record 'move&'");
+
+    auto mixed_inferred_type = parse_source(
+        sources,
+        sources.add_source (
+            "api_mixed_inferred_parameter_type.cp",
+            "bad(value&: i32) -> i32 { return value; }"
+        )
+    );
+    test_parser::assert_true(not mixed_inferred_type.accepted, "mixed inferred suffix and explicit type should be rejected");
+
     auto const shapes = sources.add_source (
         "api_shapes.cp",
         R"(main()
@@ -579,6 +628,7 @@ main()
     let not_equal = value != id<i32>(0);
     let less = value < id<i32>(20);
     let less_equal = value <= id<i32>(16);
+    let ordering = value <=> id<i32>(16);
     let greater = value > id<i32>(4);
     let greater_equal = value >= id<i32>(16);
     let shift_left = value << id<i32>(1);
@@ -630,15 +680,16 @@ main()
         { 8uz, token_kind::bang_equal },
         { 9uz, token_kind::less },
         { 10uz, token_kind::less_equal },
-        { 11uz, token_kind::greater },
-        { 12uz, token_kind::greater_equal },
-        { 13uz, token_kind::less_less },
-        { 14uz, token_kind::greater_greater },
-        { 15uz, token_kind::plus },
-        { 16uz, token_kind::minus },
-        { 17uz, token_kind::star },
-        { 18uz, token_kind::slash },
-        { 19uz, token_kind::percent },
+        { 11uz, token_kind::spaceship },
+        { 12uz, token_kind::greater },
+        { 13uz, token_kind::greater_equal },
+        { 14uz, token_kind::less_less },
+        { 15uz, token_kind::greater_greater },
+        { 16uz, token_kind::plus },
+        { 17uz, token_kind::minus },
+        { 18uz, token_kind::star },
+        { 19uz, token_kind::slash },
+        { 20uz, token_kind::percent },
     });
     for(auto [index, kind] : binary_expectations) {
         auto const& declaration_node = declaration(all_operators, all_operator_body.statements[index]);
@@ -648,23 +699,23 @@ main()
             is<call_expr_syntax>(all_operators.ast.node(binary.right)),
             "binary operator should keep generic call as its right operand");
     }
-    auto const& cast_declaration = declaration(all_operators, all_operator_body.statements[20]);
+    auto const& cast_declaration = declaration(all_operators, all_operator_body.statements[21]);
     test_parser::assert_true(
         is<cast_expr_syntax>(all_operators.ast.node(cast_declaration.initializer)),
         "as expression should parse as a cast expression");
 
     auto const assignment_expectations = std::to_array<std::pair<std::size_t, token_kind>>({
-        { 21uz, token_kind::equal },
-        { 22uz, token_kind::plus_equal },
-        { 23uz, token_kind::minus_equal },
-        { 24uz, token_kind::star_equal },
-        { 25uz, token_kind::slash_equal },
-        { 26uz, token_kind::percent_equal },
-        { 27uz, token_kind::amp_equal },
-        { 28uz, token_kind::pipe_equal },
-        { 29uz, token_kind::caret_equal },
-        { 30uz, token_kind::less_less_equal },
-        { 31uz, token_kind::greater_greater_equal },
+        { 22uz, token_kind::equal },
+        { 23uz, token_kind::plus_equal },
+        { 24uz, token_kind::minus_equal },
+        { 25uz, token_kind::star_equal },
+        { 26uz, token_kind::slash_equal },
+        { 27uz, token_kind::percent_equal },
+        { 28uz, token_kind::amp_equal },
+        { 29uz, token_kind::pipe_equal },
+        { 30uz, token_kind::caret_equal },
+        { 31uz, token_kind::less_less_equal },
+        { 32uz, token_kind::greater_greater_equal },
     });
     for(auto [index, kind] : assignment_expectations) {
         auto const& statement = expression_statement(all_operators, all_operator_body.statements[index]);
@@ -676,15 +727,15 @@ main()
     }
 
     auto const unary_expectations = std::to_array<std::tuple<std::size_t, token_kind, unary_position>>({
-        { 32uz, token_kind::plus, unary_position::prefix },
-        { 33uz, token_kind::minus, unary_position::prefix },
-        { 34uz, token_kind::kw_not, unary_position::prefix },
-        { 35uz, token_kind::tilde, unary_position::prefix },
-        { 36uz, token_kind::amp, unary_position::prefix },
-        { 37uz, token_kind::star, unary_position::prefix },
-        { 38uz, token_kind::kw_ref, unary_position::prefix },
-        { 39uz, token_kind::kw_move, unary_position::prefix },
-        { 40uz, token_kind::kw_const, unary_position::prefix },
+        { 33uz, token_kind::plus, unary_position::prefix },
+        { 34uz, token_kind::minus, unary_position::prefix },
+        { 35uz, token_kind::kw_not, unary_position::prefix },
+        { 36uz, token_kind::tilde, unary_position::prefix },
+        { 37uz, token_kind::amp, unary_position::prefix },
+        { 38uz, token_kind::star, unary_position::prefix },
+        { 39uz, token_kind::kw_ref, unary_position::prefix },
+        { 40uz, token_kind::kw_move, unary_position::prefix },
+        { 41uz, token_kind::kw_const, unary_position::prefix },
     });
     for(auto [index, kind, position] : unary_expectations) {
         auto const& declaration_node = declaration(all_operators, all_operator_body.statements[index]);
@@ -694,10 +745,10 @@ main()
             "unary declaration should preserve operator kind and position");
     }
     auto const update_expectations = std::to_array<std::tuple<std::size_t, token_kind, unary_position>>({
-        { 41uz, token_kind::plus_plus, unary_position::prefix },
-        { 42uz, token_kind::minus_minus, unary_position::prefix },
-        { 43uz, token_kind::plus_plus, unary_position::postfix },
-        { 44uz, token_kind::minus_minus, unary_position::postfix },
+        { 42uz, token_kind::plus_plus, unary_position::prefix },
+        { 43uz, token_kind::minus_minus, unary_position::prefix },
+        { 44uz, token_kind::plus_plus, unary_position::postfix },
+        { 45uz, token_kind::minus_minus, unary_position::postfix },
     });
     for(auto [index, kind, position] : update_expectations) {
         auto const& statement = expression_statement(all_operators, all_operator_body.statements[index]);
@@ -822,6 +873,26 @@ impl vec2 {
     {
         return x * scale + y;
     }
+
+    operator prefix ++(self&) -> this&
+    {
+        return ref self;
+    }
+
+    operator postfix ++(self&) -> this
+    {
+        return self;
+    }
+
+    operator prefix --(self&) -> this&
+    {
+        return ref self;
+    }
+
+    operator postfix --(self&) -> this
+    {
+        return self;
+    }
 })");
     auto operators = parse_source(sources, operator_source);
     test_parser::assert_true(operators.accepted, "operator declaration source should parse");
@@ -841,6 +912,41 @@ impl vec2 {
     test_parser::assert_true (
         static_cast<bool>(call_operator.parameters[1].default_value),
         "operator parameters should record default expressions");
+    auto const& prefix_increment = operators.ast.node(operators.ast.node(operators.root->impls.front()).functions[2]);
+    test_parser::assert_true (
+        prefix_increment.overload_operator == overload_operator_kind::prefix_plus_plus,
+        "impl operator prefix ++ should record prefix increment overload kind");
+    auto const& postfix_increment = operators.ast.node(operators.ast.node(operators.root->impls.front()).functions[3]);
+    test_parser::assert_true (
+        postfix_increment.overload_operator == overload_operator_kind::postfix_plus_plus,
+        "impl operator postfix ++ should record postfix increment overload kind");
+    auto const& prefix_decrement = operators.ast.node(operators.ast.node(operators.root->impls.front()).functions[4]);
+    test_parser::assert_true (
+        prefix_decrement.overload_operator == overload_operator_kind::prefix_minus_minus,
+        "impl operator prefix -- should record prefix decrement overload kind");
+    auto const& postfix_decrement = operators.ast.node(operators.ast.node(operators.root->impls.front()).functions[5]);
+    test_parser::assert_true (
+        postfix_decrement.overload_operator == overload_operator_kind::postfix_minus_minus,
+        "impl operator postfix -- should record postfix decrement overload kind");
+
+    auto const bare_update_operator_source = sources.add_source (
+        "api_bare_update_operator.cp",
+        R"(operator ++(value: i32) -> i32
+{
+    return value;
+}
+
+operator --(value: i32) -> i32
+{
+    return value;
+})");
+    auto bare_update_operators = parse_source(sources, bare_update_operator_source);
+    test_parser::assert_true(
+        not bare_update_operators.accepted,
+        "bare operator ++ and operator -- declarations should be rejected");
+    test_parser::assert_true(
+        not bare_update_operators.diagnostics.empty(),
+        "bare update operator declarations should emit parser diagnostics");
 
     auto const default_parameter_source = sources.add_source (
         "api_default_parameter.cp",
@@ -852,6 +958,10 @@ impl vec2 {
 
 concept strict_weak_order<T> {
     operator ()(self const&, left: T const&, right: T const&) -> bool;
+    operator prefix ++(self&) -> this&;
+    operator postfix ++(self&) -> this;
+    operator prefix --(self&) -> this&;
+    operator postfix --(self&) -> this;
 })");
     auto default_parameters = parse_source(sources, default_parameter_source);
     test_parser::assert_true(default_parameters.accepted, "default parameter and call operator source should parse");
@@ -862,6 +972,22 @@ concept strict_weak_order<T> {
     test_parser::assert_true (
         requirement.overload_operator == overload_operator_kind::call,
         "concept function requirement should record operator ()");
+    auto const& increment_requirement = as<concept_function_requirement_syntax>(concept_item.items[1]);
+    test_parser::assert_true (
+        increment_requirement.overload_operator == overload_operator_kind::prefix_plus_plus,
+        "concept function requirement should record operator prefix ++");
+    auto const& postfix_increment_requirement = as<concept_function_requirement_syntax>(concept_item.items[2]);
+    test_parser::assert_true (
+        postfix_increment_requirement.overload_operator == overload_operator_kind::postfix_plus_plus,
+        "concept function requirement should record operator postfix ++");
+    auto const& decrement_requirement = as<concept_function_requirement_syntax>(concept_item.items[3]);
+    test_parser::assert_true (
+        decrement_requirement.overload_operator == overload_operator_kind::prefix_minus_minus,
+        "concept function requirement should record operator prefix --");
+    auto const& postfix_decrement_requirement = as<concept_function_requirement_syntax>(concept_item.items[4]);
+    test_parser::assert_true (
+        postfix_decrement_requirement.overload_operator == overload_operator_kind::postfix_minus_minus,
+        "concept function requirement should record operator postfix --");
 
     auto const ownership_source = sources.add_source (
         "api_ownership.cp",

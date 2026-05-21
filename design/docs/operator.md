@@ -93,7 +93,7 @@ let value = p[0];
 
 ## 运算符重载
 
-cp 支持一版受限的 `operator` 重载。它补充内建运算符，不打开普通函数和成员函数的完整重载体系。
+cp 支持一版受限的 `operator` 重载。它可以覆盖对应内建运算符，但不打开普通函数和成员函数的完整重载体系。
 
 ### 语法总览
 
@@ -165,24 +165,25 @@ operator +(left: vec2 const&, right: vec2 const&) -> vec2
 声明规则：
 
 - `operator` 是特殊声明，不占用普通函数名空间。
-- 顶层 operator 至少有一个参数类型必须是用户定义名义类型，或者该类型的引用。
+- 顶层 operator 至少有一个参数类型必须是用户定义名义类型、内建类型，或者这些类型的引用。
 - 固有 `impl` 内的 operator 至少有一个参数必须是 `self`、`self&`、`self const&` 或 `this` 相关类型。
 - 同一个类型命名空间内，相同 operator 可以按参数类型重载。
 - 当前可见的顶层 operator 可以按参数类型重载。
 - 普通函数、普通成员函数和关联函数仍然不支持重载。
 - operator 不参与 UFCS，不能写成 `operator +(a, b)` 普通调用。
 - `operator ++` 和 `operator --` 不是合法声明；必须写成 `operator prefix ++`、`operator postfix ++`、`operator prefix --` 或 `operator postfix --`，避免前后置声明歧义。
+- `and` / `or` 的短路语义、`ref`、`move`、`delete`、字段访问和生命周期语义不进入 operator 重载体系。
 
 查找规则：
 
-- 一元运算 `op value` 先尝试内建规则；内建规则不成立时，查找 `value` 类型命名空间中的 `operator op`；如果类型命名空间中没有该 operator，再查当前可见顶层 `operator op`。
-- 前置 `++value` / `--value` 先尝试内建整数规则；内建规则不成立时分别查找 `operator prefix ++` / `operator prefix --`。
-- 后置 `value++` / `value--` 先尝试内建整数规则；内建规则不成立时分别查找 `operator postfix ++` / `operator postfix --`。
-- 二元运算 `left op right` 先尝试内建规则；内建规则不成立时，依次查找 `left` 类型命名空间、`right` 类型命名空间、当前可见顶层 `operator op`。
+- 一元运算 `op value` 先查找 `value` 类型命名空间中的 `operator op`；没有可行候选时再尝试内建规则。
+- 前置 `++value` / `--value` 先查找 `operator prefix ++` / `operator prefix --`；没有可行候选时再尝试内建整数规则。
+- 后置 `value++` / `value--` 先查找 `operator postfix ++` / `operator postfix --`；没有可行候选时再尝试内建整数规则。
+- 二元运算 `left op right` 先依次查找 `left` 类型命名空间、`right` 类型命名空间、当前可见顶层 `operator op`；没有可行候选时再尝试编译器内建规则。
 - 赋值 `left = right` 和复合赋值 `left op= right` 先检查 `left` 必须是可写左值；然后查找 `left` 类型命名空间中的对应 operator；找不到时再查当前可见顶层 operator；仍然找不到时才使用允许的内建赋值或报错。
 - 下标 `value[index]` 先尝试内建 `[T; N]`、`str` 和指针规则；内建规则不成立时，查找 `value` 类型命名空间中的 `operator []`；找不到时再查当前可见顶层 `operator []`。元组字段使用 `.0` / `.1`，不参与 `operator []`。
 - 调用 `callee(args...)` 先按普通函数、函数值、lambda 和闭包调用检查；这些规则不成立时，查找 `callee` 类型命名空间中的 `operator ()`，调用参数序列为 `callee, args...`。
-- 某一级查找中如果存在同 operator 声明，但没有可行候选，直接报告参数不匹配或二义性，不继续回退到后续层级。
+- 内建 operator 是最低优先级候选。可见用户 operator 没有可行候选时，不会阻断其它层级或内建候选；只有最高优先级存在多个同分可行候选时才报二义性。
 
 候选选择使用小型重载规则：
 
@@ -194,6 +195,27 @@ operator +(left: vec2 const&, right: vec2 const&) -> vec2
 不支持 C++ 完整重载体系中的用户自定义隐式转换、模板偏序和 ADL。顶层 operator 只从当前模块和 `import` 引入的可见声明中查找。
 
 `operator ()` 不参与 UFCS，只能通过调用表达式触发；不能写成普通成员调用或顶层函数调用来绕过调用语法。
+
+### 内建 operator 逃逸
+
+`builtin(expr)` 是编译器识别的表达式解析模式，不是普通函数。在 `builtin(expr)` 的整个表达式子树内，所有支持 operator 重载的运算符语法都只走编译器内建规则：
+
+- 不查固有 `impl` operator。
+- 不查当前可见顶层 operator。
+- 内建规则不成立时直接报错，不回退到用户 operator。
+
+`builtin(expr)` 不改变变量名查找、普通函数调用、成员函数调用、字段访问、显式/隐式类型转换、求值顺序和被调用函数体内部的语义。
+
+```cp
+operator +(left: i32, right: i32) -> i32
+{
+    return builtin(left + right);
+}
+
+let item = builtin(matrix[i][j] + dx * scale);
+```
+
+上例中 `builtin(...)` 内部的 `+`、`*` 和 `[]` 都只使用内建规则。需要局部使用用户 operator 时，应先把那部分表达式绑定到局部变量，再进入 `builtin(...)`。
 
 ## 赋值与复合赋值
 

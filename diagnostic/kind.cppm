@@ -30,6 +30,7 @@ export enum class diagnostic_kind : std::uint16_t
     invalid_type_argument,
     duplicate_symbol,
     unknown_name,
+    unexported_name,
     unknown_module,
     import_conflict,
     export_requires_module,
@@ -57,6 +58,7 @@ export enum class diagnostic_kind : std::uint16_t
 
     // Semantic return diagnostics.
     return_type_mismatch,
+    missing_return,
     cannot_infer_return_type,
 
     // Semantic member and object diagnostics.

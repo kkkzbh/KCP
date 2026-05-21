@@ -13,6 +13,9 @@ export struct parameter_syntax
     source_span full_span{};
     bool is_const{};
     bool is_pack{};
+    bool inferred_is_reference{};
+    bool inferred_reference_is_const{};
+    bool inferred_reference_is_move{};
     bool is_self_receiver{};
     bool self_is_reference{};
     bool self_is_like{};
@@ -111,10 +114,15 @@ export enum class overload_operator_kind : std::uint8_t
     less_less,
     greater_greater,
     tilde,
+    prefix_plus_plus,
+    postfix_plus_plus,
+    prefix_minus_minus,
+    postfix_minus_minus,
     equal_equal,
     bang_equal,
     less,
     less_equal,
+    spaceship,
     greater,
     greater_equal,
     equal,

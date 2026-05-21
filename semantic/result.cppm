@@ -505,6 +505,51 @@ export struct semantic_result
         return lookup_result_entry(expression_conversions, context, unit, id);
     }
 
+    auto nrvo_candidate_of(function_id id) const -> symbol_id
+    {
+        return nrvo_candidate_of(0uz, 0uz, id);
+    }
+
+    auto nrvo_candidate_of(std::size_t unit, function_id id) const -> symbol_id
+    {
+        return nrvo_candidate_of(0uz, unit, id);
+    }
+
+    auto nrvo_candidate_of(std::size_t context, std::size_t unit, function_id id) const -> symbol_id
+    {
+        return lookup_result_entry(function_nrvo_candidates, context, unit, id);
+    }
+
+    auto nrvo_return_of(stmt_id id) const -> symbol_id
+    {
+        return nrvo_return_of(0uz, 0uz, id);
+    }
+
+    auto nrvo_return_of(std::size_t unit, stmt_id id) const -> symbol_id
+    {
+        return nrvo_return_of(0uz, unit, id);
+    }
+
+    auto nrvo_return_of(std::size_t context, std::size_t unit, stmt_id id) const -> symbol_id
+    {
+        return lookup_result_entry(return_nrvo_candidates, context, unit, id);
+    }
+
+    auto direct_initializer_of(stmt_id id) const -> bool
+    {
+        return direct_initializer_of(0uz, 0uz, id);
+    }
+
+    auto direct_initializer_of(std::size_t unit, stmt_id id) const -> bool
+    {
+        return direct_initializer_of(0uz, unit, id);
+    }
+
+    auto direct_initializer_of(std::size_t context, std::size_t unit, stmt_id id) const -> bool
+    {
+        return lookup_result_entry(direct_initializers, context, unit, id);
+    }
+
     auto literal_of(expr_id id) const -> semantic_literal_value
     {
         return literal_of(0uz, id);
@@ -709,6 +754,9 @@ export struct semantic_result
     std::map<semantic_parameter_key, std::vector<symbol_id>> parameter_pack_bindings{};
     std::map<semantic_node_key, semantic_expression_info> expression_infos{};
     std::map<semantic_node_key, semantic_type_id> expression_conversions{};
+    std::map<semantic_node_key, symbol_id> function_nrvo_candidates{};
+    std::map<semantic_node_key, symbol_id> return_nrvo_candidates{};
+    std::map<semantic_node_key, bool> direct_initializers{};
     std::map<semantic_node_key, semantic_literal_value> literal_values{};
     std::map<semantic_node_key, semantic_builtin_call> builtin_calls{};
     std::map<semantic_node_key, semantic_field_access> expression_fields{};

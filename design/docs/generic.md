@@ -116,6 +116,62 @@ id<T>(value: T) -> T
 }
 ```
 
+普通函数参数也可以省略类型。每个省略类型的非 `self` 参数都会引入一个只能由调用实参推导的隐藏类型参数：
+
+```cp
+add(left, right) -> i32
+{
+    return left + right;
+}
+```
+
+上面等价于声明两个新的函数级类型参数，并把参数类型写成对应参数：
+
+```text
+add<$parameter.0, $parameter.1>(left: $parameter.0, right: $parameter.1) -> i32
+```
+
+这些隐藏参数不出现在源码泛型参数列表中，也不能在调用点显式传入；需要在返回类型、`requires` 或其它参数类型中引用同一个类型时，应写完整泛型：
+
+```cp
+id<T>(value: T) -> T
+{
+    return value;
+}
+```
+
+省略类型参数可以保留引用形态：
+
+```cp
+read(value const&) -> i32   // 等价于 read<T>(value: T const&) -> i32
+edit(value&) -> void        // 等价于 edit<T>(value: T&) -> void
+take(value move&) -> i32    // 等价于 take<T>(value: T move&) -> i32
+```
+
+这种写法只省略基础类型，`const&`、`&`、`move&` 仍然是参数类型的一部分。显式类型时必须把引用写在类型位置：
+
+```cp
+read(value: i32 const&) -> i32
+edit(value: i32&) -> void
+take(value: i32 move&) -> i32
+```
+
+不允许混合两种写法：
+
+```cp
+bad(value&: i32) -> i32   // 错误：应写 value: i32& 或 value&
+bad(value const&: i32)    // 错误：应写 value: i32 const& 或 value const&
+```
+
+省略类型参数不能带默认值，因为调用省略该实参时没有普通实参可用于推导隐藏类型参数。需要默认值时应写显式类型或显式泛型参数：
+
+```cp
+fill(value: i32 = 0) -> i32
+{
+    return value;
+}
+```
+
 泛型参数默认是编译期类型参数。函数泛型还支持第一版整数 const 参数，写作 `N: usize` 或 `I: isize`，用于 `[T; N]` 这样的类型模式。
 
 泛型参数也可以声明为类型参数包：
@@ -766,6 +822,7 @@ let other = add(1.0, 2.0);  // 推导 T = f64，等价于 add<f64>(1.0, 2.0)
 - 如果调用点写了显式泛型实参，它们按泛型参数列表前缀匹配；剩余参数由默认实参补齐。
 - 如果调用点没有写显式泛型实参，编译器先从普通实参推导泛型参数，再用默认实参补齐仍未确定的参数。
 - 不从返回类型、变量声明类型或其他上下文反推类型参数。
+- 省略参数类型引入的隐藏类型参数只能由普通实参推导，不接受调用点显式类型实参。
 
 推导过程把形参类型当作模式，把实参表达式的已知类型当作目标类型：
 
@@ -893,6 +950,7 @@ main() -> i32
 泛型支持：
 
 - 类型参数：`func<T, U>(...)`
+- 省略参数类型引入的隐藏类型参数：`func(x, y)`、`func(x&)`、`func(x const&)`、`func(x move&)`
 - 强无约束泛型：允许依赖操作，实例化时检查
 - 内联 concept 约束：`T: comparable`
 - 多 concept 约束：`T: readable and writable`

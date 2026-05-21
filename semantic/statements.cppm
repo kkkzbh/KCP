@@ -191,14 +191,101 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
     }
 
     check_statement(function.body, returns);
-    if(is_never(signature.returns) and statement_can_complete_normally(function.body)) {
-        report(
-            diagnostic_kind::return_type_mismatch,
-            function.full_span,
-            "function returning ! can complete normally"
-        );
+    finish_nrvo(id, returns);
+    if(statement_can_complete_normally(function.body)) {
+        if(is_never(signature.returns)) {
+            report(
+                diagnostic_kind::return_type_mismatch,
+                function.full_span,
+                "function returning ! can complete normally"
+            );
+        } else if(returns.declared_return and not is_error(*returns.declared_return) and not is_unit(read_type(*returns.declared_return))) {
+            report(
+                diagnostic_kind::missing_return,
+                function.full_span,
+                "function with a non-unit return type can complete without returning a value"
+            );
+        }
     }
     restore_state();
+}
+
+auto semantic_analyzer::stripped_expression(expr_id id) const -> expr_id
+{
+    auto current = id;
+    while(true) {
+        auto const& expression = active_ast->node(current);
+        if(auto const* grouped = std::get_if<grouped_expr_syntax>(&expression)) {
+            current = grouped->expression;
+            continue;
+        }
+        return current;
+    }
+}
+
+auto semantic_analyzer::direct_initializer_expression(expr_id id) const -> bool
+{
+    auto const& expression = active_ast->node(stripped_expression(id));
+    return std::holds_alternative<call_expr_syntax>(expression)
+           or std::holds_alternative<array_literal_expr_syntax>(expression)
+           or std::holds_alternative<tuple_literal_expr_syntax>(expression)
+           or std::holds_alternative<struct_init_expr_syntax>(expression);
+}
+
+auto semantic_analyzer::nrvo_candidate_for_return(expr_id value, expression_info const& returned, return_state const& returns) -> symbol_id
+{
+    if(not returns.declared_return or returned.explicit_borrow or returned.is_move) {
+        return {};
+    }
+
+    auto stripped = stripped_expression(value);
+    auto const& expression = active_ast->node(stripped);
+    if(not std::holds_alternative<name_expr_syntax>(expression)) {
+        return {};
+    }
+
+    auto found = result.expression_symbols.find(node_key(stripped));
+    if(found == result.expression_symbols.end()) {
+        return {};
+    }
+
+    auto symbol = found->second;
+    if(not symbol.valid()) {
+        return {};
+    }
+
+    auto const& candidate = result.symbols[symbol.value];
+    if(candidate.kind != symbol_kind::local or candidate.unit_index != active_unit_index or candidate.function != active_function) {
+        return {};
+    }
+    if(std::holds_alternative<reference_type>(result.types.get(candidate.type))) {
+        return {};
+    }
+
+    auto return_type = read_type(*returns.declared_return);
+    if(read_type(candidate.type) != return_type or read_type(returned.type) != return_type) {
+        return {};
+    }
+    return symbol;
+}
+
+auto semantic_analyzer::record_direct_initializer(stmt_id id, expr_id initializer) -> void
+{
+    if(direct_initializer_expression(initializer)) {
+        result.direct_initializers[node_key(id)] = true;
+    }
+}
+
+auto semantic_analyzer::finish_nrvo(function_id id, return_state const& returns) -> void
+{
+    if(not returns.nrvo_possible or not returns.nrvo_candidate.valid() or returns.nrvo_return_statements.empty()) {
+        return;
+    }
+
+    result.function_nrvo_candidates[node_key(id)] = returns.nrvo_candidate;
+    for(auto statement : returns.nrvo_return_statements) {
+        result.return_nrvo_candidates[node_key(statement)] = returns.nrvo_candidate;
+    }
 }
 
 auto semantic_analyzer::enter_function_scope() -> void
@@ -252,6 +339,36 @@ auto semantic_analyzer::resolve(std::string_view name) const -> symbol_id
         }
     }
     return {};
+}
+
+auto semantic_analyzer::unexported_imported_function(std::string_view name) const -> std::optional<unexported_imported_symbol>
+{
+    if(active_unit == nullptr) {
+        return std::nullopt;
+    }
+
+    auto key = std::string{ name };
+    for(auto const& import : active_unit->root.imports) {
+        auto module_name = ast_source.module_name(import.name);
+        auto local_functions = module_functions.find(module_name);
+        if(local_functions == module_functions.end()) {
+            continue;
+        }
+        auto local_function = local_functions->second.find(key);
+        if(local_function == local_functions->second.end()) {
+            continue;
+        }
+
+        auto exported_functions = module_exports.find(module_name);
+        if(exported_functions == module_exports.end() or not exported_functions->second.contains(key)) {
+            return unexported_imported_symbol {
+                .module_name = std::move(module_name),
+                .symbol = local_function->second,
+            };
+        }
+    }
+
+    return std::nullopt;
 }
 
 auto semantic_analyzer::resolve_type_alias(std::string_view name) const -> std::optional<semantic_type_id>
@@ -403,7 +520,7 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                     return;
                 }
 
-                auto declared_type = expected.value_or(initializer.type);
+                auto declared_type = expected.value_or(read_type(initializer.type));
                 if(not expected and is_nullptr(read_type(declared_type))) {
                     report(
                         diagnostic_kind::type_mismatch,
@@ -431,6 +548,9 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                         node.full_span,
                         "initializer type does not match declared type"
                     );
+                }
+                if(not node.is_ref) {
+                    record_direct_initializer(id, node.initializer);
                 }
 
                 auto symbol = (
@@ -533,6 +653,17 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                     } else {
                         returned = check_expression(*active_ast, *node.value, std::nullopt);
                     }
+                    auto candidate = nrvo_candidate_for_return(*node.value, returned, returns);
+                    if(not candidate.valid()) {
+                        returns.nrvo_possible = false;
+                    } else if(not returns.nrvo_candidate.valid()) {
+                        returns.nrvo_candidate = candidate;
+                    } else if(returns.nrvo_candidate != candidate) {
+                        returns.nrvo_possible = false;
+                    }
+                    if(returns.nrvo_possible) {
+                        returns.nrvo_return_statements.emplace_back(id);
+                    }
                 }
 
                 if(returns.declared_return and not can_implicitly_convert(returned, *returns.declared_return)) {
@@ -598,10 +729,46 @@ auto semantic_analyzer::statement_can_complete_normally(stmt_id id) const -> boo
             },
             [&](expression_statement_syntax const& node) {
                 auto found = result.expression_infos.find(node_key(node.expression));
-                return found == result.expression_infos.end() or not is_never(read_type(found->second.type));
+                return (found == result.expression_infos.end() or not is_never(read_type(found->second.type)))
+                       and expression_can_complete_normally(node.expression);
             },
         },
         statement
+    );
+}
+
+auto semantic_analyzer::expression_can_complete_normally(expr_id id) const -> bool
+{
+    auto const& expression = active_ast->node(id);
+    return std::visit (
+        overloaded {
+            [&](grouped_expr_syntax const& node) {
+                return expression_can_complete_normally(node.expression);
+            },
+            [&](block_expr_syntax const& node) {
+                for(auto statement : node.statements) {
+                    if(not statement_can_complete_normally(statement)) {
+                        return false;
+                    }
+                }
+                return not node.tail or expression_can_complete_normally(*node.tail);
+            },
+            [&](match_expr_syntax const& node) {
+                if(node.arms.empty()) {
+                    return true;
+                }
+                return std::ranges::any_of (
+                    node.arms,
+                    [&](match_arm_syntax const& arm) {
+                        return expression_can_complete_normally(arm.value);
+                    }
+                );
+            },
+            [](auto const&) {
+                return true;
+            },
+        },
+        expression
     );
 }
 
