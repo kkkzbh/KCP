@@ -215,6 +215,8 @@ take<T>(value: T move&) -> T
 
 这不是完美转发，只是显式继续移动。
 
+`return local;` 满足 NRVO 条件时直接返回该 local 的存储位置，不是隐式 move。`return move local;` 保持显式移动语义，并明确不触发 NRVO。完整 NRVO 条件见 [type_system.md](type_system.md) 的返回值消除规则。
+
 ## 默认 copy 和显式 move
 
 普通赋值和按值传参默认使用 copy：

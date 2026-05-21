@@ -22,7 +22,7 @@ map_node<K, V>
 map_insert_result<K, V>
 ```
 
-`map` 按 `Compare` 维护唯一 key。默认 `Compare` 是 `less<K>`。比较器返回 `bool`，表示左侧 key 是否应排在右侧 key 前。
+`map` 按 `Compare` 维护唯一 key。默认 `Compare` 是 `less<K>`。比较器返回 `bool`，表示左侧 key 是否应排在右侧 key 前。第一版有序容器仍要求 `strict_weak_order<K>`，不接受返回 `partial_ordering` 的默认比较器。
 
 公开接口：
 

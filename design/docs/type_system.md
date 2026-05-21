@@ -78,7 +78,7 @@ let first = text[0];
 - 编译期常量下标访问字符串字面量时，如果能确定越界，语义分析可以报错。
 - 可以显式构造 `str{ .ptr = p, .len = n }`，调用者负责保证 `[p, p + n)` 指向有效只读字符序列；是否 trailing nul 不是 `str` 的不变量。
 
-`str` 不内建相等比较、大小比较、`empty`、`starts_with`、`contains`、切片或解析等高层能力。它们通过标准库 `impl str`、运算符协议或 [iteration.md](iteration.md) 中的 `iterable` 协议扩展。字符串范围遍历依赖 `str` 的 `iterable` 实现，而不是因为 `str` 拥有 `size()` 和 `[]` 自动成立。
+`str` 不内建 `empty`、`starts_with`、`contains`、切片或解析等高层能力。它们通过标准库 `impl str`、运算符协议或 [iteration.md](iteration.md) 中的 `iterable` 协议扩展。标准库为 `str` 提供 `operator <=>` 和 `== != < <= > >=`，比较规则是按 `char` 序列做字典序比较；公共前缀相同后，短串为 `less`，长串为 `greater`，长度相同为 `equivalent`。比较始终使用 `str.len`，不会按 C 字符串在中间 `'\0'` 截断。字符串范围遍历依赖 `str` 的 `iterable` 实现，而不是因为 `str` 拥有 `size()` 和 `[]` 自动成立。
 
 #### string 拥有字符串
 
@@ -264,6 +264,24 @@ main()
 省略返回类型时，语义分析收集函数体中的所有 `return value;` 并统一出返回类型。没有任何带值 `return` 时，函数返回类型推导为内部 `unit`。
 
 返回类型推导不通过额外括号保留引用。`return (x);` 与 `return x;` 等价，都会按普通表达式读出规则推导返回类型。需要返回引用时，显式写 `return ref x;` 或 `return const ref x;`，借用表达式规则见 [ownership.md](ownership.md)。
+
+### 返回值消除与目标位置初始化
+
+语言保证一类 NRVO（named return value optimization）：当 `return local;` 满足下面条件时，`local` 直接作为函数返回对象本身，不发生语言级 copy 或 move。普通分组括号会被剥掉，因此 `return (local);` 与 `return local;` 等价。
+
+第一版 NRVO 条件：
+
+- `local` 必须是当前函数、lambda 或构造函数体内的非引用 local binding。
+- `local` 不能是参数、`self`、捕获变量、字段、索引结果、函数调用结果或引用别名。
+- `return` 表达式不能是 `move local`、`ref local`、`const ref local`，也不能是成员访问、索引、调用或字面量。
+- `local` 的读出类型必须等于声明/推导后的函数返回读出类型；如果需要类型转换，则不走 NRVO。
+- 同一函数中所有带值 `return` 必须返回同一个 NRVO candidate；否则回退普通 `return` 规则。
+
+`move` 是显式所有权转移。写 `return move local;` 表示用户选择移动，并明确放弃 NRVO。
+
+局部变量声明的初始化另有目标位置直接初始化规则。`let a = func();`、`let b = [i32; 3]{}`、数组/元组/结构体聚合字面量和构造表达式会优先直接写入 `a` / `b` 的存储位置，不构造“临时对象再拷贝到局部变量”。这不是 NRVO，因为它不发生在 `return local;` 上，但同样属于语言级 copy/move 消除。
+
+赋值语句不属于目标位置直接初始化。`a = func();` 仍按普通赋值和转换规则处理。
 
 构造函数不参与普通函数返回类型推导；构造函数返回类型固定为当前结构体类型，见 [struct.md](struct.md)。
 
@@ -588,9 +606,10 @@ for(let value : values) {
 
 - 操作数必须是可写左值。
 - 不能作用于 `const` binding 或 const target。
-- 只允许整数类型。
-- 前置形式先更新并产生更新后的值，后置形式先产生旧值再更新。
-- 表达式结果类型与操作数读出的类型一致，结果本身不是左值。
+- 内建路径只允许整数类型。
+- 非内建类型通过 `operator prefix ++` / `operator postfix ++`、`operator prefix --` / `operator postfix --` 参与重载解析；声明时必须写出 `prefix` 或 `postfix`。
+- 前置形式先更新并产生更新后的自身引用；内建前置结果为 `T&`。
+- 后置形式先产生旧值再更新；内建后置结果为 `T`，结果本身不是左值。
 
 赋值规则：
 

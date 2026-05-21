@@ -181,7 +181,7 @@ impl partial_eq<i32> for i32
 impl partial_eq<box<T>> for box<T>
 ```
 
-标准库和编译器可以提供内建 concept。`mutable_object` 是第一版内建 concept，由类型系统判断是否为可写对象类型；用户不写 `impl mutable_object for T`。它用于 `sort`、`swap` 这类必须写入元素的泛型算法。
+标准库和编译器可以提供内建 concept。`mutable_object` 由类型系统判断是否为可写对象类型；`equality_comparable<Rhs = this>` 按 `==` 是否可用判断；`incrementable` 按前置 `++` 是否可用判断。它们用于 `sort`、`swap`、`iota` 这类需要提前表达类型能力的泛型算法和范围。
 
 ## 无约束泛型
 

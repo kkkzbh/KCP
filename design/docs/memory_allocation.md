@@ -226,7 +226,7 @@ free(ptr)
 
 lower 成 runtime ABI 调用：
 
-```llvm
+```text
 declare ptr @cp_alloc(i64 elem_size, i64 align, i64 count)
 declare void @cp_free(ptr)
 ```

@@ -41,6 +41,9 @@ rules.ninja
 clion-plugin/.gradle/
 clion-plugin/.intellijPlatform/
 clion-plugin/build/
+node_modules/
+**/.vitepress/cache/
+**/.vitepress/dist/
 
 # Local scratch material
 教材ppt/

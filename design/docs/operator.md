@@ -66,18 +66,19 @@ let value = p[0];
 ## 比较运算
 
 ```text
-== != < <= > >=
+== != < <= <=> > >=
 ```
 
 规则：
 
-- 比较运算结果为 `bool`。
+- `== != < <= > >=` 结果为 `bool`。
+- `<=>` 是普通可重载二元运算；标准库约定返回 `partial_ordering`、`weak_ordering` 或 `strong_ordering` 这类比较分类值。
 - 数值类型按共同数值类型比较。
 - 相同目标类型的指针支持 `==` / `!=`。
 - 相同目标类型的指针支持 `< <= > >=`，有定义边界与 C++ 指针有序比较一致。
 - 非数值类型不提供通用内建比较。特定类型若需要比较能力，应通过 `operator` 重载或标准库协议提供。
 
-不支持 `<=>`。
+显式声明的 `operator ==`、`operator !=`、`operator <`、`operator <=`、`operator >`、`operator >=` 优先于任何基于 `<=>` 的派生策略。第一版标准库对 `str` 直接提供这些比较 operator，并以 `operator <=>` 作为三路比较入口；后续若在编译器层接入派生比较，应保持同样的显式 operator 优先规则。
 
 ## 位运算
 
@@ -102,6 +103,7 @@ ImplOperator     -> operator OverloadableOperator ( ParameterList? ) ReturnType?
 
 OverloadableOperator
                  -> UnaryOperator
+                  | UpdateOperator
                   | BinaryOperator
                   | ComparisonOperator
                   | AssignmentOperator
@@ -109,9 +111,10 @@ OverloadableOperator
                   | CallOperator
 
 UnaryOperator    -> "+" | "-" | "~"
+UpdateOperator   -> "prefix" "++" | "postfix" "++" | "prefix" "--" | "postfix" "--"
 BinaryOperator   -> "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>"
 ComparisonOperator
-                 -> "==" | "!=" | "<" | "<=" | ">" | ">="
+                 -> "==" | "!=" | "<" | "<=" | "<=>" | ">" | ">="
 AssignmentOperator
                  -> "=" | "+=" | "-=" | "*=" | "/=" | "%="
                   | "&=" | "|=" | "^=" | "<<=" | ">>="
@@ -120,7 +123,7 @@ SubscriptOperator
 CallOperator    -> "()"
 ```
 
-实际词法中 `operator` 和后面的运算符 token 可以有空白；文档统一写成 `operator +`、`operator []`、`operator ()`。
+实际词法中 `operator` 和后面的运算符 token 可以有空白；文档统一写成 `operator +`、`operator []`、`operator ()`、`operator prefix ++`。
 
 成员 operator 写在固有 `impl` 中，挂到当前类型命名空间：
 
@@ -134,6 +137,13 @@ impl vec2 {
     operator ==(self const&, rhs: this const&) -> bool
     {
         return x == rhs.x and y == rhs.y;
+    }
+
+    operator prefix ++(self&) -> this&
+    {
+        x += 1;
+        y += 1;
+        return ref self;
     }
 
     operator ()(self const&, scale: i32) -> i32
@@ -161,10 +171,13 @@ operator +(left: vec2 const&, right: vec2 const&) -> vec2
 - 当前可见的顶层 operator 可以按参数类型重载。
 - 普通函数、普通成员函数和关联函数仍然不支持重载。
 - operator 不参与 UFCS，不能写成 `operator +(a, b)` 普通调用。
+- `operator ++` 和 `operator --` 不是合法声明；必须写成 `operator prefix ++`、`operator postfix ++`、`operator prefix --` 或 `operator postfix --`，避免前后置声明歧义。
 
 查找规则：
 
 - 一元运算 `op value` 先尝试内建规则；内建规则不成立时，查找 `value` 类型命名空间中的 `operator op`；如果类型命名空间中没有该 operator，再查当前可见顶层 `operator op`。
+- 前置 `++value` / `--value` 先尝试内建整数规则；内建规则不成立时分别查找 `operator prefix ++` / `operator prefix --`。
+- 后置 `value++` / `value--` 先尝试内建整数规则；内建规则不成立时分别查找 `operator postfix ++` / `operator postfix --`。
 - 二元运算 `left op right` 先尝试内建规则；内建规则不成立时，依次查找 `left` 类型命名空间、`right` 类型命名空间、当前可见顶层 `operator op`。
 - 赋值 `left = right` 和复合赋值 `left op= right` 先检查 `left` 必须是可写左值；然后查找 `left` 类型命名空间中的对应 operator；找不到时再查当前可见顶层 operator；仍然找不到时才使用允许的内建赋值或报错。
 - 下标 `value[index]` 先尝试内建 `[T; N]`、`str` 和指针规则；内建规则不成立时，查找 `value` 类型命名空间中的 `operator []`；找不到时再查当前可见顶层 `operator []`。元组字段使用 `.0` / `.1`，不参与 `operator []`。
@@ -295,7 +308,7 @@ let value = *p;
 
 ## 自增与自减
 
-cp 支持内建前置和后置自增、自减：
+cp 支持前置和后置自增、自减；内建整数路径和用户自定义 operator 使用同一表达式语义：
 
 ```cp
 ++value
@@ -306,15 +319,33 @@ value--
 
 规则：
 
-- `++` / `--` 是内建运算符，不属于第一版运算符重载。
 - 操作数必须是可写左值。
 - 不能作用于 `const` binding 或 const target。
-- 只允许整数类型，不支持 `bool`、浮点、指针、`struct`、`array` 或 `tuple`。
-- 自增语义等价于把操作数加 `1` 后写回，自减语义等价于把操作数减 `1` 后写回。
-- 前置形式先更新，再产生更新后的值。
-- 后置形式先产生旧值，再更新。
-- 表达式结果类型与操作数读出的类型一致，结果本身不是左值。
+- 内建路径只允许整数类型，不支持 `bool`、浮点、指针、`array` 或 `tuple`。
+- 内建自增语义等价于把操作数加 `1` 后写回，自减语义等价于把操作数减 `1` 后写回。
+- 非内建类型按表达式位置查找对应 operator：前置 `++value` 查找 `operator prefix ++`，后置 `value++` 查找 `operator postfix ++`；`--` 同理。
+- 前置形式先更新，再产生更新后的自身引用；内建前置结果为 `T&`，自定义 operator 推荐返回 `this&`。
+- 后置形式先产生旧值，再更新；内建后置结果为 `T`，自定义 operator 推荐返回 `this`。
 - 操作数表达式只求值一次。
+
+自定义声明必须显式写出前置或后置位置，裸 `operator ++` / `operator --` 不是合法声明：
+
+```cp
+impl counter {
+    operator prefix ++(self&) -> this&
+    {
+        value += 1;
+        return ref self;
+    }
+
+    operator postfix ++(self&) -> this
+    {
+        let old = self;
+        value += 1;
+        return old;
+    }
+}
+```
 
 ## 转换运算
 

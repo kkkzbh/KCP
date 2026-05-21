@@ -23,7 +23,7 @@ std/ranges/iota.cp     -> export module std.ranges.iota;
 
 ## iota
 
-`iota` 产生半开整数区间 `[begin, end)`，每次迭代产生一个 `i32`。
+`iota` 产生泛型半开序列 `[begin, end)`，每次迭代产生一个 `T`。`T` 必须能用 `==` 判断终点，并能用前置 `++` 推进。
 
 ```cp
 import std.ranges;
@@ -46,15 +46,20 @@ sum_to(end: i32) -> i32
 ```cp
 export module std.ranges.iota;
 
-iota(begin: i32, end: i32) -> iota_range
+export import std.compare;
+export import std.core.iter;
+export import std.core.option;
+
+iota<T: equality_comparable<T> and T: incrementable>(begin: T, end: T) -> iota_range<T>
 ```
 
 规则：
 
 - `iota(begin, end)` 表示 `[begin, end)`。
-- 当 `begin >= end` 时，范围为空。
-- 第一版只支持步长为 `1` 的递增 `i32` 区间。
-- 第一版不支持负步长、无界区间、闭区间和泛型数值类型。
+- 终止条件是 `current == end`。
+- 推进方式是 `++current`，因此 `incrementable` 只要求前置 `++`。
+- `iota` 不假定 `<`、`>=`、`+= 1` 或整数类型；如果 `begin` 经过有限次 `++` 不能到达 `end`，循环是否终止由该类型自己的语义决定。
+- 第一版不支持负步长、无界区间和闭区间。
 
 因为 cp 当前不支持普通函数重载，`iota(end)` 和 `iota(begin, end)` 不能同名共存。第一版只保留两个参数形式；`[0, end)` 直接写作 `iota(0, end)`。
 
@@ -65,18 +70,18 @@ iota(begin: i32, end: i32) -> iota_range
 `iota_range` 是可重复创建 iterator 的范围对象：
 
 ```cp
-export struct iota_range {
-    begin: i32;
-    end: i32;
+export struct iota_range<T: equality_comparable<T> and T: incrementable> {
+    begin: T;
+    end: T;
 }
 ```
 
 `iota_iter` 是有状态 iterator：
 
 ```cp
-export struct iota_iter {
-    current: i32;
-    end: i32;
+export struct iota_iter<T: equality_comparable<T> and T: incrementable> {
+    current: T;
+    end: T;
 }
 ```
 
