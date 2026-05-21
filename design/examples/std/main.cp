@@ -41,7 +41,7 @@ main() -> i32
     if(some.has_value() and not none.has_value() and value.has_value() and not error.has_value()) {
         let stored = *storage.data() + *(storage.data() + 1);
         println("std = {}, stored = {}", "ok", stored);
-        println("owned string = {}", text.as_str());
+        println("owned string = {}", text);
         destroy_at(storage.data() + 1);
         destroy_at(storage.data());
         return some.value_or(0) + none.value_or(10) + value.value_or(0) + total + stored + vector_sum + string_size + map_set_sum;

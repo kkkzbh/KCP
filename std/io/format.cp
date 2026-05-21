@@ -1,6 +1,7 @@
 export module std.io.format;
 
 import std.io.raw;
+export import std.text.string;
 
 export variant format_error {
     placeholder_too_few;
@@ -10,9 +11,19 @@ export variant format_error {
     output_failed;
 }
 
-export variant print_result {
+export variant display_result {
     ok;
     error(format_error);
+}
+
+export variant format_result {
+    ok(string);
+    error(format_error);
+}
+
+export variant formatter {
+    stream(output_stream&);
+    buffer(string&);
 }
 
 variant scan_result {
@@ -22,26 +33,75 @@ variant scan_result {
 }
 
 export concept display {
-    write_to(self const&, out: output_stream&) -> print_result;
+    display(self const&, out: formatter&) -> display_result;
 }
 
-write_output_char(out: output_stream&, ch: char) -> print_result
-{
-    if(not write_char(ref out, ch)) {
-        return print_result::error(format_error::output_failed);
+impl formatter {
+    write_char(self&, ch: char) -> display_result
+    {
+        match self {
+            .stream(out) => {
+                if(not write_char(ref out, ch)) {
+                    return display_result::error(format_error::output_failed);
+                }
+                return display_result::ok;
+            },
+            .buffer(text) => {
+                text.push_back(ch);
+                return display_result::ok;
+            },
+        };
     }
-    return print_result::ok;
-}
 
-write_output_str(out: output_stream&, text: str) -> print_result
-{
-    if(not write_str(ref out, text)) {
-        return print_result::error(format_error::output_failed);
+    write_str(self&, text: str) -> display_result
+    {
+        match self {
+            .stream(out) => {
+                if(not write_str(ref out, text)) {
+                    return display_result::error(format_error::output_failed);
+                }
+                return display_result::ok;
+            },
+            .buffer(storage) => {
+                storage.append(text);
+                return display_result::ok;
+            },
+        };
     }
-    return print_result::ok;
+
+    format<T...: display>(self&, fmt: str, values: T...) -> display_result
+    {
+        let cursor: usize = 0;
+        template for(let value : values...) {
+            let scan = scan_to_placeholder(ref self, fmt, ref cursor);
+            match scan {
+                .placeholder => {},
+                .end => {
+                    return display_result::error(format_error::argument_too_many);
+                },
+                .error(error) => {
+                    return display_result::error(error);
+                },
+            };
+            let written = value.display(ref self);
+            match written {
+                .ok => {},
+                .error(error) => {
+                    return display_result::error(error);
+                },
+            };
+        }
+
+        let tail = scan_to_placeholder(ref self, fmt, ref cursor);
+        return match tail {
+            .placeholder => display_result::error(format_error::placeholder_too_few),
+            .end => display_result::ok,
+            .error(error) => display_result::error(error),
+        };
+    }
 }
 
-scan_to_placeholder(out: output_stream&, fmt: str, cursor: usize&) -> scan_result
+scan_to_placeholder(out: formatter&, fmt: str, cursor: usize&) -> scan_result
 {
     while(cursor < fmt.size()) {
         let ch = fmt[cursor];
@@ -55,7 +115,7 @@ scan_to_placeholder(out: output_stream&, fmt: str, cursor: usize&) -> scan_resul
                 return scan_result::placeholder;
             }
             if(fmt[next] == '{') {
-                let written = write_output_char(ref out, '{');
+                let written = out.write_char('{');
                 match written {
                     .ok => {},
                     .error(error) => {
@@ -73,7 +133,7 @@ scan_to_placeholder(out: output_stream&, fmt: str, cursor: usize&) -> scan_resul
                 return scan_result::error(format_error::invalid_escape);
             }
             if(fmt[next] == '}') {
-                let written = write_output_char(ref out, '}');
+                let written = out.write_char('}');
                 match written {
                     .ok => {},
                     .error(error) => {
@@ -85,7 +145,7 @@ scan_to_placeholder(out: output_stream&, fmt: str, cursor: usize&) -> scan_resul
                 return scan_result::error(format_error::invalid_escape);
             }
         } else {
-            let written = write_output_char(ref out, ch);
+            let written = out.write_char(ch);
             match written {
                 .ok => {},
                 .error(error) => {
@@ -98,152 +158,234 @@ scan_to_placeholder(out: output_stream&, fmt: str, cursor: usize&) -> scan_resul
     return scan_result::end;
 }
 
-write_usize_digits(out: output_stream&, value: usize) -> print_result
+write_u64_digits(out: formatter&, value: u64) -> display_result
 {
     if(value >= 10) {
-        let prefix = write_usize_digits(ref out, value / 10);
+        let prefix = write_u64_digits(ref out, value / 10);
         match prefix {
             .ok => {},
             .error(error) => {
-                return print_result::error(error);
+                return display_result::error(error);
             },
         };
     }
-    return write_output_char(ref out, "0123456789"[value % 10]);
+    return out.write_char("0123456789"[(value % 10) as usize]);
+}
+
+write_i64_digits_negative(out: formatter&, value: i64) -> display_result
+{
+    if(value <= -10) {
+        let prefix = write_i64_digits_negative(ref out, value / 10);
+        match prefix {
+            .ok => {},
+            .error(error) => {
+                return display_result::error(error);
+            },
+        };
+    }
+    return out.write_char("0123456789"[(0 - (value % 10)) as usize]);
+}
+
+write_i64(out: formatter&, value: i64) -> display_result
+{
+    if(value >= 0) {
+        return write_u64_digits(ref out, value as u64);
+    }
+    let sign = out.write_char('-');
+    match sign {
+        .ok => {},
+        .error(error) => {
+            return display_result::error(error);
+        },
+    };
+    return write_i64_digits_negative(ref out, value);
+}
+
+write_f64(out: formatter&, value: f64) -> display_result
+{
+    let positive = value;
+    if(positive < 0.0) {
+        let sign = out.write_char('-');
+        match sign {
+            .ok => {},
+            .error(error) => {
+                return display_result::error(error);
+            },
+        };
+        positive = 0.0 - positive;
+    }
+
+    let whole = positive as u64;
+    let whole_written = write_u64_digits(ref out, whole);
+    match whole_written {
+        .ok => {},
+        .error(error) => {
+            return display_result::error(error);
+        },
+    };
+
+    let dot = out.write_char('.');
+    match dot {
+        .ok => {},
+        .error(error) => {
+            return display_result::error(error);
+        },
+    };
+
+    let fraction = positive - (whole as f64);
+    let index: usize = 0;
+    while(index < 6) {
+        fraction = fraction * 10.0;
+        let digit = fraction as u64;
+        let written = out.write_char("0123456789"[digit as usize]);
+        match written {
+            .ok => {},
+            .error(error) => {
+                return display_result::error(error);
+            },
+        };
+        fraction = fraction - (digit as f64);
+        index += 1;
+    }
+    return display_result::ok;
 }
 
 impl display for str {
-    write_to(self const&, out: output_stream&) -> print_result
+    display(self const&, out: formatter&) -> display_result
     {
-        return write_output_str(ref out, self);
+        return out.write_str(self);
+    }
+}
+
+impl display for string {
+    display(self const&, out: formatter&) -> display_result
+    {
+        return out.write_str(self.as_str());
     }
 }
 
 impl display for char {
-    write_to(self const&, out: output_stream&) -> print_result
+    display(self const&, out: formatter&) -> display_result
     {
-        return write_output_char(ref out, self);
+        return out.write_char(self);
     }
 }
 
 impl display for bool {
-    write_to(self const&, out: output_stream&) -> print_result
+    display(self const&, out: formatter&) -> display_result
     {
         if(self) {
-            return write_output_str(ref out, "true");
+            return out.write_str("true");
         }
-        return write_output_str(ref out, "false");
+        return out.write_str("false");
     }
 }
 
-impl display for usize {
-    write_to(self const&, out: output_stream&) -> print_result
+impl display for i8 {
+    display(self const&, out: formatter&) -> display_result
     {
-        return write_usize_digits(ref out, self);
+        return write_i64(ref out, self as i64);
+    }
+}
+
+impl display for i16 {
+    display(self const&, out: formatter&) -> display_result
+    {
+        return write_i64(ref out, self as i64);
     }
 }
 
 impl display for i32 {
-    write_to(self const&, out: output_stream&) -> print_result
+    display(self const&, out: formatter&) -> display_result
     {
-        let value: i64 = self as i64;
-        if(value >= 0) {
-            return write_usize_digits(ref out, value as usize);
-        }
-        let sign = write_output_char(ref out, '-');
-        match sign {
-            .ok => {},
-            .error(error) => {
-                return print_result::error(error);
-            },
-        };
-        return write_usize_digits(ref out, (0 - value) as usize);
+        return write_i64(ref out, self as i64);
     }
 }
 
-export format_to<T...: display>(out: output_stream&, fmt: str, values: T...) -> print_result
+impl display for i64 {
+    display(self const&, out: formatter&) -> display_result
+    {
+        return write_i64(ref out, self);
+    }
+}
+
+impl display for isize {
+    display(self const&, out: formatter&) -> display_result
+    {
+        return write_i64(ref out, self as i64);
+    }
+}
+
+impl display for u8 {
+    display(self const&, out: formatter&) -> display_result
+    {
+        return write_u64_digits(ref out, self as u64);
+    }
+}
+
+impl display for u16 {
+    display(self const&, out: formatter&) -> display_result
+    {
+        return write_u64_digits(ref out, self as u64);
+    }
+}
+
+impl display for u32 {
+    display(self const&, out: formatter&) -> display_result
+    {
+        return write_u64_digits(ref out, self as u64);
+    }
+}
+
+impl display for u64 {
+    display(self const&, out: formatter&) -> display_result
+    {
+        return write_u64_digits(ref out, self);
+    }
+}
+
+impl display for usize {
+    display(self const&, out: formatter&) -> display_result
+    {
+        return write_u64_digits(ref out, self as u64);
+    }
+}
+
+impl display for f32 {
+    display(self const&, out: formatter&) -> display_result
+    {
+        return write_f64(ref out, self as f64);
+    }
+}
+
+impl display for f64 {
+    display(self const&, out: formatter&) -> display_result
+    {
+        return write_f64(ref out, self);
+    }
+}
+
+export format<T...: display>(fmt: str, values: T...) -> format_result
 {
+    let text = string{};
+    let out = formatter::buffer(ref text);
     let cursor: usize = 0;
     template for(let value : values...) {
         let scan = scan_to_placeholder(ref out, fmt, ref cursor);
         match scan {
             .placeholder => {},
             .end => {
-                return print_result::error(format_error::argument_too_many);
+                return format_result::error(format_error::argument_too_many);
             },
             .error(error) => {
-                return print_result::error(error);
+                return format_result::error(error);
             },
         };
-        let written = value.write_to(ref out);
+        let written = value.display(ref out);
         match written {
             .ok => {},
             .error(error) => {
-                return print_result::error(error);
-            },
-        };
-    }
-
-    let tail = scan_to_placeholder(ref out, fmt, ref cursor);
-    return match tail {
-        .placeholder => print_result::error(format_error::placeholder_too_few),
-        .end => print_result::ok,
-        .error(error) => print_result::error(error),
-    };
-}
-
-export print<T...: display>(fmt: str, values: T...) -> print_result
-{
-    let out = stdout();
-    let cursor: usize = 0;
-    template for(let value : values...) {
-        let scan = scan_to_placeholder(ref out, fmt, ref cursor);
-        match scan {
-            .placeholder => {},
-            .end => {
-                return print_result::error(format_error::argument_too_many);
-            },
-            .error(error) => {
-                return print_result::error(error);
-            },
-        };
-        let written = value.write_to(ref out);
-        match written {
-            .ok => {},
-            .error(error) => {
-                return print_result::error(error);
-            },
-        };
-    }
-
-    let tail = scan_to_placeholder(ref out, fmt, ref cursor);
-    return match tail {
-        .placeholder => print_result::error(format_error::placeholder_too_few),
-        .end => print_result::ok,
-        .error(error) => print_result::error(error),
-    };
-}
-
-export println<T...: display>(fmt: str, values: T...) -> print_result
-{
-    let out = stdout();
-    let cursor: usize = 0;
-    template for(let value : values...) {
-        let scan = scan_to_placeholder(ref out, fmt, ref cursor);
-        match scan {
-            .placeholder => {},
-            .end => {
-                return print_result::error(format_error::argument_too_many);
-            },
-            .error(error) => {
-                return print_result::error(error);
-            },
-        };
-        let written = value.write_to(ref out);
-        match written {
-            .ok => {},
-            .error(error) => {
-                return print_result::error(error);
+                return format_result::error(error);
             },
         };
     }
@@ -251,81 +393,186 @@ export println<T...: display>(fmt: str, values: T...) -> print_result
     let tail = scan_to_placeholder(ref out, fmt, ref cursor);
     match tail {
         .placeholder => {
-            return print_result::error(format_error::placeholder_too_few);
+            return format_result::error(format_error::placeholder_too_few);
         },
         .end => {},
         .error(error) => {
-            return print_result::error(error);
+            return format_result::error(error);
         },
     };
-    return write_output_char(ref out, '\n');
+    return format_result::ok(move text);
 }
 
-export eprint<T...: display>(fmt: str, values: T...) -> print_result
+export format_to<T...: display>(out: output_stream&, fmt: str, values: T...) -> display_result
 {
-    let out = stderr();
+    let writer = formatter::stream(ref out);
     let cursor: usize = 0;
     template for(let value : values...) {
-        let scan = scan_to_placeholder(ref out, fmt, ref cursor);
+        let scan = scan_to_placeholder(ref writer, fmt, ref cursor);
         match scan {
             .placeholder => {},
             .end => {
-                return print_result::error(format_error::argument_too_many);
+                return display_result::error(format_error::argument_too_many);
             },
             .error(error) => {
-                return print_result::error(error);
+                return display_result::error(error);
             },
         };
-        let written = value.write_to(ref out);
+        let written = value.display(ref writer);
         match written {
             .ok => {},
             .error(error) => {
-                return print_result::error(error);
+                return display_result::error(error);
             },
         };
     }
 
-    let tail = scan_to_placeholder(ref out, fmt, ref cursor);
+    let tail = scan_to_placeholder(ref writer, fmt, ref cursor);
     return match tail {
-        .placeholder => print_result::error(format_error::placeholder_too_few),
-        .end => print_result::ok,
-        .error(error) => print_result::error(error),
+        .placeholder => display_result::error(format_error::placeholder_too_few),
+        .end => display_result::ok,
+        .error(error) => display_result::error(error),
     };
 }
 
-export eprintln<T...: display>(fmt: str, values: T...) -> print_result
+export print<T...: display>(fmt: str, values: T...) -> display_result
 {
-    let out = stderr();
+    let out = stdout();
+    let writer = formatter::stream(ref out);
     let cursor: usize = 0;
     template for(let value : values...) {
-        let scan = scan_to_placeholder(ref out, fmt, ref cursor);
+        let scan = scan_to_placeholder(ref writer, fmt, ref cursor);
         match scan {
             .placeholder => {},
             .end => {
-                return print_result::error(format_error::argument_too_many);
+                return display_result::error(format_error::argument_too_many);
             },
             .error(error) => {
-                return print_result::error(error);
+                return display_result::error(error);
             },
         };
-        let written = value.write_to(ref out);
+        let written = value.display(ref writer);
         match written {
             .ok => {},
             .error(error) => {
-                return print_result::error(error);
+                return display_result::error(error);
             },
         };
     }
 
-    let tail = scan_to_placeholder(ref out, fmt, ref cursor);
+    let tail = scan_to_placeholder(ref writer, fmt, ref cursor);
+    return match tail {
+        .placeholder => display_result::error(format_error::placeholder_too_few),
+        .end => display_result::ok,
+        .error(error) => display_result::error(error),
+    };
+}
+
+export println<T...: display>(fmt: str, values: T...) -> display_result
+{
+    let out = stdout();
+    let writer = formatter::stream(ref out);
+    let cursor: usize = 0;
+    template for(let value : values...) {
+        let scan = scan_to_placeholder(ref writer, fmt, ref cursor);
+        match scan {
+            .placeholder => {},
+            .end => {
+                return display_result::error(format_error::argument_too_many);
+            },
+            .error(error) => {
+                return display_result::error(error);
+            },
+        };
+        let written = value.display(ref writer);
+        match written {
+            .ok => {},
+            .error(error) => {
+                return display_result::error(error);
+            },
+        };
+    }
+
+    let tail = scan_to_placeholder(ref writer, fmt, ref cursor);
     match tail {
         .placeholder => {
-            return print_result::error(format_error::placeholder_too_few);
+            return display_result::error(format_error::placeholder_too_few);
         },
         .end => {},
         .error(error) => {
-            return print_result::error(error);
+            return display_result::error(error);
         },
     };
-    return write_output_char(ref out, '\n');
+    return writer.write_char('\n');
+}
+
+export eprint<T...: display>(fmt: str, values: T...) -> display_result
+{
+    let out = stderr();
+    let writer = formatter::stream(ref out);
+    let cursor: usize = 0;
+    template for(let value : values...) {
+        let scan = scan_to_placeholder(ref writer, fmt, ref cursor);
+        match scan {
+            .placeholder => {},
+            .end => {
+                return display_result::error(format_error::argument_too_many);
+            },
+            .error(error) => {
+                return display_result::error(error);
+            },
+        };
+        let written = value.display(ref writer);
+        match written {
+            .ok => {},
+            .error(error) => {
+                return display_result::error(error);
+            },
+        };
+    }
+
+    let tail = scan_to_placeholder(ref writer, fmt, ref cursor);
+    return match tail {
+        .placeholder => display_result::error(format_error::placeholder_too_few),
+        .end => display_result::ok,
+        .error(error) => display_result::error(error),
+    };
+}
+
+export eprintln<T...: display>(fmt: str, values: T...) -> display_result
+{
+    let out = stderr();
+    let writer = formatter::stream(ref out);
+    let cursor: usize = 0;
+    template for(let value : values...) {
+        let scan = scan_to_placeholder(ref writer, fmt, ref cursor);
+        match scan {
+            .placeholder => {},
+            .end => {
+                return display_result::error(format_error::argument_too_many);
+            },
+            .error(error) => {
+                return display_result::error(error);
+            },
+        };
+        let written = value.display(ref writer);
+        match written {
+            .ok => {},
+            .error(error) => {
+                return display_result::error(error);
+            },
+        };
+    }
+
+    let tail = scan_to_placeholder(ref writer, fmt, ref cursor);
+    match tail {
+        .placeholder => {
+            return display_result::error(format_error::placeholder_too_few);
+        },
+        .end => {},
+        .error(error) => {
+            return display_result::error(error);
+        },
+    };
+    return writer.write_char('\n');
 }

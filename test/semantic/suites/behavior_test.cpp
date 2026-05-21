@@ -150,6 +150,20 @@ auto function_return_type(source_manager const& sources, parse_result const& par
     return {};
 }
 
+auto function_named(source_manager const& sources, parse_result const& parsed, std::string_view name) -> function_id
+{
+    auto source = ast_source_view{ sources };
+    auto const& unit = *parsed.root;
+    for(auto id : unit.functions) {
+        auto const& function = parsed.ast.node(id);
+        if(source.identifier(function.name) == name) {
+            return id;
+        }
+    }
+    test_parser::assert_true(false, std::format("{} should exist", name));
+    return {};
+}
+
 auto check_fixture_examples() -> void
 {
     check_fixture_example_group({ "basics/main.cp" });
@@ -174,21 +188,52 @@ auto check_io_semantics() -> void
 {
     auto accepted = analyze_with_std_io(
         "io_ok.cp",
-        R"(import std;
+        R"cp(import std;
+
+struct point {
+    x: i32;
+    y: i32;
+}
+
+impl display for point {
+    display(self const&, out: formatter&) -> display_result
+    {
+        return out.format("point({}, {})", x, y);
+    }
+}
 
 main() -> i32
 {
-    println("x = {}, label = {}", 1, "cp");
-    return 0;
-})"
+    let name = string{"cp"};
+    println(
+        "types {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}",
+        true,
+        'x',
+        "cp",
+        name,
+        -1 as i8,
+        -2 as i16,
+        -3,
+        -4 as i64,
+        -5 as isize,
+        1 as u8,
+        2 as u16,
+        3 as u32,
+        4 as u64,
+        5 as usize,
+        1.5
     );
-    test_parser::assert_true(accepted.accepted(), "std.io should accept builtin display concept impls");
+    println("custom = {}", point{ .x = 1, .y = 2 });
+    return 0;
+})cp"
+    );
+    test_parser::assert_true(accepted.accepted(), "std.io should accept builtin and string display concept impls");
 
     auto nested = analyze_with_std_io(
         "io_nested_generic_call_argument.cp",
         R"(import std;
 
-saw_result(result: print_result) -> bool
+saw_result(result: display_result) -> bool
 {
     return true;
 }
@@ -296,6 +341,98 @@ main() -> i32
     );
     test_parser::assert_true(checked.accepted(), "std sort should accept default, object, and lambda comparators");
     test_parser::assert_true(not checked.expression_operators.empty(), "call operator expressions should record selected overloads");
+}
+
+auto check_iota_semantics() -> void
+{
+    auto prefix_only = analyze_with_std_io(
+        "iota_prefix_only_incrementable.cp",
+        R"(import std;
+
+struct counter {
+    value: i32;
+}
+
+impl counter {
+    operator ==(self const&, rhs: this const&) -> bool
+    {
+        return value == rhs.value;
+    }
+
+    operator prefix ++(self&) -> this&
+    {
+        value += 1;
+        return ref self;
+    }
+}
+
+main() -> i32
+{
+    let values = iota(counter{ 0 }, counter{ 3 });
+    let total = 0;
+    for(let item : values) {
+        total += item.value;
+    }
+    return total;
+})"
+    );
+    test_parser::assert_true(prefix_only.accepted(), "std.ranges.iota should accept equality comparable prefix-only incrementable types");
+
+    auto postfix_only = analyze_with_std_io(
+        "iota_postfix_only_incrementable.cp",
+        R"(import std;
+
+struct counter {
+    value: i32;
+}
+
+impl counter {
+    operator ==(self const&, rhs: this const&) -> bool
+    {
+        return value == rhs.value;
+    }
+
+    operator postfix ++(self&) -> this
+    {
+        let old: counter = self;
+        value += 1;
+        return old;
+    }
+}
+
+main()
+{
+    let values = iota(counter{ 0 }, counter{ 3 });
+})"
+    );
+    test_parser::assert_true(
+        has_diagnostic(postfix_only, diagnostic_kind::missing_concept_item),
+        "std.ranges.iota should reject types without prefix ++");
+
+    auto missing_equality = analyze_with_std_io(
+        "iota_missing_equality.cp",
+        R"(import std;
+
+struct counter {
+    value: i32;
+}
+
+impl counter {
+    operator prefix ++(self&) -> this&
+    {
+        value += 1;
+        return ref self;
+    }
+}
+
+main()
+{
+    let values = iota(counter{ 0 }, counter{ 3 });
+})"
+    );
+    test_parser::assert_true(
+        has_diagnostic(missing_equality, diagnostic_kind::missing_concept_item),
+        "std.ranges.iota should reject types without equality comparison");
 }
 
 auto check_ordered_collections_semantics() -> void
@@ -611,6 +748,87 @@ main()
         auto parsed = parse_source(sources, "explicit_recursive_return.cp", "f() -> i32 { return f(); }");
         auto checked = analyze_single(sources, parsed);
         test_parser::assert_true(checked.accepted(), "explicit recursive return type should not need inference");
+    }
+}
+
+auto check_nrvo_and_direct_initializer_metadata() -> void
+{
+    auto sources = source_manager{};
+    auto parsed = parse_source(
+        sources,
+        "nrvo_metadata.cp",
+        R"(struct item {
+    value: i32;
+}
+
+make() -> item
+{
+    let result = item{ .value = 42 };
+    return result;
+}
+
+make_grouped() -> item
+{
+    let result = item{ .value = 42 };
+    return (result);
+}
+
+make_moved() -> item
+{
+    let result = item{ .value = 42 };
+    return move result;
+}
+
+make_field() -> i32
+{
+    let result = item{ .value = 42 };
+    return result.value;
+}
+
+choose(flag: bool) -> item
+{
+    let left = item{ .value = 1 };
+    let right = item{ .value = 2 };
+    if(flag) {
+        return left;
+    }
+    return right;
+}
+
+id(value: item) -> item
+{
+    return value;
+}
+
+main() -> i32
+{
+    let from_call = make();
+    let values = [1, 2, 3];
+    let tuple = (1, 2);
+    let aggregate = item{ .value = 42 };
+    return from_call.value + values[0] + tuple.0 + aggregate.value - 44;
+})");
+    auto checked = analyze_single(sources, parsed);
+    test_parser::assert_true(checked.accepted(), "NRVO metadata source should pass semantic analysis");
+
+    auto make = function_named(sources, parsed, "make");
+    auto grouped = function_named(sources, parsed, "make_grouped");
+    auto moved = function_named(sources, parsed, "make_moved");
+    auto field = function_named(sources, parsed, "make_field");
+    auto choose = function_named(sources, parsed, "choose");
+    auto id = function_named(sources, parsed, "id");
+    test_parser::assert_true(checked.nrvo_candidate_of(make).valid(), "return local should record an NRVO candidate");
+    test_parser::assert_true(checked.nrvo_candidate_of(grouped).valid(), "return (local) should record an NRVO candidate");
+    test_parser::assert_true(not checked.nrvo_candidate_of(moved).valid(), "return move local should not record NRVO");
+    test_parser::assert_true(not checked.nrvo_candidate_of(field).valid(), "return local.field should not record NRVO");
+    test_parser::assert_true(not checked.nrvo_candidate_of(choose).valid(), "different local returns should not record NRVO");
+    test_parser::assert_true(not checked.nrvo_candidate_of(id).valid(), "parameter returns should not record NRVO");
+
+    auto const& main_body = as<block_statement_syntax>(parsed.ast.node(parsed.ast.node(function_named(sources, parsed, "main")).body));
+    for(auto index : std::views::iota(0uz, 4uz)) {
+        test_parser::assert_true(
+            checked.direct_initializer_of(main_body.statements[index]),
+            "call and aggregate declarations should record direct initialization");
     }
 }
 
@@ -1921,6 +2139,109 @@ main() -> i32
     auto checked = analyze_single(sources, parsed);
     test_parser::assert_true(checked.accepted(), "operator overload source should pass semantic analysis");
     test_parser::assert_true(checked.expression_operators.size() >= 5uz, "operator expressions should record selected overloads");
+
+    auto update_result = analyze_one(
+        "operator_update_overload.cp",
+        R"(concept equality_comparable<Rhs = this> {
+    operator ==(self const&, rhs: Rhs const&) -> bool;
+}
+
+concept incrementable {
+    operator prefix ++(self&) -> this&;
+}
+
+accepts<T: equality_comparable<T> and T: incrementable>(value: T) -> T
+{
+    return value;
+}
+
+take_ref(value: i32&) -> void
+{
+    value = 5;
+}
+
+struct counter {
+    value: i32;
+}
+
+impl counter {
+    operator ==(self const&, rhs: this const&) -> bool
+    {
+        return value == rhs.value;
+    }
+
+    operator prefix ++(self&) -> this&
+    {
+        value += 1;
+        return ref self;
+    }
+
+    operator postfix ++(self&) -> this
+    {
+        let old: counter = self;
+        value += 1;
+        return old;
+    }
+
+    operator prefix --(self&) -> this&
+    {
+        value -= 1;
+        return ref self;
+    }
+
+    operator postfix --(self&) -> this
+    {
+        let old: counter = self;
+        value -= 1;
+        return old;
+    }
+}
+
+main() -> i32
+{
+    let number = 1;
+    take_ref(++number);
+    take_ref(--number);
+    let builtin = accepts<i32>(number);
+    let cursor = counter{ 0 };
+    let old = cursor++;
+    ++cursor;
+    let old_down = cursor--;
+    --cursor;
+    ++cursor;
+    ++cursor;
+    let checked = accepts<counter>(cursor);
+    if(old == counter{ 0 } and old_down == counter{ 2 } and checked == counter{ 2 }) {
+        return builtin;
+    }
+    return 0;
+})"
+    );
+    test_parser::assert_true(update_result.accepted(), "update operators and builtin concepts should pass semantic analysis");
+
+    auto compare_result = analyze_with_std_io(
+        "str_compare_concepts.cp",
+        R"(import std;
+
+accepts_eq<T: equality_comparable<T>>(value: T) -> T
+{
+    return value;
+}
+
+accepts_three_way<T: three_way_comparable<T, weak_ordering>>(value: T) -> T
+{
+    return value;
+}
+
+main()
+{
+    let text: str = "abc";
+    let same = accepts_eq<str>(text);
+    let ordered = accepts_three_way<str>(text);
+    let result = same <=> ordered;
+})"
+    );
+    test_parser::assert_true(compare_result.accepted(), "str should satisfy equality and three-way comparable concepts");
 }
 
 auto check_operator_import_semantics() -> void
@@ -2154,6 +2475,21 @@ auto check_negative_cases() -> void
         "struct slot { value: i32; } impl slot { operator [](self&, index: i32) -> i32 { return value; } } main() { let holder = slot{ 1 }; holder[0] = 2; }",
         invalid_assignment_target
     );
+    expect_diagnostic (
+        "incrementable_requires_prefix.cp",
+        "concept equality_comparable<Rhs = this> { operator ==(self const&, rhs: Rhs const&) -> bool; } concept incrementable { operator prefix ++(self&) -> this&; } struct value { item: i32; } impl value { operator ==(self const&, rhs: this const&) -> bool { return item == rhs.item; } } use<T: equality_comparable<T> and T: incrementable>(value: T) -> T { return value; } main() { let item = use<value>(value{ 1 }); }",
+        missing_concept_item
+    );
+    expect_diagnostic (
+        "incrementable_rejects_postfix_only.cp",
+        "concept equality_comparable<Rhs = this> { operator ==(self const&, rhs: Rhs const&) -> bool; } concept incrementable { operator prefix ++(self&) -> this&; } struct value { item: i32; } impl value { operator ==(self const&, rhs: this const&) -> bool { return item == rhs.item; } operator postfix ++(self&) -> this { return self; } } use<T: equality_comparable<T> and T: incrementable>(value: T) -> T { return value; } main() { let item = use<value>(value{ 1 }); }",
+        missing_concept_item
+    );
+    expect_diagnostic (
+        "equality_comparable_requires_equal.cp",
+        "concept equality_comparable<Rhs = this> { operator ==(self const&, rhs: Rhs const&) -> bool; } concept incrementable { operator prefix ++(self&) -> this&; } struct value { item: i32; } impl value { operator prefix ++(self&) -> this& { return ref self; } } use<T: equality_comparable<T> and T: incrementable>(value: T) -> T { return value; } main() { let item = use<value>(value{ 1 }); }",
+        missing_concept_item
+    );
 }
 
 } // namespace
@@ -2164,6 +2500,7 @@ auto main() -> int
     check_io_semantics();
     check_std_layered_imports();
     check_sort_and_callable_semantics();
+    check_iota_semantics();
     check_ordered_collections_semantics();
     check_error_handling_semantics();
     check_side_tables();
@@ -2171,6 +2508,7 @@ auto main() -> int
     check_tuple_member_semantics();
     check_fixed_type_ids();
     check_inferred_return_types();
+    check_nrvo_and_direct_initializer_metadata();
     check_contiguous_unit_batch();
     check_anonymous_modules();
     check_reference_pointer_types();

@@ -12,9 +12,9 @@
 - `std.collections`: 集合类型，重导出 `std.collections.vector`、`std.collections.map`、`std.collections.set`。
 - `std.text`: 文本类型，重导出 `std.text.str`、`std.text.string`。
 - `std.ranges`: ranges 聚合入口，重导出 `std.ranges.*` 的公共范围对象。
-- `std.compare`: 比较协议和默认比较器，定义 `mutable_object`、`strict_weak_order<T>`、`less<T>`、`greater<T>`。
+- `std.compare`: 比较协议和默认比较器，定义 `partial_ordering`、`weak_ordering`、`strong_ordering`、`mutable_object`、`strict_weak_order<T>`、`equality_comparable`、`three_way_comparable`、`less<T>`、`greater<T>`。
 - `std.algorithm`: 泛型算法聚合入口，第一版重导出 `std.algorithm.sort`。
-- `std.io`: 第一版格式化输出，提供 `print` / `println` / `eprint` / `eprintln`。
+- `std.io`: 第一版格式化输出，提供 `format` / `format_to` / `print` / `println` / `eprint` / `eprintln`。
 - `std.fs`: 第一版同步文件 IO，重导出 `std.fs.file`。
 
 具体实现模块：
@@ -28,10 +28,10 @@
 - `std.collections.map`: 定义基于 size-augmented 红黑树的有序唯一键 `map<K, V, Compare = less<K>>`。
 - `std.collections.set`: 定义基于同一红黑树内核的有序唯一键 `set<K, Compare = less<K>>`。
 - `std.collections.detail.rb_tree`: collections 内部红黑树内核，维护 subtree size 以支持 `nth` / `rank`。
-- `std.text.str`: 定义 compiler-recognized `str` 的 `size` / `data` 方法、`char` 迭代器和 `iterable` 实现。
+- `std.text.str`: 定义 compiler-recognized `str` 的 `size` / `data` 方法、`char` 迭代器、`iterable` 实现和按显式长度比较的字典序 operator。
 - `std.text.string`: 定义拥有字符存储的 `string`，维护 trailing `'\0'`，并可通过 `as_str()` 借出 `str`。
-- `std.ranges.iota`: 定义可被范围 `for` 消费的半开整数范围 `iota(begin, end)`。
-- `std.compare`: `strict_weak_order<T>` 要求比较器可用 `compare(left, right)` 形式调用，返回 `bool` 表示 `left` 是否排在 `right` 前；`less<T>` 和 `greater<T>` 分别基于 `<` 和 `>`。
+- `std.ranges.iota`: 定义可被范围 `for` 消费的泛型半开范围 `iota(begin, end)`，要求元素类型满足 `equality_comparable<T>` 和 `incrementable`。
+- `std.compare`: `partial_ordering`、`weak_ordering`、`strong_ordering` 表达三路比较结果；`strict_weak_order<T>` 要求比较器可用 `compare(left, right)` 形式调用；`equality_comparable<Rhs = this>` 要求 `==` 返回 `bool`；`three_way_comparable<Rhs = this, Category = weak_ordering>` 要求 `<=>` 返回指定比较分类；`incrementable` 要求前置 `++` 返回 `this&`；`less<T>` 和 `greater<T>` 分别基于 `<` 和 `>`。第一版 `sort` / `map` / `set` 默认比较器仍基于 `strict_weak_order`，不把 `partial_ordering` 作为默认有序容器比较结果。
 - `std.algorithm.sort`: `sort<T: mutable_object, Compare: strict_weak_order<T> = less<T>>(values: span<T>, compare: Compare = Compare{}) -> void` 使用三路快速排序实现。`span<T>` 必须借用可写元素，`T: mutable_object` 会拒绝只读元素视图。
 
 `map` 和 `set` 的插入不覆盖已有 key。重复插入返回已有 node，结果中的 `inserted` 为 `false`。`find` 返回 `optional`，`at` 和 `nth` 是前置条件访问，违反时通过 `assert`/`panic` 终止。
@@ -43,6 +43,7 @@
 - `{}`：消费一个满足 `display` 的参数。
 - `{{` / `}}`：输出字面量花括号。
 
-第一版 `display` 实现覆盖 `str`、`char`、`bool`、`i32` 和 `usize`。格式错误和输出错误通过
-`print_result` 返回，不做编译期格式字符串检查，也不支持宽度、精度、进制、位置参数、命名参数或 locale。
+第一版 `display` 使用 `display(self const&, formatter&) -> display_result` 协议，不直接写 stdout/stderr。
+内置 `display` 实现覆盖 `bool`、整数、浮点、`char`、`str`，并覆盖标准库 `string`。`format` 返回
+`format_result`，其它写入入口返回 `display_result`。不做编译期格式字符串检查，也不支持宽度、精度、进制、位置参数、命名参数或 locale。
 格式扫描按 `str.size()` 的长度语义进行，字符串中的中间 `'\0'` 不会截断输出。

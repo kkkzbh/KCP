@@ -655,6 +655,47 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 13, "reference parameter should alias caller slot");
 }
 
+auto check_reference_return_value_binding(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("reference-return-value");
+    auto source = dir / "reference_return_value.cp";
+    auto app = dir / "reference_return_value";
+    write_source(
+        source,
+        R"(import std;
+
+struct id {
+    value: usize;
+}
+
+make(value: usize) -> optional<id>
+{
+    return optional<id>::some(id{ .value = value });
+}
+
+main() -> i32
+{
+    let first = make(3 as usize);
+    if(not first.has_value()) {
+        return 1;
+    }
+    let value = *first;
+    let second = make(4 as usize);
+    if(not second.has_value()) {
+        return 2;
+    }
+    if(value.value != 3 as usize) {
+        return 3;
+    }
+    return 42;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile copied reference-return value bindings");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "plain let should copy a reference-returned value");
+}
+
 auto check_destructor_cleanup_paths(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("destructor-paths");
@@ -767,6 +808,45 @@ main() -> i32
     test_parser::assert_true(ret != std::string::npos and call < ret, "return path destructor call should precede ret");
 }
 
+auto check_nrvo_return_skips_returned_local_destructor(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("nrvo-return-destructor");
+    auto source = dir / "nrvo_return_destructor.cp";
+    auto app = dir / "nrvo_return_destructor";
+    write_source(
+        source,
+        R"(struct guard {
+    counter: i32*;
+}
+
+impl guard {
+    ~guard()
+    {
+        *counter += 1;
+    }
+}
+
+make(counter: i32*) -> guard
+{
+    let result = guard{ .counter = counter };
+    return result;
+}
+
+main() -> i32
+{
+    let count = 0;
+    {
+        let item = make(&count);
+    }
+    return count + 41;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile NRVO destructor binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "NRVO should not destroy the returned local in the callee");
+}
+
 auto check_function_pointer_memory_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("function-pointer-memory");
@@ -828,12 +908,17 @@ auto check_update_expression_binary(test_tools const& tools) -> void
     auto app = dir / "update_expression";
     write_source(
         source,
-        R"(main() -> i32
+        R"(set_to(value: i32&, next: i32) -> void
+{
+    value = next;
+}
+
+main() -> i32
 {
     let value = 10;
-    let prefix_inc = ++value;
+    let prefix_inc: i32 = ++value;
     let postfix_inc = value++;
-    let prefix_dec = --value;
+    let prefix_dec: i32 = --value;
     let postfix_dec = value--;
     let standalone = 40;
     standalone++;
@@ -841,6 +926,14 @@ auto check_update_expression_binary(test_tools const& tools) -> void
 
     if(value != 10) {
         return 1;
+    }
+    set_to(++value, 10);
+    if(value != 10) {
+        return 2;
+    }
+    set_to(--value, 10);
+    if(value != 10) {
+        return 3;
     }
 
     return prefix_inc + postfix_inc + prefix_dec + postfix_dec + standalone - 44;
@@ -1271,6 +1364,37 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "string range-for should iterate chars");
 }
 
+auto check_string_compare_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("string-compare");
+    auto source = dir / "string_compare.cp";
+    auto app = dir / "string_compare";
+    write_source(
+        source,
+        R"(import std;
+
+main() -> i32
+{
+    if(not ("abc" == "abc")) { return 1; }
+    if(not ("abc" != "abd")) { return 2; }
+    if(not ("abc" < "abd")) { return 3; }
+    if(not ("abc" < "abcd")) { return 4; }
+    if(not ("abcd" > "abc")) { return 5; }
+    if(not ("a\0b" > "a\0a")) { return 6; }
+    let ordering = "abc" <=> "abc";
+    return match ordering {
+        .less => 7,
+        .equivalent => 42,
+        .greater => 8,
+    };
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile string comparison binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "string comparison binary should use lexicographic str operators");
+}
+
 auto check_io_nul_string_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("io-nul-string");
@@ -1302,22 +1426,69 @@ auto check_io_print_binary(test_tools const& tools) -> void
     auto output = dir / "stdout.txt";
     write_source(
         source,
-        R"(import std;
+        R"cp(import std;
+
+struct point {
+    x: i32;
+    y: i32;
+}
+
+impl display for point {
+    display(self const&, out: formatter&) -> display_result
+    {
+        return out.format("point({}, {})", x, y);
+    }
+}
 
 main() -> i32
 {
+    let text = string{"owned"};
+    let formatted = format("buffer {}", text);
+    match formatted {
+        .ok(value) => {
+            println("formatted = {}", value);
+        },
+        .error(error) => {
+            return 1;
+        },
+    };
     println("language = {}, score = {}", "cp", -42);
     println("literal braces = {{}}");
     println("bool = {}", true);
+    println(
+        "builtins = {} {} {} {} {} {} {} {} {} {} {} {} {} {}",
+        'x',
+        -1 as i8,
+        -2 as i16,
+        -3,
+        -4 as i64,
+        -5 as isize,
+        1 as u8,
+        2 as u16,
+        3 as u32,
+        4 as u64,
+        5 as usize,
+        1.5,
+        2.5 as f32,
+        text
+    );
+    println("custom = {}", point{ .x = 7, .y = 9 });
     return 0;
-})"
+})cp"
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status == 0, "cp should compile std.io print binary");
     test_parser::assert_true(exit_code(run_stdout({ app.string() }, output)) == 0, "std.io print binary should run");
     test_parser::assert_true(
-        read_text(output) == "language = cp, score = -42\nliteral braces = {}\nbool = true\n",
+        read_text(output) == (
+            "formatted = buffer owned\n"
+            "language = cp, score = -42\n"
+            "literal braces = {}\n"
+            "bool = true\n"
+            "builtins = x -1 -2 -3 -4 -5 1 2 3 4 5 1.500000 2.500000 owned\n"
+            "custom = point(7, 9)\n"
+        ),
         "std.io print binary should write expected stdout"
     );
 }
@@ -1331,7 +1502,7 @@ auto check_io_format_errors_binary(test_tools const& tools) -> void
         source,
         R"(import std;
 
-is_placeholder_too_few(result: print_result) -> bool
+is_placeholder_too_few(result: display_result) -> bool
 {
     return match result {
         .ok => false,
@@ -1345,7 +1516,7 @@ is_placeholder_too_few(result: print_result) -> bool
     };
 }
 
-is_argument_too_many(result: print_result) -> bool
+is_argument_too_many(result: display_result) -> bool
 {
     return match result {
         .ok => false,
@@ -1359,7 +1530,7 @@ is_argument_too_many(result: print_result) -> bool
     };
 }
 
-is_invalid_escape(result: print_result) -> bool
+is_invalid_escape(result: display_result) -> bool
 {
     return match result {
         .ok => false,
@@ -1373,7 +1544,7 @@ is_invalid_escape(result: print_result) -> bool
     };
 }
 
-is_unsupported_specifier(result: print_result) -> bool
+is_unsupported_specifier(result: display_result) -> bool
 {
     return match result {
         .ok => false,
@@ -1521,6 +1692,68 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "operator overload binary should return computed value");
 }
 
+auto check_update_operator_overload_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("update-operator-overload");
+    auto source = dir / "update_operator_overload.cp";
+    auto app = dir / "update_operator_overload";
+    write_source(
+        source,
+        R"(struct counter {
+    value: i32;
+}
+
+impl counter {
+    operator prefix ++(self&) -> this&
+    {
+        value += 1;
+        return ref self;
+    }
+
+    operator postfix ++(self&) -> this
+    {
+        let old: counter = self;
+        value += 1;
+        return old;
+    }
+
+    operator prefix --(self&) -> this&
+    {
+        value -= 1;
+        return ref self;
+    }
+
+    operator postfix --(self&) -> this
+    {
+        let old: counter = self;
+        value -= 1;
+        return old;
+    }
+}
+
+set_to(value: counter&, next: i32) -> void
+{
+    value.value = next;
+}
+
+main() -> i32
+{
+    let cursor = counter{ 10 };
+    let prefix_inc: counter = ++cursor;
+    let postfix_inc = cursor++;
+    let prefix_dec: counter = --cursor;
+    let postfix_dec = cursor--;
+    set_to(++cursor, 30);
+    set_to(--cursor, 21);
+    return prefix_inc.value + postfix_inc.value + prefix_dec.value + postfix_dec.value + cursor.value - 23;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile custom update operator overload binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "custom update operator overload binary should return computed value");
+}
+
 auto check_std_sort_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("std-sort");
@@ -1571,6 +1804,76 @@ main() -> i32
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status == 0, "cp should compile std sort binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "std sort binary should return sorted checksum");
+}
+
+auto check_iota_public_import_binary(test_tools const& tools) -> void
+{
+    auto modules = std::array{ std::string_view{ "std.ranges" }, std::string_view{ "std.ranges.iota" } };
+    for(auto module_name : modules) {
+        auto dir = unique_temp_dir("iota-public-import");
+        auto source = dir / "iota_public_import.cp";
+        auto app = dir / "iota_public_import";
+        auto text = std::string{ "import " };
+        text.append(module_name);
+        text += R"(;
+
+main() -> i32
+{
+    let values = iota(0, 3);
+    let total = 0;
+    for(let item : values) {
+        total += item;
+    }
+    return total + 39;
+})";
+        write_source(source, text);
+
+        auto status = compile(tools, { source.string(), "-o", app.string() });
+        test_parser::assert_true(status == 0, "cp should compile iota through its public range modules");
+        test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "public iota imports should expose iterable support");
+    }
+}
+
+auto check_iota_custom_incrementable_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("iota-custom");
+    auto source = dir / "iota_custom.cp";
+    auto app = dir / "iota_custom";
+    write_source(
+        source,
+        R"(import std;
+
+struct counter {
+    value: i32;
+}
+
+impl counter {
+    operator ==(self const&, rhs: this const&) -> bool
+    {
+        return value == rhs.value;
+    }
+
+    operator prefix ++(self&) -> this&
+    {
+        value += 1;
+        return ref self;
+    }
+}
+
+main() -> i32
+{
+    let values = iota(counter{ 0 }, counter{ 3 });
+    let total = 0;
+    for(let item : values) {
+        total += item.value;
+    }
+    return total + 39;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile custom incrementable iota binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "custom incrementable iota should iterate by prefix ++");
 }
 
 auto check_std_map_set_binary(test_tools const& tools) -> void
@@ -2679,8 +2982,10 @@ auto main(int argc, char** argv) -> int
     check_i64_triple_pointer_read_write(tools);
     check_i64_pointer_reference_slot_alias(tools);
     check_reference_parameter_alias(tools);
+    check_reference_return_value_binding(tools);
     check_destructor_cleanup_paths(tools);
     check_return_destructor_ir(tools);
+    check_nrvo_return_skips_returned_local_destructor(tools);
     check_function_pointer_memory_binary(tools);
     check_pointer_difference_binary(tools);
     check_update_expression_binary(tools);
@@ -2697,12 +3002,16 @@ auto main(int argc, char** argv) -> int
     check_direct_iterator_consumes_original_binary(tools);
     check_string_index_binary(tools);
     check_string_iteration_binary(tools);
+    check_string_compare_binary(tools);
     check_io_print_binary(tools);
     check_io_nul_string_binary(tools);
     check_io_format_errors_binary(tools);
     check_file_io_binary(tools);
     check_operator_overload_binary(tools);
+    check_update_operator_overload_binary(tools);
     check_std_sort_binary(tools);
+    check_iota_public_import_binary(tools);
+    check_iota_custom_incrementable_binary(tools);
     check_std_map_set_binary(tools);
     check_compiler_lab_workload_binary(tools);
     check_compiler_lab_ll1_sets_binary(tools);
