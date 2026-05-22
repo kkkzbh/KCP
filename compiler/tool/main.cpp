@@ -34,6 +34,7 @@ struct cli_options
     std::string clang{ "clang" };
     std::vector<std::string> clang_args{};
     std::vector<std::string> link_args{};
+    bool release{};
     bool dump_mir{};
     bool verbose{};
     bool help{};
@@ -82,6 +83,7 @@ auto print_help(std::ostream& output) -> void
         << "  --emit <bin|ll|obj>      output kind, default bin\n"
         << "  --keep-ll <path>         keep LLVM IR when emitting obj/bin\n"
         << "  --keep-obj <path>        keep object file when emitting bin\n"
+        << "  --release                remove assert and enable backend release flags\n"
         << "\n"
         << "LLVM/clang control:\n"
         << "  --clang <path>           clang executable, default clang\n"
@@ -197,6 +199,10 @@ auto parse_options(std::span<char* const> arguments) -> parse_options_result
             result.options.emit = emit_kind::obj;
             continue;
         }
+        if(argument == "--release") {
+            result.options.release = true;
+            continue;
+        }
         if(argument == "--dump-mir") {
             result.options.dump_mir = true;
             continue;
@@ -296,6 +302,15 @@ auto append_all(std::vector<std::string>& output, std::vector<std::string> const
     output.insert(output.end(), values.begin(), values.end());
 }
 
+auto append_release_args(std::vector<std::string>& output, cli_options const& options) -> void
+{
+    if(not options.release) {
+        return;
+    }
+    output.emplace_back("-O3");
+    output.emplace_back("-DNDEBUG");
+}
+
 auto resolve_tool_path(std::string const& tool) -> std::string
 {
     if(tool.find('/') != std::string::npos) {
@@ -326,6 +341,7 @@ auto compile_object(cli_options const& options, std::filesystem::path const& ll_
 {
     auto command = std::vector<std::string>{ resolve_tool_path(options.clang) };
     command.emplace_back("-Wno-override-module");
+    append_release_args(command, options);
     append_all(command, options.clang_args);
     command.emplace_back("-c");
     command.emplace_back(ll_path.string());
@@ -338,6 +354,7 @@ auto link_binary(cli_options const& options, std::filesystem::path const& input_
 {
     auto command = std::vector<std::string>{ resolve_tool_path(options.clang) };
     command.emplace_back("-Wno-override-module");
+    append_release_args(command, options);
     append_all(command, options.clang_args);
     command.emplace_back(input_path.string());
     if(auto runtime = runtime_library_path()) {
@@ -513,7 +530,8 @@ auto main(int argc, char** argv) -> int
     auto ir = emit_ir(
         sources,
         std::span<parse_result const>{ parsed_units.data(), parsed_units.size() },
-        checked
+        checked,
+        ir_emit_options{ .elide_asserts = options.release }
     );
     if(not ir.accepted) {
         std::cerr << "codegen: " << ir.error << '\n';

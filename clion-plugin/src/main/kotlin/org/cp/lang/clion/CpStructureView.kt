@@ -27,7 +27,7 @@ class CpStructureViewFactory : PsiStructureViewFactory {
 private class CpStructureViewElement(
     element: PsiElement,
 ) : PsiTreeElementBase<PsiElement>(element) {
-    override fun getPresentableText(): String = element?.let { CpStructureEngine.label(it) } ?: "cp file"
+    override fun getPresentableText(): String = element?.let { CpStructureEngine.label(it) } ?: "cp 文件"
 
     override fun getChildrenBase(): Collection<StructureViewTreeElement> {
         val current = element ?: return emptyList()
@@ -76,7 +76,7 @@ object CpStructureEngine {
             CpElements.ENUM_CASE -> element.directChild(CpElements.ENUM_CASE_NAME)?.text.orEmpty()
             CpElements.VARIANT_CASE -> element.text.trim().removeSuffix(";")
             CpElements.REQUIRES_CLAUSE -> element.text
-            else -> "cp file"
+            else -> "cp 文件"
         }
 
     fun children(element: PsiElement): List<PsiElement> {

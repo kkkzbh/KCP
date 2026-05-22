@@ -170,6 +170,11 @@ export struct ir_emit_result
     std::string error{};
 };
 
+export struct ir_emit_options
+{
+    bool elide_asserts{};
+};
+
 struct function_lowerer
 {
     struct lowerer_state
@@ -181,12 +186,13 @@ struct function_lowerer
 
     using address_binding_state = std::pair<symbol_id, std::optional<ir_value_id>>;
 
-    function_lowerer(source_manager const& sources, std::span<parse_result const> units, semantic_result const& semantics, ir_module& module, std::size_t unit_index, function_id id, std::size_t context_index = 0uz) :
+    function_lowerer(source_manager const& sources, std::span<parse_result const> units, semantic_result const& semantics, ir_module& module, ir_emit_options options, std::size_t unit_index, function_id id, std::size_t context_index = 0uz) :
         ast_source(sources),
         units(units),
         parsed(&units[unit_index]),
         semantics(semantics),
         module(module),
+        options(options),
         unit_index(unit_index),
         function_id_value(id),
         context_index(context_index) {}
@@ -931,10 +937,10 @@ struct function_lowerer
             auto depth = cleanup_depth();
             context_stack.emplace_back(expansion.context_index);
             if(expansion.kind == semantic_template_for_expansion_kind::value) {
-                auto source_address = emit_symbol_address(expansion.pack_symbol);
+                auto source_address = address_of(expansion.pack_symbol);
                 if(not source_address.valid()) {
                     context_stack.pop_back();
-                    return fail("template for value expansion is missing source parameter address");
+                    return fail("template for value expansion is missing source parameter storage");
                 }
                 bind(expansion.binding_symbol, source_address);
             }
@@ -2477,6 +2483,9 @@ struct function_lowerer
                 return {};
             }
             case assert_: {
+                if(options.elide_asserts) {
+                    return emit_default_value(semantic_type_ids::unit);
+                }
                 auto condition = emit_expression(node.arguments.front());
                 if(not condition.valid()) {
                     return {};
@@ -3273,6 +3282,7 @@ struct function_lowerer
     parse_result const* parsed{};
     semantic_result const& semantics;
     ir_module& module;
+    ir_emit_options options{};
     std::size_t unit_index{};
     function_id function_id_value{};
     std::size_t context_index{};
@@ -3286,7 +3296,7 @@ struct function_lowerer
     std::string error{};
 };
 
-export auto emit_ir(source_manager const& sources, std::span<parse_result const> units, semantic_result const& semantics) -> ir_emit_result
+export auto emit_ir(source_manager const& sources, std::span<parse_result const> units, semantic_result const& semantics, ir_emit_options options = {}) -> ir_emit_result
 {
     auto result = ir_emit_result {
         .accepted = false,
@@ -3316,7 +3326,7 @@ export auto emit_ir(source_manager const& sources, std::span<parse_result const>
             if(semantics.generic_parameter_count_of(unit_index, function_id) != 0uz) {
                 continue;
             }
-            auto lowerer = function_lowerer{ sources, units, semantics, result.module, unit_index, function_id };
+            auto lowerer = function_lowerer{ sources, units, semantics, result.module, options, unit_index, function_id };
             if(not lowerer.lower()) {
                 result.error = std::move(lowerer.error);
                 return result;
@@ -3333,7 +3343,7 @@ export auto emit_ir(source_manager const& sources, std::span<parse_result const>
                 ) {
                     continue;
                 }
-                auto lowerer = function_lowerer{ sources, units, semantics, result.module, unit_index, function_id };
+                auto lowerer = function_lowerer{ sources, units, semantics, result.module, options, unit_index, function_id };
                 if(not lowerer.lower()) {
                     result.error = std::move(lowerer.error);
                     return result;
@@ -3351,7 +3361,7 @@ export auto emit_ir(source_manager const& sources, std::span<parse_result const>
                 ) {
                     continue;
                 }
-                auto lowerer = function_lowerer{ sources, units, semantics, result.module, unit_index, function_id };
+                auto lowerer = function_lowerer{ sources, units, semantics, result.module, options, unit_index, function_id };
                 if(not lowerer.lower()) {
                     result.error = std::move(lowerer.error);
                     return result;
@@ -3370,6 +3380,7 @@ export auto emit_ir(source_manager const& sources, std::span<parse_result const>
             units,
             semantics,
             result.module,
+            options,
             instance.key.unit_index,
             function_id{ instance.key.function_id_value },
             instance.context_index
@@ -3384,9 +3395,9 @@ export auto emit_ir(source_manager const& sources, std::span<parse_result const>
     return result;
 }
 
-export auto emit_ir(source_manager const& sources, parse_result const& parsed, semantic_result const& semantics) -> ir_emit_result
+export auto emit_ir(source_manager const& sources, parse_result const& parsed, semantic_result const& semantics, ir_emit_options options = {}) -> ir_emit_result
 {
-    return emit_ir(sources, std::span<parse_result const>{ &parsed, 1uz }, semantics);
+    return emit_ir(sources, std::span<parse_result const>{ &parsed, 1uz }, semantics, options);
 }
 
 auto opcode_name(ir_opcode opcode) -> std::string_view

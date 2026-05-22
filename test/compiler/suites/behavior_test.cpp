@@ -1251,9 +1251,18 @@ empty<T...>(values: T...) -> i32
     return total;
 }
 
+sum_ref<T...>(values: T const&...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + value;
+    }
+    return total;
+}
+
 main() -> i32
 {
-    return sum(10, 20, 9) + type_count<i32, bool, i32>() + empty();
+    return sum(10, 20, 9) + type_count<i32, bool, i32>() + empty() + sum_ref(0);
 })"
     );
 
@@ -2975,6 +2984,50 @@ auto check_panic_assert_binary(test_tools const& tools) -> void
     test_parser::assert_true(assert_false_status == 0, "cp should compile assert(false)");
     test_parser::assert_true(exit_code(run_stderr({ assert_false_app.string() }, assert_false_stderr)) != 0, "assert(false) should fail");
     test_parser::assert_true(read_text(assert_false_stderr).contains("panic: bad"), "assert(false) should write message to stderr");
+
+    auto release_assert_app = dir / "release_assert_false";
+    auto release_assert_status = compile(tools, { "--release", assert_false_source.string(), "-o", release_assert_app.string() });
+    test_parser::assert_true(release_assert_status == 0, "cp --release should compile assert(false)");
+    test_parser::assert_true(exit_code(run_status({ release_assert_app.string() })) == 0, "cp --release should elide assert(false)");
+
+    auto side_effect_source = dir / "release_assert_side_effect.cp";
+    auto side_effect_app = dir / "release_assert_side_effect";
+    write_source(
+        side_effect_source,
+        R"(mark(value: i32&) -> bool
+{
+    value += 1;
+    return false;
+}
+
+main() -> i32
+{
+    let count = 0;
+    assert(mark(count), "side effect");
+    return count + 42;
+})"
+    );
+    auto side_effect_status = compile(tools, { "--release", side_effect_source.string(), "-o", side_effect_app.string() });
+    test_parser::assert_true(side_effect_status == 0, "cp --release should compile assert side effect binary");
+    test_parser::assert_true(exit_code(run_status({ side_effect_app.string() })) == 42, "cp --release should not evaluate assert arguments");
+
+    auto release_ll = dir / "release_assert.ll";
+    auto release_ll_status = compile(tools, { "--release", assert_false_source.string(), "--emit", "ll", "-o", release_ll.string() });
+    test_parser::assert_true(release_ll_status == 0, "cp --release should emit LLVM IR for assert(false)");
+    auto release_ll_text = read_text(release_ll);
+    test_parser::assert_true(not release_ll_text.contains("assert.fail"), "cp --release LLVM IR should not contain assert fail blocks");
+    test_parser::assert_true(not release_ll_text.contains("bad"), "cp --release LLVM IR should not contain elided assert messages");
+
+    auto verbose_app = dir / "release_verbose";
+    auto verbose_stderr = dir / "release_verbose.stderr";
+    auto verbose_status = run_stderr(
+        { tools.cp.string(), "--release", "--verbose", assert_true_source.string(), "-o", verbose_app.string() },
+        verbose_stderr
+    );
+    test_parser::assert_true(verbose_status == 0, "cp --release --verbose should compile");
+    auto verbose_text = read_text(verbose_stderr);
+    test_parser::assert_true(verbose_text.contains("-O3"), "cp --release should pass -O3 to clang");
+    test_parser::assert_true(verbose_text.contains("-DNDEBUG"), "cp --release should pass -DNDEBUG to clang");
 }
 
 auto check_checked_index_panic_binary(test_tools const& tools) -> void

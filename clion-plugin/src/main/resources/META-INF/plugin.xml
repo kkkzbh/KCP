@@ -1,11 +1,10 @@
 <idea-plugin package="org.cp.lang.clion">
     <id>org.cp.lang.cp</id>
-    <name>cp Language Support</name>
+    <name>cp 语言支持</name>
     <vendor>kkkzbh</vendor>
     <description><![CDATA[
-        CLion support for the cp experimental language: file type registration,
-        rich syntax and semantic highlighting, comment handling, brace matching,
-        and native parser/semantic diagnostics.
+        为 cp 实验语言提供 CLion 支持：文件类型注册、语法和语义高亮、
+        注释处理、括号匹配，以及原生解析器/语义诊断。
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>

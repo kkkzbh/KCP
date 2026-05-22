@@ -88,10 +88,10 @@ object CpCompletionEngine {
 
         if (looksLikeImportName(text, offset)) {
             for (module in file.descendants(CpElements.MODULE_NAME)) {
-                add(module.text, type = "module")
+                add(module.text, type = "模块")
             }
             for (importName in file.descendants(CpElements.IMPORT_NAME)) {
-                add(importName.text, type = "module")
+                add(importName.text, type = "模块")
             }
             return items
         }
@@ -99,12 +99,12 @@ object CpCompletionEngine {
         if (looksLikeMemberAccess(text, offset)) {
             for (field in file.descendants(CpElements.FIELD_DECLARATION)) {
                 if (field.parent?.cpElementType() == CpElements.STRUCT_FIELD) {
-                    add(field.text, type = "field")
+                    add(field.text, type = "字段")
                 }
             }
             for (function in file.descendants(CpElements.FUNCTION_NAME)) {
                 if (function.parent?.parentByType(CpElements.IMPL_BLOCK) != null) {
-                    add(function.text, tail = "()", type = "method")
+                    add(function.text, tail = "()", type = "方法")
                 }
             }
             return items
@@ -115,27 +115,27 @@ object CpCompletionEngine {
         }
         for (parameter in file.descendants(CpElements.PARAMETER_NAME)) {
             if (parameter.textRange.startOffset < offset) {
-                add(parameter.text, type = "parameter")
+                add(parameter.text, type = "参数")
             }
         }
         for (local in file.descendants(CpElements.LOCAL_DECLARATION)) {
             if (local.textRange.startOffset < offset) {
-                add(local.text, type = "local")
+                add(local.text, type = "局部变量")
             }
         }
         for (function in file.descendants(CpElements.FUNCTION_NAME)) {
-            add(function.text, tail = "()", type = "function")
+            add(function.text, tail = "()", type = "函数")
         }
         for (type in file.descendants(CpElements.TYPE_NAME)) {
             if (type.isCompletionTypeDeclaration()) {
-                add(type.text, type = "type")
+                add(type.text, type = "类型")
             }
         }
         for (caseName in file.descendants(CpElements.VARIANT_CASE_NAME)) {
-            add(caseName.text, type = "variant case")
+            add(caseName.text, type = "变体分支")
         }
         for (caseName in file.descendants(CpElements.ENUM_CASE_NAME)) {
-            add(caseName.text, type = "enum case")
+            add(caseName.text, type = "枚举项")
         }
         return items
     }

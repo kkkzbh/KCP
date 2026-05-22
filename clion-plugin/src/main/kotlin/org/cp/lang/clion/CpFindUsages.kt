@@ -24,13 +24,13 @@ class CpFindUsagesProvider : FindUsagesProvider {
 
     override fun getType(element: PsiElement): String =
         when (element.cpUsageTargetElement()?.cpElementType()) {
-            CpElements.FUNCTION_NAME -> "function"
-            CpElements.PARAMETER_NAME -> "parameter"
-            CpElements.LOCAL_DECLARATION -> "local"
-            CpElements.TYPE_NAME -> "type"
-            CpElements.FIELD_DECLARATION -> "field"
-            CpElements.MODULE_NAME -> "module"
-            else -> "symbol"
+            CpElements.FUNCTION_NAME -> "函数"
+            CpElements.PARAMETER_NAME -> "参数"
+            CpElements.LOCAL_DECLARATION -> "局部变量"
+            CpElements.TYPE_NAME -> "类型"
+            CpElements.FIELD_DECLARATION -> "字段"
+            CpElements.MODULE_NAME -> "模块"
+            else -> "符号"
         }
 
     override fun getDescriptiveName(element: PsiElement): String =

@@ -36,11 +36,12 @@ import java.nio.file.Files
 import java.nio.file.Path
 import javax.swing.JComponent
 import javax.swing.JPanel
+import javax.swing.JTextField
 
 class CpRunConfigurationType : ConfigurationTypeBase(
     ID,
     "cp",
-    "Run a cp source file from its main function",
+    "从 main 函数运行 cp 源文件",
     NotNullLazyValue.createValue { AllIcons.RunConfigurations.Application },
 ) {
     init {
@@ -93,7 +94,7 @@ class CpRunLineMarkerContributor : RunLineMarkerContributor() {
         return Info(
             AllIcons.RunConfigurations.TestState.Run,
             ExecutorAction.getActions(0),
-        ) { "Run '${function.containingFile.name}'" }
+        ) { "运行 '${function.containingFile.name}'" }
     }
 }
 
@@ -111,25 +112,26 @@ class CpRunConfiguration(project: Project, factory: ConfigurationFactory, name: 
     RunConfigurationBase<RunConfigurationOptions>(project, factory, name) {
     var mainFile: String = ""
     var compilerPath: String = ""
+    var compileOptions: String = ""
     var workingDirectory: String = project.basePath ?: ""
 
     override fun getConfigurationEditor(): SettingsEditor<out RunConfiguration> = CpRunConfigurationEditor(project)
 
     override fun checkConfiguration() {
         val source = mainFile.toPathOrNull()
-            ?: throw RuntimeConfigurationError("Choose a cp main source file")
+            ?: throw RuntimeConfigurationError("请选择 cp main 源文件")
         if (!Files.isRegularFile(source)) {
-            throw RuntimeConfigurationError("cp main source file does not exist: $mainFile")
+            throw RuntimeConfigurationError("cp main 源文件不存在：$mainFile")
         }
         if (source.fileName.toString().substringAfterLast('.', "") != CpFileType.INSTANCE.defaultExtension) {
-            throw RuntimeConfigurationError("cp main source file must use .cp extension")
+            throw RuntimeConfigurationError("cp main 源文件必须使用 .cp 扩展名")
         }
         if (CpRunPaths.resolveCompiler(project, compilerPath, source) == null) {
-            throw RuntimeConfigurationError("cp compiler was not found; build the compiler target or set a compiler path")
+            throw RuntimeConfigurationError("找不到 cp 编译器；请构建编译器目标或设置编译器路径")
         }
         val resolvedWorkingDirectory = CpRunPaths.resolveWorkingDirectory(project, workingDirectory, source)
         if (!Files.isDirectory(resolvedWorkingDirectory)) {
-            throw RuntimeConfigurationError("working directory does not exist: $resolvedWorkingDirectory")
+            throw RuntimeConfigurationError("工作目录不存在：$resolvedWorkingDirectory")
         }
     }
 
@@ -140,6 +142,7 @@ class CpRunConfiguration(project: Project, factory: ConfigurationFactory, name: 
         super.readExternal(element)
         mainFile = element.getAttributeValue("mainFile", "")
         compilerPath = element.getAttributeValue("compilerPath", "")
+        compileOptions = element.getAttributeValue("compileOptions", "")
         workingDirectory = element.getAttributeValue("workingDirectory", project.basePath ?: "")
     }
 
@@ -147,6 +150,7 @@ class CpRunConfiguration(project: Project, factory: ConfigurationFactory, name: 
         super.writeExternal(element)
         element.setAttribute("mainFile", mainFile)
         element.setAttribute("compilerPath", compilerPath)
+        element.setAttribute("compileOptions", compileOptions)
         element.setAttribute("workingDirectory", workingDirectory)
     }
 }
@@ -154,6 +158,7 @@ class CpRunConfiguration(project: Project, factory: ConfigurationFactory, name: 
 private class CpRunConfigurationEditor(project: Project) : SettingsEditor<CpRunConfiguration>() {
     private val mainFileField = TextFieldWithBrowseButton()
     private val compilerPathField = TextFieldWithBrowseButton()
+    private val compileOptionsField = JTextField()
     private val workingDirectoryField = TextFieldWithBrowseButton()
     private val panel = JPanel(GridBagLayout())
 
@@ -161,33 +166,36 @@ private class CpRunConfigurationEditor(project: Project) : SettingsEditor<CpRunC
         mainFileField.addBrowseFolderListener(
             project,
             FileChooserDescriptorFactory.singleFile()
-                .withTitle("Select cp main source file")
-                .withExtensionFilter("cp source file", CpFileType.INSTANCE.defaultExtension),
+                .withTitle("选择 cp main 源文件")
+                .withExtensionFilter("cp 源文件", CpFileType.INSTANCE.defaultExtension),
         )
         compilerPathField.addBrowseFolderListener(
             project,
             FileChooserDescriptorFactory.singleFile()
-                .withTitle("Select cp compiler"),
+                .withTitle("选择 cp 编译器"),
         )
         workingDirectoryField.addBrowseFolderListener(
             project,
             FileChooserDescriptorFactory.createSingleFolderDescriptor()
-                .withTitle("Select working directory"),
+                .withTitle("选择工作目录"),
         )
-        addRow(0, "Main file:", mainFileField)
-        addRow(1, "Compiler path:", compilerPathField)
-        addRow(2, "Working directory:", workingDirectoryField)
+        addRow(0, "主文件：", mainFileField)
+        addRow(1, "编译器路径：", compilerPathField)
+        addRow(2, "编译选项：", compileOptionsField)
+        addRow(3, "工作目录：", workingDirectoryField)
     }
 
     override fun resetEditorFrom(configuration: CpRunConfiguration) {
         mainFileField.text = configuration.mainFile
         compilerPathField.text = configuration.compilerPath
+        compileOptionsField.text = configuration.compileOptions
         workingDirectoryField.text = configuration.workingDirectory
     }
 
     override fun applyEditorTo(configuration: CpRunConfiguration) {
         configuration.mainFile = mainFileField.text.trim()
         configuration.compilerPath = compilerPathField.text.trim()
+        configuration.compileOptions = compileOptionsField.text.trim()
         configuration.workingDirectory = workingDirectoryField.text.trim()
     }
 
@@ -220,9 +228,9 @@ private class CpRunCommandLineState(environment: ExecutionEnvironment, private v
     CommandLineState(environment) {
     override fun startProcess(): ProcessHandler {
         val source = configuration.mainFile.toPathOrNull()
-            ?: throw ExecutionException("Choose a cp main source file")
+            ?: throw ExecutionException("请选择 cp main 源文件")
         val compiler = CpRunPaths.resolveCompiler(configuration.project, configuration.compilerPath, source)
-            ?: throw ExecutionException("cp compiler was not found")
+            ?: throw ExecutionException("找不到 cp 编译器")
         val outputDir = Files.createTempDirectory("cp-run-")
         val executable = outputDir.resolve(source.fileName.toString().removeSuffix(".cp"))
         val stdlibRoot = CpRunPaths.resolveStdlibRoot(configuration.project, source, compiler)
@@ -239,15 +247,25 @@ private class CpRunCommandLineState(environment: ExecutionEnvironment, private v
         return OSProcessHandler(commandLine)
     }
 
-    private fun buildScript(compiler: Path, sources: List<Path>, executable: Path): String {
-        val sourceArguments = sources.joinToString(" ") { shellQuote(it.toString()) }
-        return listOf(
-            "set -e",
-            "mkdir -p ${shellQuote(executable.parent.toString())}",
-            "${shellQuote(compiler.toString())} $sourceArguments -o ${shellQuote(executable.toString())}",
-            shellQuote(executable.toString()),
-        ).joinToString("\n")
-    }
+    private fun buildScript(compiler: Path, sources: List<Path>, executable: Path): String =
+        buildCpRunScript(compiler, sources, configuration.compileOptions, executable)
+}
+
+internal fun buildCpRunScript(compiler: Path, sources: List<Path>, compileOptions: String, executable: Path): String {
+    val sourceArguments = sources.joinToString(" ") { shellQuote(it.toString()) }
+    val compileCommand = listOf(
+        shellQuote(compiler.toString()),
+        compileOptions.trim(),
+        sourceArguments,
+        "-o",
+        shellQuote(executable.toString()),
+    ).filter { it.isNotBlank() }.joinToString(" ")
+    return listOf(
+        "set -e",
+        "mkdir -p ${shellQuote(executable.parent.toString())}",
+        compileCommand,
+        shellQuote(executable.toString()),
+    ).joinToString("\n")
 }
 
 internal object CpRunPaths {

@@ -17,7 +17,7 @@ class CpIntegrationTest {
         assertEquals("cp", CpLanguage.id)
         assertEquals("cp", CpFileType.INSTANCE.name)
         assertEquals("cp", CpFileType.INSTANCE.defaultExtension)
-        assertEquals("cp source file", CpFileType.INSTANCE.description)
+        assertEquals("cp 源文件", CpFileType.INSTANCE.description)
     }
 
     @Test
@@ -445,6 +445,18 @@ class CpIntegrationTest {
                 stream.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists)
             }
         }
+    }
+
+    @Test
+    fun runScriptIncludesCompileOptionsBeforeSources() {
+        val script = buildCpRunScript(
+            compiler = Path.of("/tool/cp"),
+            sources = listOf(Path.of("/project/main.cp"), Path.of("/project/math.cp")),
+            compileOptions = "--release --clang-arg -O0",
+            executable = Path.of("/tmp/cp run/main"),
+        )
+
+        assertTrue(script.contains("'/tool/cp' --release --clang-arg -O0 '/project/main.cp' '/project/math.cp' -o '/tmp/cp run/main'"))
     }
 
     @Test

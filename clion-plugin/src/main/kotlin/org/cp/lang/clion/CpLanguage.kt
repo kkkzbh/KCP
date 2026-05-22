@@ -9,7 +9,7 @@ object CpLanguage : Language("cp")
 class CpFileType private constructor() : LanguageFileType(CpLanguage) {
     override fun getName(): String = "cp"
 
-    override fun getDescription(): String = "cp source file"
+    override fun getDescription(): String = "cp 源文件"
 
     override fun getDefaultExtension(): String = "cp"
 

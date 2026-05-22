@@ -64,8 +64,8 @@ intellijPlatform {
         name = providers.gradleProperty("pluginName")
         version = providers.gradleProperty("pluginVersion")
         description = """
-            Rich highlighting and parser/semantic diagnostics for the cp experimental language.
-            The editor lexer runs inside CLion and project-level frontend analysis is delegated to the native cp helper.
+            为 cp 实验语言提供丰富高亮和解析器/语义诊断。
+            编辑器词法分析在 CLion 内运行，项目级前端分析委托给原生 cp 辅助程序。
         """.trimIndent()
 
         ideaVersion {
