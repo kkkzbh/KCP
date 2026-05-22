@@ -69,6 +69,7 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
     auto old_scopes = scopes;
     auto old_type_scopes = type_scopes;
     auto old_value_packs = std::move(active_value_packs);
+    auto old_forward_parameters = std::move(active_forward_parameters);
     auto old_loops = loops;
     auto old_template_for_depth = active_template_for_depth;
 
@@ -80,6 +81,7 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
     active_type_substitutions = substitutions;
     active_type_pack_substitutions = pack_substitutions;
     active_value_packs.clear();
+    active_forward_parameters.clear();
     active_template_for_depth = 0uz;
 
     auto restore_state = [&] {
@@ -90,6 +92,7 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
         scopes = std::move(old_scopes);
         type_scopes = std::move(old_type_scopes);
         active_value_packs = std::move(old_value_packs);
+        active_forward_parameters = std::move(old_forward_parameters);
         loops = std::move(old_loops);
         active_template_for_depth = old_template_for_depth;
         active_ast = old_ast;
@@ -112,6 +115,7 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
     active_self = {};
 
     auto& signature = result.signatures[signature_id.value];
+    auto const* instance = result.function_instance_of(function_symbol);
     auto returns = return_state{};
     if(not is_error(signature.returns)) {
         returns.declared_return = signature.returns;
@@ -184,6 +188,26 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
         );
         if(symbol.valid()) {
             result.parameter_bindings[parameter_key(parameter.name)] = symbol;
+            auto const* reference = std::get_if<reference_type>(&result.types.get(signature.parameters[signature_parameter_index - 1uz]));
+            if(
+                reference != nullptr
+                and instance != nullptr
+                and index < instance->key.forward_rvalues.size()
+                and function.parameters[index].type
+                and std::holds_alternative<reference_type>(result.types.get(lower_type(*active_ast, *function.parameters[index].type)))
+            ) {
+                auto source_reference = std::get_if<reference_type>(&result.types.get(lower_type(*active_ast, *function.parameters[index].type)));
+                if(source_reference != nullptr and source_reference->reference_kind == reference_type::kind::forward) {
+                    active_forward_parameters.emplace(symbol, instance->key.forward_rvalues[index]);
+                }
+            } else if(
+                reference != nullptr
+                and instance != nullptr
+                and index < instance->key.forward_rvalues.size()
+                and function.parameters[index].inferred_reference_is_forward
+            ) {
+                active_forward_parameters.emplace(symbol, instance->key.forward_rvalues[index]);
+            }
             if(name == "self") {
                 active_self = symbol;
             }

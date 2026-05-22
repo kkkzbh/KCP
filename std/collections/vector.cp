@@ -1,6 +1,7 @@
 export module std.collections.vector;
 
 import std.memory.buffer;
+import std.memory.span;
 import std.core.iter;
 import std.core.option;
 
@@ -324,4 +325,8 @@ impl iterable for vector<T> {
     {
         return vector_iter<T>{ .current = storage.data(), .end = storage.data() + len };
     }
+}
+
+impl<T> contiguous_mutable_range for vector<T> {
+    type item = T;
 }

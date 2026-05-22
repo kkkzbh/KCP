@@ -278,6 +278,14 @@ auto semantic_analyzer::infer_expression_type(ast_arena const& ast, expr_id id, 
             },
             [&](unary_expr_syntax const& node) {
                 auto operand = infer_expression_type(ast, node.operand, std::nullopt);
+                if(node.operator_kind == token_kind::kw_const and node.const_ref) {
+                    return expression_info {
+                        .type = result.types.intern(reference_type { read_type(operand.type), true }),
+                        .is_lvalue = true,
+                        .is_const = true,
+                        .explicit_borrow = true,
+                    };
+                }
                 return unary_type(node.operator_kind, node.position, operand);
             },
             [&](binary_expr_syntax const& node) {

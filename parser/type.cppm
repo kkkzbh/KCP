@@ -197,10 +197,11 @@ auto parser::parse_type_length_argument() -> std::optional<type_argument_syntax>
 
 auto parser::finish_type_suffix(type_syntax type) -> std::optional<type_id>
 {
-    if(check_any({ token_kind::kw_const, token_kind::kw_like })) {
+    if(check_any({ token_kind::kw_const, token_kind::kw_like, token_kind::kw_forward })) {
         auto qualifier = consume();
         type.is_const = qualifier.kind == token_kind::kw_const;
         type.is_like = qualifier.kind == token_kind::kw_like;
+        type.is_forward = qualifier.kind == token_kind::kw_forward;
         type.full_span = combine_spans(type.full_span, qualifier.span);
     }
 
@@ -214,7 +215,7 @@ auto parser::finish_type_suffix(type_syntax type) -> std::optional<type_id>
         auto suffix = consume();
         type.suffix_operators.emplace_back(suffix.kind);
         type.full_span = combine_spans(type.full_span, suffix.span);
-    } else if(check(token_kind::kw_move)) {
+    } else if(check_any({ token_kind::kw_move, token_kind::kw_forward })) {
         auto suffix = consume();
         auto amp = expect(token_kind::amp);
         if(not amp) {

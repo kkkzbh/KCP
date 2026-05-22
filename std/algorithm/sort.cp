@@ -62,7 +62,12 @@ quick_sort_range<T: mutable_object, Compare: strict_weak_order<T>>(values: span<
     quick_sort_range(values, greater_begin, last, compare);
 }
 
-export sort<T: mutable_object, Compare: strict_weak_order<T> = less<T>>(values: span<T>, compare: Compare = Compare{}) -> void
+sort_span<T: mutable_object, Compare: strict_weak_order<T> = less<T>>(values: span<T>, compare: Compare = Compare{}) -> void
 {
     quick_sort_range(values, 0 as usize, values.size(), compare);
+}
+
+export sort<R: contiguous_mutable_range, Compare: strict_weak_order<R::item> = less<R::item>>(values: R forward&, compare: Compare = Compare{}) -> void
+{
+    sort_span(span<R::item>{values.data(), values.size()}, compare);
 }

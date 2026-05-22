@@ -44,6 +44,7 @@ export enum class token_kind
     kw_ref,      ///< `ref` 关键字。
     kw_move,     ///< `move` 关键字。
     kw_like,     ///< `like` 关键字。
+    kw_forward,  ///< `forward` 关键字。
     kw_new,      ///< `new` 关键字。
     kw_delete,   ///< `delete` 关键字。
 
@@ -132,6 +133,7 @@ export auto constexpr token_name_table = std::to_array<std::pair<token_kind, std
     { token_kind::kw_ref, "kw_ref" },
     { token_kind::kw_move, "kw_move" },
     { token_kind::kw_like, "kw_like" },
+    { token_kind::kw_forward, "kw_forward" },
     { token_kind::kw_new, "kw_new" },
     { token_kind::kw_delete, "kw_delete" },
     { token_kind::l_paren, "l_paren" },

@@ -234,7 +234,7 @@ impl i32 {
 `self` 参数规则：
 
 - 接收者参数必须是第一个参数。
-- 接收者参数写作 `self`、`self&`、`self like&`、`self const&` 或 `self move&`，分别表示当前类型、当前类型可写引用、receiver-const 传播引用、当前类型 const 引用和当前类型移动引用。
+- 接收者参数写作 `self`、`self&`、`self like&`、`self const&` 或 `self move&`，分别表示当前类型、当前类型可写引用、receiver-const 传播引用、当前类型 const 引用和当前类型移动引用。本轮不支持 `self forward&`。
 - `self const&` 只能读字段，不能写字段。
 - `self&` 可以读写字段。
 - `self like&` 可由可写 receiver 或 const receiver 调用；函数体按两种 receiver 视图检查，并把 `T like*`、`T like&` 等返回类型展开为对应的可写或 const 类型。完整规则见 [ownership.md](ownership.md)。

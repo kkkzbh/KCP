@@ -285,10 +285,11 @@ export struct semantic_function_instance_key
 {
     constexpr semantic_function_instance_key() = default;
 
-    semantic_function_instance_key(std::size_t source_unit, function_id source_function, std::vector<semantic_type_id> instance_type_arguments) :
+    semantic_function_instance_key(std::size_t source_unit, function_id source_function, std::vector<semantic_type_id> instance_type_arguments, std::vector<bool> instance_forward_rvalues = {}) :
         unit_index(source_unit),
         function_id_value(source_function.value),
-        type_arguments(std::move(instance_type_arguments)) {}
+        type_arguments(std::move(instance_type_arguments)),
+        forward_rvalues(std::move(instance_forward_rvalues)) {}
 
     auto constexpr operator==(semantic_function_instance_key const&) const -> bool = default;
     auto constexpr operator<=>(semantic_function_instance_key const&) const = default;
@@ -296,6 +297,7 @@ export struct semantic_function_instance_key
     std::size_t unit_index{};
     std::uint32_t function_id_value{};
     std::vector<semantic_type_id> type_arguments{};
+    std::vector<bool> forward_rvalues{};
 };
 
 export struct semantic_function_instance

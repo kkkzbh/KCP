@@ -1497,6 +1497,7 @@ auto parser::parse_parameter() -> std::optional<parameter_syntax>
         auto is_reference = false;
         auto is_like = false;
         auto is_move = false;
+        auto is_forward = false;
         auto end = name->span;
         if(check(token_kind::kw_const)) {
             is_const = true;
@@ -1510,11 +1511,12 @@ auto parser::parse_parameter() -> std::optional<parameter_syntax>
         } else if(check(token_kind::amp)) {
             is_reference = true;
             end = consume().span;
-        } else if(check_any({ token_kind::kw_like, token_kind::kw_move })) {
+        } else if(check_any({ token_kind::kw_like, token_kind::kw_move, token_kind::kw_forward })) {
             auto qualifier = consume();
             is_reference = true;
             is_like = qualifier.kind == token_kind::kw_like;
             is_move = qualifier.kind == token_kind::kw_move;
+            is_forward = qualifier.kind == token_kind::kw_forward;
             auto amp = expect(token_kind::amp);
             if(not amp) {
                 return std::nullopt;
@@ -1528,6 +1530,7 @@ auto parser::parse_parameter() -> std::optional<parameter_syntax>
             .self_is_reference = is_reference,
             .self_is_like = is_like,
             .self_is_move = is_move,
+            .self_is_forward = is_forward,
             .name = name->span,
         };
     }
@@ -1537,6 +1540,7 @@ auto parser::parse_parameter() -> std::optional<parameter_syntax>
     auto inferred_is_reference = false;
     auto inferred_reference_is_const = false;
     auto inferred_reference_is_move = false;
+    auto inferred_reference_is_forward = false;
     auto end = name->span;
     if(check(token_kind::colon)) {
         consume();
@@ -1564,14 +1568,15 @@ auto parser::parse_parameter() -> std::optional<parameter_syntax>
     } else if(check(token_kind::amp)) {
         inferred_is_reference = true;
         end = consume().span;
-    } else if(check(token_kind::kw_move)) {
-        consume();
+    } else if(check_any({ token_kind::kw_move, token_kind::kw_forward })) {
+        auto qualifier = consume();
         auto amp = expect(token_kind::amp);
         if(not amp) {
             return std::nullopt;
         }
         inferred_is_reference = true;
-        inferred_reference_is_move = true;
+        inferred_reference_is_move = qualifier.kind == token_kind::kw_move;
+        inferred_reference_is_forward = qualifier.kind == token_kind::kw_forward;
         end = amp->span;
     }
     if(not type and check(token_kind::colon)) {
@@ -1606,6 +1611,7 @@ auto parser::parse_parameter() -> std::optional<parameter_syntax>
         .inferred_is_reference = inferred_is_reference,
         .inferred_reference_is_const = inferred_reference_is_const,
         .inferred_reference_is_move = inferred_reference_is_move,
+        .inferred_reference_is_forward = inferred_reference_is_forward,
         .name = name->span,
         .type = type,
         .default_value = default_value,

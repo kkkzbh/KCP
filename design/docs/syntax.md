@@ -173,12 +173,17 @@ add(left, right) -> i32
 
 ## 所有权、借用和移动
 
-cp 默认按普通 copy 语义传值。需要借用时显式写 `ref` / `const ref`，需要转移所有权时显式写 `move`。
+cp 默认按普通 copy 语义传值。需要借用时显式写 `ref` / `const ref`，需要转移所有权时显式写 `move`，需要在泛型中保留实参值类别时写 `forward`。
 
 ```cp
 take(value: string move&) -> string
 {
     return move value;
+}
+
+relay<T>(value: T forward&) -> T
+{
+    return forward value;
 }
 
 use_text(text: string const&) -> usize

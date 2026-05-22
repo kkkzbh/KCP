@@ -195,6 +195,30 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 5, "member default argument should use the declared expression");
 }
 
+auto check_ufcs_receiver_conversion_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("ufcs-receiver-conversion");
+    auto source = dir / "ufcs_receiver_conversion.cp";
+    auto app = dir / "ufcs_receiver_conversion";
+    write_source(
+        source,
+R"(wide(value: i64) -> i64
+{
+    return value + 1;
+}
+
+main() -> i32
+{
+    let value: i32 = 41;
+    return value.wide() as i32;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile UFCS receiver implicit conversion");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "UFCS receiver should be converted before the call");
+}
+
 auto check_emit_ll(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("ll");
@@ -1845,44 +1869,117 @@ auto check_std_sort_binary(test_tools const& tools) -> void
 main() -> i32
 {
     let values = vector<i32>{};
-    values.push_back(20);
-    values.push_back(19);
-    values.push_back(18);
-    values.push_back(17);
-    values.push_back(16);
-    values.push_back(15);
-    values.push_back(14);
-    values.push_back(13);
-    values.push_back(12);
-    values.push_back(11);
-    values.push_back(10);
-    values.push_back(9);
-    values.push_back(8);
-    values.push_back(7);
-    values.push_back(6);
-    values.push_back(5);
-    values.push_back(4);
     values.push_back(3);
-    values.push_back(2);
     values.push_back(1);
-    sort(span<i32>{values.data(), values.size()});
-    if(values[0 as usize] != 1 or values[10 as usize] != 11 or values[19 as usize] != 20) {
+    values.push_back(2);
+    sort(values);
+    if(values[0 as usize] != 1 or values[1 as usize] != 2 or values[2 as usize] != 3) {
         return 1;
     }
-    sort(span<i32>{values.data(), values.size()}, f(left: i32 const&, right: i32 const&) -> bool {
-        left > right
-    });
-    if(values[0 as usize] != 20 or values[10 as usize] != 10 or values[19 as usize] != 1) {
+    values.sort(greater<i32>{});
+    if(values[0 as usize] != 3 or values[1 as usize] != 2 or values[2 as usize] != 1) {
         return 2;
     }
-    sort(span<i32>{values.data(), values.size()}, greater<i32>{});
-    return values[0 as usize] + values[10 as usize] * 2 + values[19 as usize] * 2;
+    sort(span<i32>{values.data(), values.size()}, f(left: i32 const&, right: i32 const&) -> bool {
+        left < right
+    });
+    if(values[0 as usize] != 1 or values[1 as usize] != 2 or values[2 as usize] != 3) {
+        return 3;
+    }
+
+    let fixed: [i32; 4] = [4, 1, 3, 2];
+    sort(fixed);
+    if(fixed[0 as usize] != 1 or fixed[1 as usize] != 2 or fixed[2 as usize] != 3 or fixed[3 as usize] != 4) {
+        return 4;
+    }
+    fixed.sort(f(left: i32 const&, right: i32 const&) -> bool {
+        left > right
+    });
+    if(fixed[0 as usize] != 4 or fixed[1 as usize] != 3 or fixed[2 as usize] != 2 or fixed[3 as usize] != 1) {
+        return 5;
+    }
+
+    let text = string{"cba"};
+    sort(text);
+    if(text.size() != 3 or text[0 as usize] != 'a' or text[1 as usize] != 'b' or text[2 as usize] != 'c') {
+        return 6;
+    }
+    if(*(text.data() + text.size()) != '\0') {
+        return 7;
+    }
+    text.sort(greater<char>{});
+    if(text.size() != 3 or text[0 as usize] != 'c' or text[1 as usize] != 'b' or text[2 as usize] != 'a') {
+        return 8;
+    }
+    if(*(text.data() + text.size()) != '\0') {
+        return 9;
+    }
+
+    return values[0 as usize] + values[1 as usize] * 10 + values[2 as usize] * 7;
 })"
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status == 0, "cp should compile std sort binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "std sort binary should return sorted checksum");
+}
+
+auto check_forward_reference_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("forward-reference");
+    auto source = dir / "forward_reference.cp";
+    auto app = dir / "forward_reference";
+    write_source(
+        source,
+        R"(import std;
+
+sink_ref(value: i32&) -> i32
+{
+    value += 1;
+    return value;
+}
+
+sink_move(value: i32 move&) -> i32
+{
+    return value + 10;
+}
+
+relay_ref<T>(value: T forward&) -> i32
+{
+    return sink_ref(forward value);
+}
+
+relay_move<T>(value: T forward&) -> i32
+{
+    return sink_move(forward value);
+}
+
+read(value: i32 const&) -> i32
+{
+    return value;
+}
+
+copy_value(value: i32) -> i32
+{
+    return value + 1;
+}
+
+main() -> i32
+{
+    let first = 1;
+    let a = relay_ref(first);
+    let b = relay_move(2);
+    let second = 3;
+    let c = relay_move(move second);
+    let d = read(const first);
+    let e = copy_value(const first);
+    return a + b + c + d + e + 10;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile forward reference binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "forward reference binary should preserve forwarding and const expression semantics");
 }
 
 auto check_iota_public_import_binary(test_tools const& tools) -> void
@@ -3087,6 +3184,7 @@ auto main(int argc, char** argv) -> int
     check_short_circuit_binary(tools);
     check_extern_c_binary(tools);
     check_member_default_argument_binary(tools);
+    check_ufcs_receiver_conversion_binary(tools);
     check_emit_ll(tools);
     check_emit_obj(tools);
     check_multi_input(tools);
@@ -3135,6 +3233,7 @@ auto main(int argc, char** argv) -> int
     check_builtin_operator_escape_binary(tools);
     check_update_operator_overload_binary(tools);
     check_std_sort_binary(tools);
+    check_forward_reference_binary(tools);
     check_iota_public_import_binary(tools);
     check_iota_custom_incrementable_binary(tools);
     check_std_map_set_binary(tools);

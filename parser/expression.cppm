@@ -69,6 +69,7 @@ auto parser::starts_expression(token_kind kind) const -> bool
         kw_const,
         kw_ref,
         kw_move,
+        kw_forward,
         kw_new,
         kw_delete,
         l_paren,
@@ -227,6 +228,7 @@ auto parser::parse_unary() -> std::optional<expr_id>
             .full_span = combine_spans(operation.span, arena.span(*operand)),
             .operator_kind = operation.kind,
             .position = unary_position::prefix,
+            .const_ref = true,
             .operand = *operand,
         };
         return arena.add(expr_syntax{ std::move(expression) });
@@ -238,6 +240,8 @@ auto parser::parse_unary() -> std::optional<expr_id>
         token_kind::kw_not,
         token_kind::kw_ref,
         token_kind::kw_move,
+        token_kind::kw_forward,
+        token_kind::kw_const,
         token_kind::kw_delete,
         token_kind::tilde,
         token_kind::amp,

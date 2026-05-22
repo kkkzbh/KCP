@@ -65,6 +65,7 @@ export struct reference_type
         regular,
         like,
         move,
+        forward,
     };
 
     explicit constexpr reference_type(semantic_type_id type_pointee, bool target_const = false, kind reference_kind = kind::regular) :
@@ -108,6 +109,14 @@ export struct generic_parameter_type
     auto constexpr operator==(generic_parameter_type const&) const -> bool = default;
 
     std::uint32_t index{};
+};
+
+export struct associated_type_ref
+{
+    auto constexpr operator==(associated_type_ref const&) const -> bool = default;
+
+    semantic_type_id owner{};
+    std::string name{};
 };
 
 export struct integer_constant_type
@@ -168,6 +177,7 @@ export using semantic_type_kind = std::variant <
     pointer_type,
     function_type,
     generic_parameter_type,
+    associated_type_ref,
     integer_constant_type,
     generic_integer_parameter_type,
     struct_type,

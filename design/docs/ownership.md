@@ -16,27 +16,31 @@ let b = a; // copy
 let b = move a;
 ```
 
-第一版不采用 Rust 的“非 Copy 类型默认 move”，也不照搬 C++ 的 forwarding reference、引用折叠和完美转发。语言只区分三类明确操作：
+第一版不采用 Rust 的“非 Copy 类型默认 move”，也不照搬 C++ 的 `T&&` / `std::forward<T>` 语法。语言区分四类明确操作：
 
 ```text
-copy:   x
-borrow: ref x / const ref x
-move:   move x
+copy:    x
+borrow:  ref x / const ref x
+move:    move x
+forward: forward x
 ```
 
 ## 语法总览
 
 ```text
 Type            -> TypeBase TargetQualifier? TypeSuffix
-TargetQualifier -> const | like
+TargetQualifier -> const | like | forward
 TypeSuffix      -> *+ &?
                  | &
                  | move &
+                 | forward &
 
 BorrowExpr      -> ref Expression
                  | const ref Expression
 
 MoveExpr        -> move Expression
+ForwardExpr     -> forward Expression
+ConstExpr       -> const Expression
 
 SpecialMember   -> CopyConstructor
                  | CopyAssignment
@@ -61,6 +65,7 @@ T like**
 T like*&
 T like&
 T move&
+T forward&
 ```
 
 含义：
@@ -69,14 +74,22 @@ T move&
 - `T const&` 是只读借用。
 - `T like*`、`T like**`、`T like*&`、`T like&` 是 receiver-const 传播类型，具体由当前 `self like&` receiver 决定。
 - `T move&` 是移动借用，表示被调用方可以接管资源。
+- `T forward&` 是泛型转发引用，只能用于依赖类型或省略参数类型引入的隐藏类型参数。
 
 `T move&` 是独立于 C++ `T&&` 的简化设计：
 
 - 普通左值不能自动绑定到 `T move&`。
 - `move x`、临时值和函数返回值可以绑定到 `T move&`。
-- 没有 forwarding reference。
 - 没有引用折叠。
 - 第一版不支持 `T const move&`。
+
+`T forward&` 是独立于 C++ `T&&` 的显式转发设计：
+
+- `T forward&` 可绑定可写左值、临时值、函数返回值和 `move x`。
+- `T forward&` 不绑定 const 左值；只读场景使用 `T const&` 和 `const value`。
+- 命名的 `T forward&` 参数在函数体内按左值使用。
+- 继续传递原始值类别必须写 `forward value`。
+- 同一个泛型函数以左值和右值调用时生成不同实例签名，避免把 `T&` 和 `T move&` 混用。
 
 `T like` 是为成员函数和 concept requirement 准备的窄规则。它只传播 receiver 的 target constness，不传播 move，不推导基础类型，也不表示任意类型限定：
 
@@ -215,6 +228,37 @@ take<T>(value: T move&) -> T
 
 这不是完美转发，只是显式继续移动。
 
+## 显式转发表达式
+
+转发写作：
+
+```cp
+forward value
+```
+
+规则：
+
+- `forward expr` 只允许作用于当前函数的 `forward&` 参数。
+- 如果该参数由左值绑定，`forward value` 表现为普通可写左值。
+- 如果该参数由临时值、函数返回值或 `move` 绑定，`forward value` 表现为 `move value`。
+- 多次转发右值不绕过 moved-state 检查；需要继续转移仍然必须显式写 `forward`。
+
+```cp
+relay<T>(value: T forward&)
+{
+    consume(forward value);
+}
+```
+
+## 显式 const 表达式
+
+`const value` 是表达式级只读视图：
+
+- 不复制、不移动、不借用，只把表达式视为 const。
+- 保留原值类别；左值仍是左值，临时值仍是临时值。
+- `const ref value` 仍表示显式 const borrow；`const value` 不是 borrow，可以匹配按值参数。
+- `const (move value)` 和 `move (const value)` 非法。
+
 `return local;` 满足 NRVO 条件时直接返回该 local 的存储位置，不是隐式 move。`return move local;` 保持显式移动语义，并明确不触发 NRVO。完整 NRVO 条件见 [type_system.md](type_system.md) 的返回值消除规则。
 
 ## 默认 copy 和显式 move
@@ -315,18 +359,19 @@ push<T: movable>(value: T move&) {
 第一版支持：
 
 - 默认 copy。
-- `T&`、`T const&`、`T like*`、`T like&` 和 `T move&`。
-- `ref expr`、`const ref expr` 和 `move expr`。
+- `T&`、`T const&`、`T like*`、`T like&`、`T move&` 和 `T forward&`。
+- `ref expr`、`const ref expr`、`move expr`、`forward expr` 和 `const expr`。
 - `= delete` 用于 copy/move 特殊成员。
 - 根据特殊成员可用性推导 `copyable`、`movable` 和 `move_only`。
 
 第一版不支持：
 
-- forwarding reference。
 - 引用折叠。
-- 完美转发。
+- C++ 风格 `T&&` / `std::forward<T>`。
 - `like` 传播 move。
 - `T const move&`。
+- `T const forward&`。
+- `self forward&`。
 - 默认非 Copy 类型自动 move。
 - 把 `ref expr` 隐式复制成按值参数。
 - 以属性或继承语法声明 move-only。

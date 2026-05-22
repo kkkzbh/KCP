@@ -128,6 +128,19 @@ auto semantic_analyzer::substitute_type(semantic_type_id type, std::vector<seman
                 }
                 return semantic_type_ids::error;
             },
+            [&](associated_type_ref const& value) {
+                auto owner = substitute_type(value.owner, arguments);
+                if(auto found = associated_type(read_type(owner), value.name)) {
+                    return *found;
+                }
+                if(is_dependent_type(owner)) {
+                    return result.types.intern(associated_type_ref {
+                        .owner = read_type(owner),
+                        .name = value.name,
+                    });
+                }
+                return semantic_type_ids::error;
+            },
             [&](integer_constant_type const&) { return type; },
             [&](generic_integer_parameter_type const& value) {
                 if(value.index < arguments.size()) {

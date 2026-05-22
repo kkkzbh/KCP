@@ -83,6 +83,9 @@ auto keyword_kind(std::string_view text) -> std::optional<token_kind>
             if(text == "concept"sv) {
                 return token_kind::kw_concept;
             }
+            if(text == "forward"sv) {
+                return token_kind::kw_forward;
+            }
             if(text == "nullptr"sv) {
                 return token_kind::kw_nullptr;
             }

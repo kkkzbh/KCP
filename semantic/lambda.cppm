@@ -375,6 +375,7 @@ auto semantic_analyzer::instantiate_lambda(semantic_lambda_info const& lambda, s
         source.function,
         source_signature,
         *type_arguments,
+        {},
         span
     );
     auto signature_id = add_signature(signature);

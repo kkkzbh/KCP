@@ -508,13 +508,13 @@ RefMode     -> ref
 BindingPattern -> identifier | ( identifier (, identifier)* )
 
 Type            -> TypeBase TargetQualifier? TypeSuffix
-TargetQualifier -> const | like
-TypeSuffix      -> *+ &? | & | move &
+TargetQualifier -> const | like | forward
+TypeSuffix      -> *+ &? | & | move & | forward &
 ```
 
 `TargetQualifier` 只有在 `TypeSuffix` 非空时合法。因此 `i32 const`、`i32 like`、`i32* const`、`i32& const` 都不是合法类型写法。
 
-`like` 是 receiver-const 转发限定符，可以写作 `T like*`、`T like**`、`T like*&` 或 `T like&`。它只负责把当前 `self like&` receiver 的 constness 转发到对应指针/引用目标，不表达 move，也不改变基础类型。`move &` 只允许写作 `T move&`，表示移动引用；第一版不允许和 `TargetQualifier` 组合成 `T const move&` 或 `T like move&`。具体规则见 [ownership.md](ownership.md)。当前不支持 C++ 式指针自身 const，也不支持 `volatile` / `restrict`。
+`like` 是 receiver-const 转发限定符，可以写作 `T like*`、`T like**`、`T like*&` 或 `T like&`。它只负责把当前 `self like&` receiver 的 constness 转发到对应指针/引用目标，不表达 move，也不改变基础类型。`move &` 只允许写作 `T move&`，表示移动引用；`forward &` 只允许写作依赖类型上的 `T forward&`，表示泛型转发引用。第一版不允许 `T const move&`、`T like move&` 或 `T const forward&`。具体规则见 [ownership.md](ownership.md)。当前不支持 C++ 式指针自身 const，也不支持 `volatile` / `restrict`。
 
 ### 指针运算与解引用
 

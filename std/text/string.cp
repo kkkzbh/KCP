@@ -1,6 +1,7 @@
 export module std.text.string;
 
 import std.memory.buffer;
+import std.memory.span;
 import std.core.option;
 import std.text.str;
 export import std.core.iter;
@@ -256,4 +257,8 @@ impl iterable for string {
     {
         return string_iter{ .current = data(), .end = data() + len };
     }
+}
+
+impl contiguous_mutable_range for string {
+    type item = char;
 }

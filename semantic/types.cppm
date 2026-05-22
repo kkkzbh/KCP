@@ -35,6 +35,7 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
         if(
             syntax.is_const
             or syntax.is_like
+            or syntax.is_forward
             or not syntax.suffix_operators.empty()
         ) {
             report(diagnostic_kind::invalid_type_argument, syntax.full_span, "! cannot be qualified");
@@ -49,10 +50,14 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
             if(suffix == token_kind::star) {
                 lowered = result.types.intern(pointer_type{ lowered, syntax.is_const, syntax.is_like });
             } else if(suffix == token_kind::amp) {
-                auto kind = syntax.is_like ? reference_type::kind::like : reference_type::kind::regular;
+                auto kind = syntax.is_like
+                    ? reference_type::kind::like
+                    : (syntax.is_forward ? reference_type::kind::forward : reference_type::kind::regular);
                 lowered = result.types.intern(reference_type{ lowered, syntax.is_const, kind });
             } else if(suffix == token_kind::kw_move) {
                 lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::move });
+            } else if(suffix == token_kind::kw_forward) {
+                lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::forward });
             }
         }
         return lowered;
@@ -64,10 +69,14 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
             if(suffix == token_kind::star) {
                 lowered = result.types.intern(pointer_type{ lowered, syntax.is_const, syntax.is_like });
             } else if(suffix == token_kind::amp) {
-                auto kind = syntax.is_like ? reference_type::kind::like : reference_type::kind::regular;
+                auto kind = syntax.is_like
+                    ? reference_type::kind::like
+                    : (syntax.is_forward ? reference_type::kind::forward : reference_type::kind::regular);
                 lowered = result.types.intern(reference_type{ lowered, syntax.is_const, kind });
             } else if(suffix == token_kind::kw_move) {
                 lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::move });
+            } else if(suffix == token_kind::kw_forward) {
+                lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::forward });
             }
         }
         return lowered;
@@ -79,10 +88,14 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
             if(suffix == token_kind::star) {
                 lowered = result.types.intern(pointer_type{ lowered, syntax.is_const, syntax.is_like });
             } else if(suffix == token_kind::amp) {
-                auto kind = syntax.is_like ? reference_type::kind::like : reference_type::kind::regular;
+                auto kind = syntax.is_like
+                    ? reference_type::kind::like
+                    : (syntax.is_forward ? reference_type::kind::forward : reference_type::kind::regular);
                 lowered = result.types.intern(reference_type{ lowered, syntax.is_const, kind });
             } else if(suffix == token_kind::kw_move) {
                 lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::move });
+            } else if(suffix == token_kind::kw_forward) {
+                lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::forward });
             }
         }
         return lowered;
@@ -341,11 +354,14 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
         auto key = std::string{ ast_source.identifier(associated) };
         auto found = associated_type(read_type(lowered), key);
         if(not found) {
-            report(
-                diagnostic_kind::unknown_type,
-                associated,
-                std::format("unknown associated type '{}'", key)
-            );
+            if(is_dependent_type(lowered)) {
+                lowered = result.types.intern(associated_type_ref {
+                    .owner = read_type(lowered),
+                    .name = key,
+                });
+                continue;
+            }
+            report(diagnostic_kind::unknown_type, associated, std::format("unknown associated type '{}'", key));
             lowered = semantic_type_ids::error;
             break;
         }
@@ -355,19 +371,32 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
     if(syntax.is_like and syntax.suffix_operators.empty()) {
         report(diagnostic_kind::invalid_type_argument, syntax.full_span, "like requires a pointer or reference suffix");
     }
+    if(syntax.is_forward and (syntax.suffix_operators.size() != 1uz or syntax.suffix_operators.front() != token_kind::amp)) {
+        report(diagnostic_kind::invalid_type_argument, syntax.full_span, "forward requires a reference suffix");
+    }
 
     for(auto suffix : syntax.suffix_operators) {
         if(suffix == token_kind::star) {
             lowered = result.types.intern(pointer_type{ lowered, syntax.is_const, syntax.is_like });
         } else if(suffix == token_kind::amp) {
-            auto kind = syntax.is_like ? reference_type::kind::like : reference_type::kind::regular;
+            auto kind = syntax.is_like
+                ? reference_type::kind::like
+                : (syntax.is_forward ? reference_type::kind::forward : reference_type::kind::regular);
             lowered = result.types.intern(reference_type{ lowered, syntax.is_const, kind });
         } else if(suffix == token_kind::kw_move) {
             if(syntax.is_const or syntax.is_like) {
                 report(diagnostic_kind::invalid_type_argument, syntax.full_span, "move& cannot be combined with const or like");
             }
             lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::move });
+        } else if(suffix == token_kind::kw_forward) {
+            if(syntax.is_const or syntax.is_like) {
+                report(diagnostic_kind::invalid_type_argument, syntax.full_span, "forward& cannot be combined with const or like");
+            }
+            lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::forward });
         }
+    }
+    if(auto const* reference = std::get_if<reference_type>(&result.types.get(lowered)); active_type_substitutions == nullptr and reference != nullptr and reference->reference_kind == reference_type::kind::forward and not is_dependent_type(reference->pointee)) {
+        report(diagnostic_kind::invalid_type_argument, syntax.full_span, "forward& requires a dependent type");
     }
     return lowered;
 }
@@ -389,6 +418,7 @@ auto semantic_analyzer::lower_return_type(ast_arena const& ast, type_id id) -> s
             or not syntax.associated_names.empty()
             or syntax.is_const
             or syntax.is_like
+            or syntax.is_forward
             or not syntax.suffix_operators.empty()
         ) {
             report(diagnostic_kind::invalid_type_argument, syntax.full_span, "void cannot be qualified or take arguments");
@@ -416,6 +446,9 @@ auto semantic_analyzer::lower_parameter_type(ast_arena const& ast, parameter_syn
                 kind = reference_type::kind::like;
             } else if(parameter.self_is_move) {
                 kind = reference_type::kind::move;
+            } else if(parameter.self_is_forward) {
+                report(diagnostic_kind::invalid_type_argument, parameter.full_span, "self forward& is not supported");
+                kind = reference_type::kind::forward;
             }
             return result.types.intern(reference_type{ *self_type, parameter.is_const, kind });
         }
@@ -442,9 +475,12 @@ auto semantic_analyzer::lower_function_parameter_type(ast_arena const& ast, func
         return lowered;
     }
 
-    auto kind = parameter.inferred_reference_is_move
-        ? reference_type::kind::move
-        : reference_type::kind::regular;
+    auto kind = reference_type::kind::regular;
+    if(parameter.inferred_reference_is_move) {
+        kind = reference_type::kind::move;
+    } else if(parameter.inferred_reference_is_forward) {
+        kind = reference_type::kind::forward;
+    }
     return result.types.intern(reference_type {
         lowered,
         parameter.inferred_reference_is_const,
@@ -712,6 +748,7 @@ auto semantic_analyzer::is_default_initializable(semantic_type_id type) -> bool
             [](pointer_type const&) { return true; },
             [](function_type const&) { return false; },
             [](generic_parameter_type const&) { return false; },
+            [](associated_type_ref const&) { return false; },
             [](integer_constant_type const&) { return false; },
             [](generic_integer_parameter_type const&) { return false; },
             [&](struct_type const& value) {
@@ -753,6 +790,7 @@ auto semantic_analyzer::is_dependent_type(semantic_type_id type) const -> bool
                     });
             },
             [](generic_parameter_type const&) { return true; },
+            [&](associated_type_ref const& value) { return is_dependent_type(value.owner); },
             [](integer_constant_type const&) { return false; },
             [](generic_integer_parameter_type const&) { return true; },
             [&](struct_type const& value) {
@@ -794,7 +832,7 @@ auto semantic_analyzer::range_element_type(semantic_type_id type) -> semantic_ty
     return {};
 }
 
-auto semantic_analyzer::method_symbol(semantic_type_id owner, std::string_view name) const -> std::optional<symbol_id>
+auto semantic_analyzer::method_symbol(semantic_type_id owner, std::string_view name) -> std::optional<symbol_id>
 {
     auto key = std::string{ name };
     auto type = read_type(owner);
@@ -822,6 +860,16 @@ auto semantic_analyzer::method_symbol(semantic_type_id owner, std::string_view n
     }
     if(auto found_methods = unit->visible_extension_methods.find(type); found_methods != unit->visible_extension_methods.end()) {
         if(auto found = found_methods->second.find(key); found != found_methods->second.end()) {
+            return found->second;
+        }
+    }
+    for(auto const& [pattern, methods] : unit->visible_extension_methods) {
+        auto found = methods.find(key);
+        if(found == methods.end()) {
+            continue;
+        }
+        auto inferred = std::map<std::uint32_t, semantic_type_id>{};
+        if(infer_type_argument(pattern, type, inferred)) {
             return found->second;
         }
     }
@@ -1069,6 +1117,9 @@ auto semantic_analyzer::can_implicitly_convert(expression_info const& from, sema
         auto same_target = can_qualification_convert(read_type(from.type), reference->pointee);
         if(reference->reference_kind == reference_type::kind::move) {
             return same_target and (from.is_move or not from.is_lvalue);
+        }
+        if(reference->reference_kind == reference_type::kind::forward) {
+            return same_target and not from.is_const;
         }
         if(reference->reference_kind == reference_type::kind::like) {
             return same_target and from.is_lvalue;
@@ -1359,6 +1410,7 @@ auto semantic_analyzer::lower_generic_type_argument(ast_arena const& ast, type_a
             and syntax.suffix_operators.empty()
             and not syntax.is_const
             and not syntax.is_like
+            and not syntax.is_forward
             and not syntax.is_function_type
             and not syntax.is_decltype
             and not syntax.is_array_type
@@ -1481,12 +1533,17 @@ auto semantic_analyzer::unary_type(token_kind operator_kind, unary_position posi
             };
         case kw_const:
             return expression_info {
-                .type = intern_type(reference_type { operand_value, true }),
-                .is_lvalue = true,
+                .type = operand.type,
+                .is_lvalue = operand.is_lvalue,
                 .is_const = true,
-                .explicit_borrow = true,
             };
         case kw_move:
+            return expression_info {
+                .type = intern_type(reference_type { operand_value, false, reference_type::kind::move }),
+                .is_lvalue = true,
+                .is_move = true,
+            };
+        case kw_forward:
             return expression_info {
                 .type = intern_type(reference_type { operand_value, false, reference_type::kind::move }),
                 .is_lvalue = true,

@@ -13,6 +13,13 @@ export struct span_iter<T> {
     end: T*;
 }
 
+export concept contiguous_mutable_range {
+    type item;
+
+    data(self like&) -> item like*;
+    size(self const&) -> usize;
+}
+
 impl span<T> {
     span(ptr: T*, len: usize)
     {
@@ -63,5 +70,23 @@ impl iterable for span<T> {
     iter(self&) -> span_iter<T>
     {
         return span_iter<T>{ .current = ptr, .end = ptr + len };
+    }
+}
+
+impl<T> contiguous_mutable_range for span<T> {
+    type item = T;
+}
+
+impl<T, N: usize> contiguous_mutable_range for [T; N] {
+    type item = T;
+
+    data(self like&) -> T like*
+    {
+        return &self[0 as usize];
+    }
+
+    size(self const&) -> usize
+    {
+        return N;
     }
 }

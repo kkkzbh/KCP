@@ -33,6 +33,7 @@ export struct unary_expr_syntax
     source_span full_span{};
     token_kind operator_kind{token_kind::eof};
     unary_position position{unary_position::prefix};
+    bool const_ref{};
     expr_id operand{};
 };
 

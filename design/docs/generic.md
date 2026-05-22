@@ -146,14 +146,16 @@ id<T>(value: T) -> T
 read(value const&) -> i32   // 等价于 read<T>(value: T const&) -> i32
 edit(value&) -> void        // 等价于 edit<T>(value: T&) -> void
 take(value move&) -> i32    // 等价于 take<T>(value: T move&) -> i32
+relay(value forward&)       // 等价于 relay<T>(value: T forward&)
 ```
 
-这种写法只省略基础类型，`const&`、`&`、`move&` 仍然是参数类型的一部分。显式类型时必须把引用写在类型位置：
+这种写法只省略基础类型，`const&`、`&`、`move&`、`forward&` 仍然是参数类型的一部分。显式类型时必须把引用写在类型位置：
 
 ```cp
 read(value: i32 const&) -> i32
 edit(value: i32&) -> void
 take(value: i32 move&) -> i32
+relay<T>(value: T forward&) -> void
 ```
 
 不允许混合两种写法：
@@ -939,7 +941,7 @@ main() -> i32
 3. 检查显式 concept / `requires` 约束。
 4. 用具体类型替换类型参数。
 5. 对替换后的函数体执行完整语义检查，包括依赖 UFCS 调用。
-6. 缓存已成功实例化的版本，避免重复生成。
+6. 缓存已成功实例化的版本，避免重复生成；含 `forward&` 参数的函数还要把每个 forward 参数的左值/右值绑定类别放入实例化 key。
 
 如果实例化失败，诊断应同时指出调用点和泛型函数体中失败的依赖操作。
 
@@ -950,7 +952,7 @@ main() -> i32
 泛型支持：
 
 - 类型参数：`func<T, U>(...)`
-- 省略参数类型引入的隐藏类型参数：`func(x, y)`、`func(x&)`、`func(x const&)`、`func(x move&)`
+- 省略参数类型引入的隐藏类型参数：`func(x, y)`、`func(x&)`、`func(x const&)`、`func(x move&)`、`func(x forward&)`
 - 强无约束泛型：允许依赖操作，实例化时检查
 - 内联 concept 约束：`T: comparable`
 - 多 concept 约束：`T: readable and writable`

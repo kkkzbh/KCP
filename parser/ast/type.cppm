@@ -64,5 +64,6 @@ export struct type_syntax
     std::vector<source_span> associated_names{};
     bool is_const{};
     bool is_like{};
+    bool is_forward{};
     std::vector<token_kind> suffix_operators{};
 };

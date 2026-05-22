@@ -949,11 +949,12 @@ auto semantic_analyzer::collect_impl_declarations(std::size_t unit_index, ast_ar
     active_generic_parameters = std::move(old_parameters);
     active_generic_parameter_packs = std::move(old_packs);
     auto builtin_impl_allowed = as_builtin(read_type(type));
-    if(not struct_index_of(type) and not variant_index_of(type) and not opaque_index_of(type) and not builtin_impl_allowed) {
+    auto array_impl_allowed = std::holds_alternative<array_type>(result.types.get(read_type(type)));
+    if(not struct_index_of(type) and not variant_index_of(type) and not opaque_index_of(type) and not builtin_impl_allowed and not array_impl_allowed) {
         report(
             diagnostic_kind::unknown_type,
             ast.span(impl.type),
-            "impl target must be a struct, variant, opaque type, or compiler-recognized std type"
+            "impl target must be a struct, variant, opaque type, array type, or compiler-recognized std type"
         );
         return;
     }
@@ -1003,8 +1004,9 @@ auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena 
     auto variant_index = variant_index_of(impl_type);
     auto opaque_index = opaque_index_of(impl_type);
     auto target_builtin = as_builtin(read_type(impl_type));
+    auto target_array = std::holds_alternative<array_type>(result.types.get(read_type(impl_type)));
     auto builtin_impl_allowed = target_builtin;
-    if(not struct_index and not variant_index and not opaque_index and not builtin_impl_allowed) {
+    if(not struct_index and not variant_index and not opaque_index and not builtin_impl_allowed and not target_array) {
         return;
     }
     auto item_name = std::string{};
@@ -1018,14 +1020,14 @@ auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena 
     } else if(opaque_index) {
         item_name = result.opaque_aliases[*opaque_index].name;
         item_type = result.opaque_aliases[*opaque_index].type;
-    } else {
+    } else if(target_builtin) {
         item_name = type_name(*target_builtin);
     }
     auto name = std::string{ ast_source.identifier(function.name) };
     auto body_kind = semantic_body_kind(function);
     auto is_constructor = struct_index and (function.defaulted or name == item_name);
     auto is_destructor = function.kind == function_syntax_kind::destructor;
-    if((variant_index or opaque_index or target_builtin) and (function.defaulted or is_destructor or name == item_name)) {
+    if((variant_index or opaque_index or target_builtin or target_array) and (function.defaulted or is_destructor or name == item_name)) {
         report(diagnostic_kind::invalid_constructor, function.full_span, "only struct impl can declare constructors or destructors");
         return;
     }
@@ -1035,6 +1037,13 @@ auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena 
         all_generic_parameters.emplace_back(ast_source.identifier(parameter.name));
     }
     implicit_function_generic_parameters[function_key(unit_index, id)] = implicit_function_generic_names(impl_generic_parameters, function);
+    if(not impl.generic_parameters.empty()) {
+        implicit_function_generic_parameter_kinds[function_key(unit_index, id)] = (
+            impl.generic_parameters
+            | std::views::transform([](generic_parameter_syntax const& parameter) { return parameter.parameter_kind; })
+            | std::ranges::to<std::vector<generic_parameter_syntax::kind>>()
+        );
+    }
     function_impl_target_patterns[function_key(unit_index, id)] = impl_type;
     if(impl.requires_clause) {
         function_impl_requires[function_key(unit_index, id)] = *impl.requires_clause;
@@ -1123,8 +1132,8 @@ auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena 
                 report(diagnostic_kind::duplicate_symbol, function.name, std::format("duplicate member '{}'", name));
             }
         } else {
-            if(target_builtin) {
-                report(diagnostic_kind::invalid_self_parameter, function.full_span, "builtin type impl functions must use self receiver");
+            if(target_builtin or target_array) {
+                report(diagnostic_kind::invalid_self_parameter, function.full_span, "array and builtin type impl functions must use self receiver");
                 return;
             }
             auto duplicate = false;
@@ -1187,7 +1196,7 @@ auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena 
         .struct_index = struct_index.value_or(std::numeric_limits<std::uint32_t>::max()),
         .opaque_index = opaque_index.value_or(std::numeric_limits<std::uint32_t>::max()),
         .variant_index = variant_index.value_or(std::numeric_limits<std::uint32_t>::max()),
-        .owner_type = target_builtin ? impl_type : semantic_type_id{},
+        .owner_type = (target_builtin or target_array) ? impl_type : semantic_type_id{},
         .function_kind = function_kind,
     });
     result.function_symbols.emplace(semantic_node_key{unit_index, id}, symbol);
@@ -1238,6 +1247,13 @@ auto semantic_analyzer::collect_impl_operator(std::size_t unit_index, ast_arena 
         all_generic_parameters.emplace_back(ast_source.identifier(parameter.name));
     }
     implicit_function_generic_parameters[function_key(unit_index, id)] = implicit_function_generic_names(impl_generic_parameters, function);
+    if(not impl.generic_parameters.empty()) {
+        implicit_function_generic_parameter_kinds[function_key(unit_index, id)] = (
+            impl.generic_parameters
+            | std::views::transform([](generic_parameter_syntax const& parameter) { return parameter.parameter_kind; })
+            | std::ranges::to<std::vector<generic_parameter_syntax::kind>>()
+        );
+    }
     function_impl_target_patterns[function_key(unit_index, id)] = impl_type;
     if(impl.requires_clause) {
         function_impl_requires[function_key(unit_index, id)] = *impl.requires_clause;
@@ -1384,8 +1400,9 @@ auto semantic_analyzer::collect_concept_impl_declarations(std::size_t unit_index
     active_generic_parameters = std::move(old_parameters);
     active_generic_parameter_packs = std::move(old_packs);
     auto target_builtin = as_builtin(read_type(target_type));
-    if(not struct_index_of(target_type) and not variant_index_of(target_type) and not target_builtin) {
-        report(diagnostic_kind::unknown_type, ast.span(impl.target_type), "concept impl target must be a struct, variant, or builtin type");
+    auto target_array = std::holds_alternative<array_type>(result.types.get(read_type(target_type)));
+    if(not struct_index_of(target_type) and not variant_index_of(target_type) and not target_builtin and not target_array) {
+        report(diagnostic_kind::unknown_type, ast.span(impl.target_type), "concept impl target must be a struct, variant, array type, or builtin type");
         return;
     }
     auto key = std::tuple{ *concept_symbol, concept_arguments, target_type };
@@ -1438,6 +1455,13 @@ auto semantic_analyzer::collect_concept_impl_declarations(std::size_t unit_index
     for(auto function_id : impl.functions) {
         auto const& function = ast.node(function_id);
         implicit_function_generic_parameters[function_key(unit_index, function_id)] = implicit_function_generic_names(impl_generic_parameters, function);
+        if(not impl.generic_parameters.empty()) {
+            implicit_function_generic_parameter_kinds[function_key(unit_index, function_id)] = (
+                impl.generic_parameters
+                | std::views::transform([](generic_parameter_syntax const& parameter) { return parameter.parameter_kind; })
+                | std::ranges::to<std::vector<generic_parameter_syntax::kind>>()
+            );
+        }
         function_impl_target_patterns[function_key(unit_index, function_id)] = target_type;
         if(impl.requires_clause) {
             function_impl_requires[function_key(unit_index, function_id)] = *impl.requires_clause;
@@ -1469,6 +1493,7 @@ auto semantic_analyzer::collect_concept_impl_function(std::size_t unit_index, as
     auto struct_index = struct_index_of(target_type);
     auto variant_index = variant_index_of(target_type);
     auto target_builtin = as_builtin(read_type(target_type));
+    auto target_array = std::holds_alternative<array_type>(result.types.get(read_type(target_type)));
 
     auto name = std::string{ ast_source.identifier(function.name) };
     validate_function_pack_shape(unit_index, id);
@@ -1518,13 +1543,16 @@ auto semantic_analyzer::collect_concept_impl_function(std::size_t unit_index, as
             return std::nullopt;
         }
     } else {
-        if(target_builtin) {
-            report(diagnostic_kind::invalid_self_parameter, function.full_span, "builtin concept impl functions must use self receiver");
+        if(target_builtin or target_array) {
+            report(diagnostic_kind::invalid_self_parameter, function.full_span, "array and builtin concept impl functions must use self receiver");
             return std::nullopt;
         }
-        auto duplicate = struct_index
-            ? result.structs[*struct_index].associated_functions.contains(name)
-            : result.variants[*variant_index].associated_functions.contains(name);
+        auto duplicate = false;
+        if(struct_index) {
+            duplicate = result.structs[*struct_index].associated_functions.contains(name);
+        } else if(variant_index) {
+            duplicate = result.variants[*variant_index].associated_functions.contains(name);
+        }
         duplicate = duplicate or associated_types[target_type].contains(name);
         if(duplicate) {
             report(diagnostic_kind::duplicate_symbol, function.name, std::format("duplicate associated function '{}'", name));
@@ -1577,7 +1605,7 @@ auto semantic_analyzer::collect_concept_impl_function(std::size_t unit_index, as
         .function = id,
         .struct_index = struct_index.value_or(std::numeric_limits<std::uint32_t>::max()),
         .variant_index = variant_index.value_or(std::numeric_limits<std::uint32_t>::max()),
-        .owner_type = target_builtin ? target_type : semantic_type_id{},
+        .owner_type = (target_builtin or target_array) ? target_type : semantic_type_id{},
         .function_kind = function_kind,
     });
     result.function_symbols.emplace(semantic_node_key{unit_index, id}, symbol);
@@ -1597,7 +1625,7 @@ auto semantic_analyzer::collect_concept_impl_function(std::size_t unit_index, as
     } else {
         if(struct_index) {
             result.structs[*struct_index].associated_functions.emplace(name, symbol);
-        } else {
+        } else if(variant_index) {
             result.variants[*variant_index].associated_functions.emplace(name, symbol);
         }
     }
@@ -1910,6 +1938,7 @@ auto semantic_analyzer::is_mutable_object_type(semantic_type_id type) const -> b
             [](pointer_type const&) { return true; },
             [](function_type const&) { return false; },
             [](generic_parameter_type const&) { return false; },
+            [](associated_type_ref const&) { return false; },
             [](integer_constant_type const&) { return false; },
             [](generic_integer_parameter_type const&) { return false; },
             [](struct_type const&) { return true; },

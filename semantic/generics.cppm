@@ -112,10 +112,19 @@ auto semantic_analyzer::bind_active_function_generic_parameters(std::size_t unit
 
     auto names = function_generic_parameter_names(unit_index, id);
     auto implicit_count = function_implicit_generic_count(unit_index, id);
+    auto const* implicit_kinds = [&]() -> std::vector<generic_parameter_syntax::kind> const* {
+        auto found = implicit_function_generic_parameter_kinds.find(function_key(unit_index, id));
+        return found == implicit_function_generic_parameter_kinds.end() ? nullptr : &found->second;
+    }();
     for(auto index = 0uz; index < implicit_count and index < names.size(); ++index) {
+        auto kind = (
+            implicit_kinds != nullptr and index < implicit_kinds->size()
+            ? (*implicit_kinds)[index]
+            : generic_parameter_syntax::kind::type
+        );
         active_generic_parameters.emplace(
             names[index],
-            result.types.intern(generic_parameter_type{ .index = static_cast<std::uint32_t>(index) })
+            generic_parameter_type_for(static_cast<std::uint32_t>(index), kind)
         );
     }
 
@@ -852,6 +861,19 @@ auto semantic_analyzer::substitute_type_for_instance(semantic_type_id type, std:
                 }
                 return semantic_type_ids::error;
             },
+            [&](associated_type_ref const& value) {
+                auto owner = substitute_type_for_instance(value.owner, pack_index, type_arguments, pack_element, span);
+                if(auto found = associated_type(read_type(owner), value.name)) {
+                    return *found;
+                }
+                if(is_dependent_type(owner)) {
+                    return result.types.intern(associated_type_ref {
+                        .owner = read_type(owner),
+                        .name = value.name,
+                    });
+                }
+                return semantic_type_ids::error;
+            },
             [&](integer_constant_type const&) { return type; },
             [&](generic_integer_parameter_type const& value) {
                 if(value.index < type_arguments.size()) {
@@ -939,11 +961,31 @@ auto semantic_analyzer::substitute_type_for_instance(semantic_type_id type, std:
     );
 }
 
-auto semantic_analyzer::substitute_signature_for_instance(std::size_t unit_index, function_id id, function_signature const& signature, std::vector<semantic_type_id> const& type_arguments, source_span span) -> function_signature
+auto semantic_analyzer::substitute_signature_for_instance(std::size_t unit_index, function_id id, function_signature const& signature, std::vector<semantic_type_id> const& type_arguments, std::vector<bool> const& forward_rvalues, source_span span) -> function_signature
 {
+    auto materialize_forward = [&](semantic_type_id type, std::size_t index) {
+        auto const* reference = std::get_if<reference_type>(&result.types.get(type));
+        if(reference == nullptr or reference->reference_kind != reference_type::kind::forward) {
+            return type;
+        }
+        auto kind = index < forward_rvalues.size() and forward_rvalues[index]
+            ? reference_type::kind::move
+            : reference_type::kind::regular;
+        return result.types.intern(reference_type{ reference->pointee, false, kind });
+    };
+
     auto pack_index = function_pack_generic_index(unit_index, id);
     if(not pack_index) {
-        return substitute_signature(signature, type_arguments);
+        auto parameters = std::vector<semantic_type_id>{};
+        parameters.reserve(signature.parameters.size());
+        for(auto index = 0uz; index < signature.parameters.size(); ++index) {
+            parameters.emplace_back(materialize_forward(substitute_type(signature.parameters[index], type_arguments), index));
+        }
+        return function_signature {
+            .parameters = std::move(parameters),
+            .returns = substitute_type(signature.returns, type_arguments),
+            .inferred_return = false,
+        };
     }
 
     auto const& function = units[unit_index].ast.node(id);
@@ -951,21 +993,23 @@ auto semantic_analyzer::substitute_signature_for_instance(std::size_t unit_index
     for(auto index = 0uz; index < function.parameters.size(); ++index) {
         auto parameter_type = signature.parameters[index];
         if(not function.parameters[index].is_pack) {
+            auto substituted = substitute_type_for_instance(parameter_type, pack_index, type_arguments, std::nullopt, function.parameters[index].full_span);
             parameters.emplace_back(
-                substitute_type_for_instance(parameter_type, pack_index, type_arguments, std::nullopt, function.parameters[index].full_span)
+                materialize_forward(substituted, parameters.size())
             );
             continue;
         }
 
         for(auto argument_index = *pack_index; argument_index < type_arguments.size(); ++argument_index) {
+            auto substituted = substitute_type_for_instance(
+                parameter_type,
+                pack_index,
+                type_arguments,
+                type_arguments[argument_index],
+                function.parameters[index].full_span
+            );
             parameters.emplace_back(
-                substitute_type_for_instance(
-                    parameter_type,
-                    pack_index,
-                    type_arguments,
-                    type_arguments[argument_index],
-                    function.parameters[index].full_span
-                )
+                materialize_forward(substituted, parameters.size())
             );
         }
     }
@@ -977,9 +1021,9 @@ auto semantic_analyzer::substitute_signature_for_instance(std::size_t unit_index
     };
 }
 
-auto semantic_analyzer::instantiate_function(std::size_t unit_index, function_id id, std::vector<semantic_type_id> type_arguments, source_span span) -> semantic_function_instance const*
+auto semantic_analyzer::instantiate_function(std::size_t unit_index, function_id id, std::vector<semantic_type_id> type_arguments, std::vector<bool> forward_rvalues, source_span span) -> semantic_function_instance const*
 {
-    auto key = semantic_function_instance_key{ unit_index, id, type_arguments };
+    auto key = semantic_function_instance_key{ unit_index, id, type_arguments, forward_rvalues };
     if(auto found = result.function_instance_indices.find(key); found != result.function_instance_indices.end()) {
         return &result.function_instances[found->second];
     }
@@ -1006,7 +1050,7 @@ auto semantic_analyzer::instantiate_function(std::size_t unit_index, function_id
         return nullptr;
     }
 
-    auto signature = substitute_signature_for_instance(unit_index, id, source_signature, type_arguments, span);
+    auto signature = substitute_signature_for_instance(unit_index, id, source_signature, type_arguments, forward_rvalues, span);
     auto signature_id = add_signature(signature);
     auto const& source = result.symbols[source_symbol.value];
     auto function_type_id = intern_type(function_type {
@@ -1225,7 +1269,24 @@ auto semantic_analyzer::instantiate_function_symbol(symbol_id symbol, std::optio
     if(not type_arguments) {
         return nullptr;
     }
-    return instantiate_function(value.unit_index, value.function, *type_arguments, span);
+    auto forward_rvalues = std::vector<bool>{};
+    if(auto signature_id = result.signature_of(value.unit_index, value.function); signature_id.valid()) {
+        auto const& signature = result.signatures[signature_id.value];
+        auto has_forward_parameter = std::ranges::any_of(signature.parameters, [&](semantic_type_id parameter) {
+            auto const* reference = std::get_if<reference_type>(&result.types.get(parameter));
+            return reference != nullptr and reference->reference_kind == reference_type::kind::forward;
+        });
+        if(has_forward_parameter) {
+            forward_rvalues.resize(signature.parameters.size());
+        }
+        for(auto index = 0uz; index < arguments.size() and index < signature.parameters.size(); ++index) {
+            auto const* reference = std::get_if<reference_type>(&result.types.get(signature.parameters[index]));
+            if(reference != nullptr and reference->reference_kind == reference_type::kind::forward) {
+                forward_rvalues[index] = arguments[index].is_move or not arguments[index].is_lvalue;
+            }
+        }
+    }
+    return instantiate_function(value.unit_index, value.function, *type_arguments, std::move(forward_rvalues), span);
 }
 
 auto semantic_analyzer::concrete_destructor_symbol(semantic_type_id type, source_span span) -> symbol_id
@@ -1401,7 +1462,27 @@ auto semantic_analyzer::check_generic_function_call(ast_arena const& ast, call_e
             active_unit_index = old_unit_index;
         }
 
-        auto const* instance = instantiate_function(source_unit, source_function, std::move(explicit_arguments), node.full_span);
+        auto has_forward_parameter = std::ranges::any_of(template_signature.parameters, [&](semantic_type_id parameter) {
+            auto const* reference = std::get_if<reference_type>(&result.types.get(parameter));
+            return reference != nullptr and reference->reference_kind == reference_type::kind::forward;
+        });
+        auto arguments = std::vector<expression_info>{};
+        auto forward_rvalues = std::vector<bool>{};
+        if(has_forward_parameter) {
+            arguments.reserve(node.arguments.size());
+            for(auto argument : node.arguments) {
+                arguments.emplace_back(check_expression(ast, argument, std::nullopt));
+            }
+            forward_rvalues.resize(template_signature.parameters.size());
+            for(auto index = 0uz; index < arguments.size() and index < template_signature.parameters.size(); ++index) {
+                auto const* reference = std::get_if<reference_type>(&result.types.get(template_signature.parameters[index]));
+                if(reference != nullptr and reference->reference_kind == reference_type::kind::forward) {
+                    forward_rvalues[index] = arguments[index].is_move or not arguments[index].is_lvalue;
+                }
+            }
+        }
+
+        auto const* instance = instantiate_function(source_unit, source_function, std::move(explicit_arguments), std::move(forward_rvalues), node.full_span);
         if(instance == nullptr) {
             return expression_info{ .type = semantic_type_ids::error };
         }
@@ -1432,7 +1513,11 @@ auto semantic_analyzer::check_generic_function_call(ast_arena const& ast, call_e
         );
 
         for(auto index = 0uz; index < node.arguments.size(); ++index) {
-            auto argument = check_expression(ast, node.arguments[index], signature.parameters[index]);
+            auto argument = (
+                has_forward_parameter
+                    ? arguments[index]
+                    : check_expression(ast, node.arguments[index], signature.parameters[index])
+            );
             if(not can_implicitly_convert(argument, signature.parameters[index])) {
                 report(
                     diagnostic_kind::type_mismatch,

@@ -102,6 +102,18 @@ auto semantic_analyzer::check_name_expression(name_expr_syntax const& node, expr
     auto name = std::string{ ast_source.identifier(node.name) };
     auto symbol = resolve(name);
     if(not symbol.valid()) {
+        if(active_type_substitutions != nullptr) {
+            if(auto found = active_type_substitutions->find(name); found != active_type_substitutions->end()) {
+                if(auto const* value = std::get_if<integer_constant_type>(&result.types.get(found->second))) {
+                    result.literal_values[node_key(id)] = semantic_literal_value {
+                        .value = value->value,
+                    };
+                    return expression_info {
+                        .type = semantic_type_ids::builtin(value->type),
+                    };
+                }
+            }
+        }
         if(auto field = self_field(name)) {
             result.expression_fields[node_key(id)] = *field;
             if(field->owner_type == semantic_type_ids::str) {
@@ -456,11 +468,27 @@ auto semantic_analyzer::check_unary_expression(ast_arena const& ast, unary_expr_
             }
             return unary_type(node.operator_kind, node.position, operand);
         case kw_const:
-            if(not operand.is_lvalue) {
+            if(node.const_ref and not operand.is_lvalue) {
                 report(
                     diagnostic_kind::invalid_assignment_target,
                     node.full_span,
                     "const ref operand must be an lvalue"
+                );
+                return expression_info{ .type = semantic_type_ids::error };
+            }
+            if(node.const_ref) {
+                return expression_info {
+                    .type = intern_type(reference_type { operand_value, true }),
+                    .is_lvalue = true,
+                    .is_const = true,
+                    .explicit_borrow = true,
+                };
+            }
+            if(operand.is_move) {
+                report(
+                    diagnostic_kind::invalid_assignment_target,
+                    node.full_span,
+                    "const operand must not be a move expression"
                 );
                 return expression_info{ .type = semantic_type_ids::error };
             }
@@ -475,6 +503,29 @@ auto semantic_analyzer::check_unary_expression(ast_arena const& ast, unary_expr_
                 return expression_info{ .type = semantic_type_ids::error };
             }
             return unary_type(node.operator_kind, node.position, operand);
+        case kw_forward: {
+            auto const& expression = ast.node(stripped_expression(node.operand));
+            auto const* name = std::get_if<name_expr_syntax>(&expression);
+            auto symbol = symbol_id{};
+            if(name != nullptr) {
+                auto found = result.expression_symbols.find(node_key(stripped_expression(node.operand)));
+                if(found != result.expression_symbols.end()) {
+                    symbol = found->second;
+                }
+            }
+            auto forward = active_forward_parameters.find(symbol);
+            if(not symbol.valid() or forward == active_forward_parameters.end()) {
+                report(diagnostic_kind::invalid_operator, node.full_span, "forward operand must be a forward& parameter");
+                return expression_info{ .type = semantic_type_ids::error };
+            }
+            if(forward->second) {
+                return unary_type(node.operator_kind, node.position, operand);
+            }
+            return expression_info {
+                .type = intern_type(reference_type { operand_value }),
+                .is_lvalue = true,
+            };
+        }
         case kw_delete: {
             if(operand.explicit_borrow) {
                 report(diagnostic_kind::type_mismatch, node.full_span, "delete operand must be a pointer value");
@@ -2090,7 +2141,7 @@ auto semantic_analyzer::choose_constructor(semantic_type_id type, std::vector<ex
             })) {
                 continue;
             }
-            auto instance = instantiate_function(function.unit_index, function.function, std::move(type_arguments), span);
+            auto instance = instantiate_function(function.unit_index, function.function, std::move(type_arguments), {}, span);
             if(instance == nullptr) {
                 continue;
             }

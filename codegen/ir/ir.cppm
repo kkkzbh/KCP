@@ -446,7 +446,11 @@ struct function_lowerer
                             : (
                                 value.opaque_index != std::numeric_limits<std::uint32_t>::max()
                                     ? module.opaque_aliases[value.opaque_index].name
-                                    : std::string{ type_name(*as_builtin(value.owner_type)) }
+                                    : (
+                                        as_builtin(value.owner_type)
+                                            ? std::string{ type_name(*as_builtin(value.owner_type)) }
+                                            : "array"
+                                    )
                             )
                     )
             );
@@ -1965,6 +1969,12 @@ struct function_lowerer
             return emit_load(address, info_of(id).read_type);
         }
         if(not symbol.valid()) {
+            auto literal = literal_of(id);
+            if(not std::holds_alternative<std::monostate>(literal.value)) {
+                auto instruction = emit_value_instruction(ir_opcode::literal, info_of(id).read_type);
+                instruction.literal = literal;
+                return emit(std::move(instruction));
+            }
             return unsupported_expression("name expression is missing resolved symbol");
         }
         if(semantics.symbols[symbol.value].kind == symbol_kind::function) {
@@ -2005,10 +2015,10 @@ struct function_lowerer
         if(node.operator_kind == token_kind::amp) {
             return emit_address(node.operand);
         }
-        if(node.operator_kind == token_kind::kw_ref or node.operator_kind == token_kind::kw_const) {
+        if(node.operator_kind == token_kind::kw_ref or (node.operator_kind == token_kind::kw_const and node.const_ref)) {
             return emit_address(node.operand);
         }
-        if(node.operator_kind == token_kind::kw_move) {
+        if(node.operator_kind == token_kind::kw_move or node.operator_kind == token_kind::kw_forward or node.operator_kind == token_kind::kw_const) {
             return emit_expression(node.operand);
         }
         if(node.operator_kind == token_kind::kw_delete) {
@@ -2575,12 +2585,7 @@ struct function_lowerer
         }
 
         auto arguments = std::vector<ir_value_id>{};
-        auto receiver = ir_value_id{};
-        if(is_reference(function->parameters.front())) {
-            receiver = emit_address(member.object);
-        } else {
-            receiver = emit_expression(member.object);
-        }
+        auto receiver = emit_argument_for_parameter(member.object, function->parameters.front());
         if(not receiver.valid()) {
             return {};
         }
@@ -2777,7 +2782,12 @@ struct function_lowerer
             if(unary->operator_kind == token_kind::star) {
                 return emit_expression(unary->operand);
             }
-            if(unary->operator_kind == token_kind::kw_ref or unary->operator_kind == token_kind::kw_const or unary->operator_kind == token_kind::kw_move) {
+            if(
+                unary->operator_kind == token_kind::kw_ref
+                or unary->operator_kind == token_kind::kw_move
+                or unary->operator_kind == token_kind::kw_forward
+                or unary->operator_kind == token_kind::kw_const
+            ) {
                 return emit_address(unary->operand);
             }
         }
@@ -2993,6 +3003,7 @@ struct function_lowerer
                     }
                     return semantic_type_ids::error;
                 },
+                [&](associated_type_ref const&) { return type; },
                 [&](integer_constant_type const&) { return type; },
                 [&](generic_integer_parameter_type const& value) {
                     if(value.index < arguments.size()) {

@@ -304,7 +304,7 @@ private:
     auto is_dependent_type(semantic_type_id type) const -> bool;
     auto range_element_type(semantic_type_id type) -> semantic_type_id;
     auto range_info(expression_info range, source_span span) -> semantic_for_range_info;
-    auto method_symbol(semantic_type_id owner, std::string_view name) const -> std::optional<symbol_id>;
+    auto method_symbol(semantic_type_id owner, std::string_view name) -> std::optional<symbol_id>;
     auto concrete_method_symbol(symbol_id symbol, semantic_type_id receiver_type, std::vector<expression_info> const& arguments, source_span span) -> std::optional<symbol_id>;
     auto resolve_operator(overload_operator_kind kind, std::span<semantic_type_id const> owner_types, std::vector<expression_info> const& arguments, source_span span) -> std::optional<symbol_id>;
     auto choose_operator(std::span<symbol_id const> candidates, std::vector<expression_info> const& arguments, std::optional<semantic_type_id> receiver_type, source_span span, bool report_no_match = true) -> std::optional<symbol_id>;
@@ -350,10 +350,10 @@ private:
     auto infer_type_argument(semantic_type_id pattern, semantic_type_id argument, std::map<std::uint32_t, semantic_type_id>& inferred) -> bool;
     auto generic_substitution_map(function_syntax const& function, std::vector<semantic_type_id> const& type_arguments)
         -> std::map<std::string, semantic_type_id>;
-    auto instantiate_function(std::size_t unit_index, function_id id, std::vector<semantic_type_id> type_arguments, source_span span) -> semantic_function_instance const*;
+    auto instantiate_function(std::size_t unit_index, function_id id, std::vector<semantic_type_id> type_arguments, std::vector<bool> forward_rvalues, source_span span) -> semantic_function_instance const*;
     auto instantiate_lambda(semantic_lambda_info const& lambda, std::vector<expression_info> const& arguments, std::vector<semantic_type_id> explicit_arguments, source_span span) -> semantic_lambda_info;
     auto substitute_signature(function_signature const& signature, std::vector<semantic_type_id> const& type_arguments) -> function_signature;
-    auto substitute_signature_for_instance(std::size_t unit_index, function_id id, function_signature const& signature, std::vector<semantic_type_id> const& type_arguments, source_span span) -> function_signature;
+    auto substitute_signature_for_instance(std::size_t unit_index, function_id id, function_signature const& signature, std::vector<semantic_type_id> const& type_arguments, std::vector<bool> const& forward_rvalues, source_span span) -> function_signature;
     auto substitute_type_for_instance(semantic_type_id type, std::optional<std::size_t> pack_index, std::vector<semantic_type_id> const& type_arguments, std::optional<semantic_type_id> pack_element, source_span span) -> semantic_type_id;
     auto infer_type_argument_with_pack(semantic_type_id pattern, semantic_type_id argument, std::optional<std::size_t> pack_index, std::map<std::uint32_t, semantic_type_id>& inferred, std::optional<semantic_type_id>& pack_element) -> bool;
     auto callable_type(semantic_type_id type) const -> function_type const*;
@@ -489,6 +489,7 @@ private:
     std::map<std::size_t, std::vector<std::string>> concept_impl_generic_parameters{}; ///< concept impl 显式泛型参数。
     std::map<std::size_t, concept_requires_syntax> concept_impl_requires{}; ///< 条件 concept impl 的 requires 子句。
     std::map<return_inference_key, std::vector<std::string>> implicit_function_generic_parameters{}; ///< impl 目标类型模式和省略参数类型引入的函数泛型参数。
+    std::map<return_inference_key, std::vector<generic_parameter_syntax::kind>> implicit_function_generic_parameter_kinds{};
     std::map<return_inference_key, semantic_type_id> function_impl_target_patterns{}; ///< impl 函数所属目标类型模式，用于从 receiver 推导隐式泛型实参。
     std::map<return_inference_key, concept_requires_syntax> function_impl_requires{}; ///< 条件 impl 的 requires 子句。
     std::map<std::string, semantic_type_id> active_generic_parameters{}; ///< 当前声明中可见的泛型形参。
@@ -507,6 +508,7 @@ private:
     std::vector<std::map<std::string, symbol_id>> scopes{}; ///< 函数体检查阶段的词法作用域栈。
     std::vector<std::map<std::string, semantic_type_id>> type_scopes{}; ///< 函数体内 type alias 的词法作用域栈。
     std::map<std::string, std::vector<symbol_id>> active_value_packs{}; ///< 当前函数实例中可展开的值参数包。
+    std::map<symbol_id, bool> active_forward_parameters{}; ///< 当前函数实例中 forward& 参数是否按 rvalue 绑定。
     std::vector<loop_label> loops{}; ///< 当前嵌套循环标签栈，用于校验跳转语句。
     std::size_t active_template_for_depth{}; ///< 当前 template for 展开深度，用于限制 break/continue 穿透。
     std::vector<lambda_capture_context> lambda_capture_stack{}; ///< 当前正在语义检查的嵌套 lambda 捕获上下文。

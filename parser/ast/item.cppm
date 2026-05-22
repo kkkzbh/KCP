@@ -16,10 +16,12 @@ export struct parameter_syntax
     bool inferred_is_reference{};
     bool inferred_reference_is_const{};
     bool inferred_reference_is_move{};
+    bool inferred_reference_is_forward{};
     bool is_self_receiver{};
     bool self_is_reference{};
     bool self_is_like{};
     bool self_is_move{};
+    bool self_is_forward{};
     source_span name{};
     std::optional<type_id> type{};
     std::optional<expr_id> default_value{};

@@ -75,7 +75,7 @@ export concept iterator {
 - `type iter_item;` 表示实现者必须提供关联类型。
 - 函数声明表示实现者必须提供函数。
 - 函数定义表示默认函数实现，实现者可以省略或覆盖。
-- 第一个参数可以写作特殊接收者参数 `self`、`self&`、`self like&`、`self const&` 或 `self move&`，分别表示当前类型、当前类型可写引用、receiver-const 传播引用、当前类型 const 引用和当前类型移动引用。`self like&` 会驱动签名中的 `T like*`、`T like&` 等类型转发 constness；`self move&` 的规则见 [ownership.md](ownership.md)。
+- 第一个参数可以写作特殊接收者参数 `self`、`self&`、`self like&`、`self const&` 或 `self move&`，分别表示当前类型、当前类型可写引用、receiver-const 传播引用、当前类型 const 引用和当前类型移动引用。`self like&` 会驱动签名中的 `T like*`、`T like&` 等类型转发 constness；`self move&` 的规则见 [ownership.md](ownership.md)。本轮不支持 `self forward&`。
 - `this` 表示当前实现类型，只能出现在类型位置，并且只在 `concept`、固有 `impl` 和对应 `impl concept for T` 上下文中有效。
 - `concept` 体内可以直接使用当前 concept 的关联类型名，例如 `iter_item`，不要求写 `this::iter_item`。
 

@@ -331,16 +331,104 @@ main() -> i32
     values.push_back(3);
     values.push_back(1);
     values.push_back(2);
-    sort(span<i32>{values.data(), values.size()});
-    sort(span<i32>{values.data(), values.size()}, greater<i32>{});
+    sort(values);
+    values.sort(greater<i32>{});
     sort(span<i32>{values.data(), values.size()}, f(left: i32 const&, right: i32 const&) -> bool {
         left < right
     });
+
+    let fixed: [i32; 3] = [3, 1, 2];
+    sort(fixed);
+    fixed.sort(greater<i32>{});
+
+    let text = string{"cba"};
+    sort(text);
+    text.sort(greater<char>{});
     return values[0];
 })"
     );
-    test_parser::assert_true(checked.accepted(), "std sort should accept default, object, and lambda comparators");
+    test_parser::assert_true(checked.accepted(), "std sort should accept contiguous mutable ranges and comparators");
     test_parser::assert_true(not checked.expression_operators.empty(), "call operator expressions should record selected overloads");
+
+    auto readonly_str = analyze_with_std_io(
+        "sort_str_rejected.cp",
+        R"(import std;
+
+main() -> i32
+{
+    let text: str = "cba";
+    sort(text);
+    return 0;
+})"
+    );
+    test_parser::assert_true(
+        has_diagnostic(readonly_str, diagnostic_kind::missing_concept_item),
+        "std sort should reject readonly str views"
+    );
+
+    auto raw_buffer = analyze_with_std_io(
+        "sort_buffer_rejected.cp",
+        R"(import std;
+
+main() -> i32
+{
+    let storage = buffer<i32>{3};
+    sort(storage);
+    return 0;
+})"
+    );
+    test_parser::assert_true(
+        has_diagnostic(raw_buffer, diagnostic_kind::missing_concept_item),
+        "std sort should reject raw storage buffers"
+    );
+
+    auto const_vector = analyze_with_std_io(
+        "sort_const_vector_rejected.cp",
+        R"(import std;
+
+main() -> i32
+{
+    const values = vector<i32>{};
+    sort(values);
+    return 0;
+})"
+    );
+    test_parser::assert_true(
+        has_diagnostic(const_vector, diagnostic_kind::type_mismatch),
+        "std sort should reject const vector receivers"
+    );
+
+    auto const_array = analyze_with_std_io(
+        "sort_const_array_rejected.cp",
+        R"(import std;
+
+main() -> i32
+{
+    const values: [i32; 3] = [3, 1, 2];
+    sort(values);
+    return 0;
+})"
+    );
+    test_parser::assert_true(
+        has_diagnostic(const_array, diagnostic_kind::type_mismatch),
+        "std sort should reject const array receivers"
+    );
+
+    auto const_string = analyze_with_std_io(
+        "sort_const_string_rejected.cp",
+        R"(import std;
+
+main() -> i32
+{
+    const text = string{"cba"};
+    sort(text);
+    return 0;
+})"
+    );
+    test_parser::assert_true(
+        has_diagnostic(const_string, diagnostic_kind::type_mismatch),
+        "std sort should reject const string receivers"
+    );
 }
 
 auto check_iota_semantics() -> void
@@ -1970,6 +2058,62 @@ main() -> i32
     expect_diagnostic("const_move.cp", "take_move(value: i32 move&) { } main() { const x = 1; take_move(move x); }", invalid_assignment_target);
 }
 
+auto check_forward_reference_semantics() -> void
+{
+    auto checked = analyze_one(
+        "forward_reference.cp",
+        R"(sink_ref(value: i32&) -> i32
+{
+    return value;
+}
+
+sink_move(value: i32 move&) -> i32
+{
+    return value;
+}
+
+relay_ref<T>(value: T forward&) -> i32
+{
+    return sink_ref(forward value);
+}
+
+relay_move<T>(value: T forward&) -> i32
+{
+    return sink_move(forward value);
+}
+
+read(value: i32 const&) -> i32
+{
+    return value;
+}
+
+copy_value(value: i32) -> i32
+{
+    return value;
+}
+
+main() -> i32
+{
+    let first = 1;
+    relay_ref(first);
+    relay_move(2);
+    let second = 3;
+    relay_move(move second);
+    read(const first);
+    copy_value(const first);
+    return 0;
+})"
+    );
+    test_parser::assert_true(checked.accepted(), "forward references and const expressions should pass semantic analysis");
+
+    using enum diagnostic_kind;
+    expect_diagnostic("forward_non_parameter.cp", "main() { let value = 1; let other = forward value; }", invalid_operator);
+    expect_diagnostic("forward_const_lvalue.cp", "relay<T>(value: T forward&) -> void { } main() { const value = 1; relay(value); }", type_mismatch);
+    expect_diagnostic("const_move_operand.cp", "main() { let value = 1; let other = const (move value); }", invalid_assignment_target);
+    expect_diagnostic("move_const_operand.cp", "main() { let value = 1; let other = move (const value); }", invalid_assignment_target);
+    expect_diagnostic("concrete_forward_ref.cp", "take(value: i32 forward&) { } main() { let value = 1; take(value); }", invalid_type_argument);
+}
+
 auto check_like_receiver_and_delete_semantics() -> void
 {
     auto checked = analyze_one(
@@ -2653,6 +2797,7 @@ auto main() -> int
     check_string_index_semantics();
     check_decltype_ref_and_destructuring_semantics();
     check_ownership_frontend_semantics();
+    check_forward_reference_semantics();
     check_like_receiver_and_delete_semantics();
     check_lambda_semantics();
     check_operator_overload_semantics();
