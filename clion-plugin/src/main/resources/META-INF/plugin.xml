@@ -21,6 +21,7 @@
         <lang.commenter language="cp" implementationClass="org.cp.lang.clion.CpCommenter" />
         <lang.braceMatcher language="cp" implementationClass="org.cp.lang.clion.CpBraceMatcher" />
         <lang.quoteHandler language="cp" implementationClass="org.cp.lang.clion.CpQuoteHandler" />
+        <typedHandler implementation="org.cp.lang.clion.CpQuoteTypedHandler" />
         <langCodeStyleSettingsProvider implementation="org.cp.lang.clion.CpCodeStyleSettingsProvider" />
         <lang.formatter language="cp" implementationClass="org.cp.lang.clion.CpFormattingModelBuilder" />
         <lang.findUsagesProvider language="cp" implementationClass="org.cp.lang.clion.CpFindUsagesProvider" />

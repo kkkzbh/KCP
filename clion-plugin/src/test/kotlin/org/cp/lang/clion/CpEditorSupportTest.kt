@@ -1,5 +1,8 @@
 package org.cp.lang.clion
 
+import com.intellij.lang.LanguageParserDefinitions
+import com.intellij.codeInsight.editorActions.TypedHandlerDelegate
+import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -53,5 +56,60 @@ class CpEditorSupportTest {
         builder.replace(edit.replaceStartOffset, edit.replaceEndOffset, edit.replacement)
         edit.insertOffset?.let { builder.insert(it, edit.insertedText) }
         return builder.toString()
+    }
+}
+
+class CpQuoteTypedHandlerTest : BasePlatformTestCase() {
+    private val parserDefinition = CpParserDefinition()
+
+    override fun setUp() {
+        super.setUp()
+        LanguageParserDefinitions.INSTANCE.addExplicitExtension(CpLanguage, parserDefinition)
+        TypedHandlerDelegate.EP_NAME.point.registerExtension(CpQuoteTypedHandler(), testRootDisposable)
+    }
+
+    override fun tearDown() {
+        try {
+            LanguageParserDefinitions.INSTANCE.removeExplicitExtension(CpLanguage, parserDefinition)
+        } finally {
+            super.tearDown()
+        }
+    }
+
+    fun testDoubleQuoteTypingInsertsPair() {
+        myFixture.configureByText(CpFileType.INSTANCE, "main() { let text = <caret>; }")
+
+        myFixture.type("\"")
+
+        myFixture.checkResult("main() { let text = \"<caret>\"; }")
+    }
+
+    fun testSingleQuoteTypingInsertsPair() {
+        myFixture.configureByText(CpFileType.INSTANCE, "main() { let ch = <caret>; }")
+
+        myFixture.type("'")
+
+        myFixture.checkResult("main() { let ch = '<caret>'; }")
+    }
+
+    fun testSmartSingleQuoteTypingInsertsPair() {
+        myFixture.configureByText(CpFileType.INSTANCE, "main() { let ch = <caret>; }")
+
+        myFixture.type("‘")
+
+        myFixture.checkResult("main() { let ch = ‘<caret>’; }")
+    }
+
+    fun testTypingQuoteBeforeClosingQuoteSkipsOverIt() {
+        myFixture.configureByText(CpFileType.INSTANCE, "main() { let text = \"<caret>\"; }")
+
+        myFixture.type("\"")
+
+        myFixture.checkResult("main() { let text = \"\"<caret>; }")
+    }
+
+    @Test
+    fun quotePairLogicIgnoresEscapedPosition() {
+        assertNull(CpQuotePairs.typingEdit("\\", 1, '"'))
     }
 }

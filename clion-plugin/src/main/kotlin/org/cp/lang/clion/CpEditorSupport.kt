@@ -2,6 +2,7 @@ package org.cp.lang.clion
 
 import com.intellij.codeInsight.editorActions.BackspaceHandlerDelegate
 import com.intellij.codeInsight.editorActions.SimpleTokenSetQuoteHandler
+import com.intellij.codeInsight.editorActions.TypedHandlerDelegate
 import com.intellij.codeInsight.editorActions.enter.EnterHandlerDelegate
 import com.intellij.formatting.Block
 import com.intellij.formatting.ChildAttributes
@@ -60,6 +61,87 @@ class CpBraceMatcher : PairedBraceMatcher {
 }
 
 class CpQuoteHandler : SimpleTokenSetQuoteHandler(CpTypes.STRING_TOKENS)
+
+class CpQuoteTypedHandler : TypedHandlerDelegate() {
+    override fun beforeCharTyped(
+        c: Char,
+        project: com.intellij.openapi.project.Project,
+        editor: Editor,
+        file: PsiFile,
+        fileType: com.intellij.openapi.fileTypes.FileType,
+    ): Result {
+        if (file.language != CpLanguage) {
+            return Result.CONTINUE
+        }
+
+        val caretOffset = editor.caretModel.offset
+        val edit = CpQuotePairs.typingEdit(editor.document.charsSequence, caretOffset, c)
+            ?: return Result.CONTINUE
+
+        when (edit) {
+            is CpQuotePairs.InsertPair -> {
+                editor.document.insertString(caretOffset, "${edit.opening}${edit.closing}")
+                editor.caretModel.moveToOffset(caretOffset + 1)
+            }
+
+            CpQuotePairs.SkipClosingQuote -> {
+                editor.caretModel.moveToOffset(caretOffset + 1)
+            }
+        }
+
+        return Result.STOP
+    }
+}
+
+object CpQuotePairs {
+    sealed interface TypingEdit
+
+    data class InsertPair(val opening: Char, val closing: Char) : TypingEdit
+
+    data object SkipClosingQuote : TypingEdit
+
+    fun typingEdit(text: CharSequence, caretOffset: Int, typed: Char): TypingEdit? {
+        val closing = closingQuote(typed) ?: return null
+        if (caretOffset < 0 || caretOffset > text.length) {
+            return null
+        }
+        if (isEscaped(text, caretOffset)) {
+            return null
+        }
+        if (caretOffset < text.length && text[caretOffset] == closing) {
+            return SkipClosingQuote
+        }
+        if (!isAllowedBefore(text, caretOffset)) {
+            return null
+        }
+
+        return InsertPair(typed, closing)
+    }
+
+    private fun closingQuote(opening: Char): Char? =
+        when (opening) {
+            '"' -> '"'
+            '\'' -> '\''
+            '“' -> '”'
+            '‘' -> '’'
+            else -> null
+        }
+
+    private fun isAllowedBefore(text: CharSequence, caretOffset: Int): Boolean =
+        caretOffset == text.length ||
+            text[caretOffset].isWhitespace() ||
+            text[caretOffset] in ")]},;:"
+
+    private fun isEscaped(text: CharSequence, caretOffset: Int): Boolean {
+        var slashCount = 0
+        var index = caretOffset - 1
+        while (index >= 0 && text[index] == '\\') {
+            slashCount += 1
+            index -= 1
+        }
+        return slashCount % 2 == 1
+    }
+}
 
 class CpCodeStyleSettingsProvider : LanguageCodeStyleSettingsProvider() {
     override fun getLanguage() = CpLanguage
