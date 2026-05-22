@@ -272,6 +272,36 @@ class CpIntegrationTest {
     }
 
     @Test
+    fun helperAcceptsStdSortForArrayDirectAndUfcsCalls() {
+        val repoRoot = Path.of(System.getProperty("cp.repo.root") ?: error("cp.repo.root is not configured"))
+        val source = """
+            import std;
+
+            main() -> i32
+            {
+                let a: [i32; 7] = [5,1,4,3,2,1,2];
+                let b: [i32; 7] = a;
+                a.sort();
+                sort(b);
+                return 0;
+            }
+        """.trimIndent()
+        val request = CpProjectSnapshotCollector.buildRequest(
+            activePath = "/project/main.cp",
+            activeText = source,
+            importRoots = listOf(repoRoot.resolve("std").toString()),
+            projectFiles = listOf(CpSnapshotSource("/project/main.cp", source)),
+        )
+
+        val result = CpHelperRunner.inspect(request)
+
+        assertTrue(result.diagnostics.joinToString("\n") { "${it.code}: ${it.message}" }, result.diagnostics.isEmpty())
+        assertTrue(result.accepted)
+        assertHighlight(source, result.highlights, "sort", "member.function.call")
+        assertHighlight(source, result.highlights, "sort", "function.call")
+    }
+
+    @Test
     fun projectSnapshotReadsDependencyClosureFromFilesystemWithoutIndexedProjectFiles() {
         val root = Files.createTempDirectory("cp-project-snapshot")
         try {

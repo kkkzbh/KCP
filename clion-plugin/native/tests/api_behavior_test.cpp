@@ -152,6 +152,44 @@ main() -> i32
     assert_true(has_navigation(multi_file, main_source, math_source, "import.name", "math", "math.cp", "math"),
         "inspect should navigate import names to module declarations");
 
+    auto constexpr forward_source = R"(sink_ref(value: i32&) -> i32
+{
+    return value;
+}
+
+sink_move(value: i32 move&) -> i32
+{
+    return value;
+}
+
+relay_ref<T>(value: T forward&) -> i32
+{
+    return sink_ref(forward value);
+}
+
+relay_move<T>(value: T forward&) -> i32
+{
+    return sink_move(forward value);
+}
+
+main() -> i32
+{
+    let value = 1;
+    return relay_ref(value) + relay_move(2);
+})"sv;
+    auto const forward_inspect = cp_lexer_helper::inspect(cp_lexer_helper::inspect_request {
+        .active_file = "forward.cp",
+        .files = {
+            cp_lexer_helper::source_file_record {
+                "forward.cp",
+                std::string{forward_source},
+            },
+        },
+    });
+    assert_true(forward_inspect.accepted, "inspect should accept forward references and forward expressions");
+    assert_true(forward_inspect.diagnostics.empty(), "forward reference inspect should not return diagnostics");
+    assert_true(has_highlight(forward_inspect, "operator"), "inspect should highlight forward as an operator keyword");
+
     auto constexpr std_source = R"(export module std;
 export import std.io;)"sv;
     auto constexpr io_source = R"(export module std.io;

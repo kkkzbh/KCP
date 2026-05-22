@@ -30,6 +30,14 @@ class CpLexerContractTest {
         }
     }
 
+    @Test
+    fun lexerRecognizesForwardKeyword() {
+        val token = tokenizeWithPlugin("forward value;").first()
+
+        assertEquals("kw_forward", token.kind)
+        assertEquals("forward", token.lexeme)
+    }
+
     private fun compareCase(path: Path) {
         val text = Files.readString(path)
         val pluginTokens = tokenizeWithPlugin(text)

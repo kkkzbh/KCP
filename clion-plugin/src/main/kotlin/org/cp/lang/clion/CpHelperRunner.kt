@@ -144,7 +144,12 @@ object CpHelperRunner {
         }
         val activeText = request.files.firstOrNull { it.path == request.activeFile }?.text.orEmpty()
         val offsetMap = Utf8OffsetMap(activeText)
-        val offsetMaps = request.files.associate { it.path to Utf8OffsetMap(it.text) }
+        val sourceTexts = request.files.associate { it.path to it.text }
+        val targetOffsetMaps = mutableMapOf<String, Utf8OffsetMap>()
+        fun targetOffsetMap(path: String): Utf8OffsetMap? =
+            targetOffsetMaps.getOrPut(path) {
+                Utf8OffsetMap(sourceTexts[path] ?: return null)
+            }
         val payload = json.encodeToString(request)
         return runHelper(
             command = "inspect",
@@ -170,7 +175,7 @@ object CpHelperRunner {
                     )
                 },
                 navigation = decoded.navigation.map { navigation ->
-                    val targetOffsetMap = offsetMaps[navigation.targetFile]
+                    val targetOffsetMap = targetOffsetMap(navigation.targetFile)
                     navigation.copy(
                         sourceStartOffset = offsetMap.toCharOffset(navigation.sourceStartOffset),
                         sourceEndOffset = offsetMap.toCharOffset(navigation.sourceEndOffset),

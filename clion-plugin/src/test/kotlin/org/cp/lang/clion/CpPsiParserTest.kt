@@ -161,6 +161,16 @@ class CpPsiParserTest : BasePlatformTestCase() {
                 return value;
             }
 
+            relay<T>(value: T forward&) -> T
+            {
+                return forward value;
+            }
+
+            read(value: T forward&)
+            {
+                consume(const value);
+            }
+
             add(left, right) -> i32
             {
                 return left + right;
@@ -168,7 +178,7 @@ class CpPsiParserTest : BasePlatformTestCase() {
             """.trimIndent(),
         )
 
-        assertEquals(5, file.descendants(CpElements.PARAMETER).size)
+        assertEquals(7, file.descendants(CpElements.PARAMETER).size)
         assertTrue(file.collectPsiErrors().isEmpty())
     }
 

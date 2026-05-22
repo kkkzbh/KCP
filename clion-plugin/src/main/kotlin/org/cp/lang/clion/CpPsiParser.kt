@@ -487,7 +487,7 @@ private class CpBuilder(
         consume(CpTypes.KW_CONST)
         if (at(CpTypes.IDENTIFIER) && builder.tokenText == "self" && lookAhead(1) != CpTypes.COLON) {
             markIdentifier(CpElements.PARAMETER_NAME, "expected parameter name")
-            if (consume(CpTypes.KW_CONST) || consume(CpTypes.KW_LIKE) || consume(CpTypes.KW_MOVE)) {
+            if (consumeSelfReferenceQualifier()) {
                 expect(CpTypes.AMP, "expected '&'")
             } else {
                 consume(CpTypes.AMP)
@@ -501,7 +501,7 @@ private class CpBuilder(
             hasExplicitType = true
             parseType()
             consumeEllipsis()
-        } else if (consume(CpTypes.KW_CONST) || consume(CpTypes.KW_MOVE)) {
+        } else if (consumeInferredReferenceQualifier()) {
             expect(CpTypes.AMP, "expected '&'")
         } else {
             consume(CpTypes.AMP)
@@ -585,13 +585,25 @@ private class CpBuilder(
     }
 
     private fun parseTypeSuffix() {
-        consume(CpTypes.KW_CONST) || consume(CpTypes.KW_LIKE)
+        consumeTypeTargetQualifier()
         while (consume(CpTypes.STAR)) {
         }
-        if (!consume(CpTypes.AMP) && consume(CpTypes.KW_MOVE)) {
+        if (!consume(CpTypes.AMP) && consumeMoveOrForward()) {
             expect(CpTypes.AMP, "expected '&'")
         }
     }
+
+    private fun consumeSelfReferenceQualifier(): Boolean =
+        consume(CpTypes.KW_CONST) || consume(CpTypes.KW_LIKE) || consumeMoveOrForward()
+
+    private fun consumeInferredReferenceQualifier(): Boolean =
+        consume(CpTypes.KW_CONST) || consumeMoveOrForward()
+
+    private fun consumeTypeTargetQualifier(): Boolean =
+        consume(CpTypes.KW_CONST) || consume(CpTypes.KW_LIKE) || consume(CpTypes.KW_FORWARD)
+
+    private fun consumeMoveOrForward(): Boolean =
+        consume(CpTypes.KW_MOVE) || consume(CpTypes.KW_FORWARD)
 
     private fun parseTypeLengthArgument() {
         val marker = builder.mark()
@@ -1369,7 +1381,7 @@ private class CpBuilder(
                 return false
             }
         }
-        if (lookAhead(index) == CpTypes.KW_CONST || lookAhead(index) == CpTypes.KW_LIKE) {
+        if (lookAhead(index) == CpTypes.KW_CONST || lookAhead(index) == CpTypes.KW_LIKE || lookAhead(index) == CpTypes.KW_FORWARD) {
             index += 1
         }
         while (lookAhead(index) == CpTypes.STAR) {
@@ -1377,7 +1389,10 @@ private class CpBuilder(
         }
         if (lookAhead(index) == CpTypes.AMP) {
             index += 1
-        } else if (lookAhead(index) == CpTypes.KW_MOVE && lookAhead(index + 1) == CpTypes.AMP) {
+        } else if (
+            (lookAhead(index) == CpTypes.KW_MOVE || lookAhead(index) == CpTypes.KW_FORWARD) &&
+            lookAhead(index + 1) == CpTypes.AMP
+        ) {
             index += 2
         }
         return lookAhead(index) == nextType
@@ -1563,6 +1578,7 @@ private class CpBuilder(
             CpTypes.KW_CONST,
             CpTypes.KW_REF,
             CpTypes.KW_MOVE,
+            CpTypes.KW_FORWARD,
             CpTypes.KW_DELETE,
             CpTypes.PLUS_PLUS,
             CpTypes.MINUS_MINUS,

@@ -311,6 +311,7 @@ auto is_operator_token(token_kind kind) -> bool
         case kw_not:
         case kw_ref:
         case kw_move:
+        case kw_forward:
         case kw_new:
         case kw_delete:
             return true;

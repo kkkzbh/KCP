@@ -46,6 +46,7 @@ object CpTypes {
     @JvmField val KW_REF = token("kw_ref")
     @JvmField val KW_MOVE = token("kw_move")
     @JvmField val KW_LIKE = token("kw_like")
+    @JvmField val KW_FORWARD = token("kw_forward")
     @JvmField val KW_NEW = token("kw_new")
     @JvmField val KW_DELETE = token("kw_delete")
 
@@ -100,7 +101,7 @@ object CpTypes {
         KW_LET, KW_CONST, KW_IF, KW_ELSE, KW_WHILE, KW_DO, KW_FOR, KW_BREAK, KW_CONTINUE, KW_RETURN,
         KW_IMPORT, KW_EXPORT, KW_MODULE, KW_STRUCT, KW_ENUM, KW_IMPL, KW_CONCEPT, KW_OPERATOR,
         KW_AS, KW_TRUE, KW_FALSE, KW_NULLPTR, KW_AND, KW_OR, KW_NOT, KW_REF, KW_MOVE, KW_LIKE,
-        KW_NEW, KW_DELETE,
+        KW_FORWARD, KW_NEW, KW_DELETE,
     )
 
     @JvmField
@@ -144,7 +145,7 @@ object CpTypes {
         PERCENT, PERCENT_EQUAL, EQUAL, EQUAL_EQUAL, BANG_EQUAL, LESS, LESS_EQUAL, GREATER,
         GREATER_EQUAL, SPACESHIP, AMP, AMP_EQUAL, PIPE, PIPE_EQUAL, CARET, CARET_EQUAL, BANG, TILDE,
         LESS_LESS, LESS_LESS_EQUAL, GREATER_GREATER, GREATER_GREATER_EQUAL, PLUS_PLUS,
-        MINUS_MINUS, QUESTION, KW_AS, KW_AND, KW_OR, KW_NOT, KW_REF, KW_MOVE, KW_NEW, KW_DELETE,
+        MINUS_MINUS, QUESTION, KW_AS, KW_AND, KW_OR, KW_NOT, KW_REF, KW_MOVE, KW_FORWARD, KW_NEW, KW_DELETE,
     )
 
     @JvmField
@@ -182,6 +183,7 @@ object CpTypes {
         "ref" to KW_REF,
         "move" to KW_MOVE,
         "like" to KW_LIKE,
+        "forward" to KW_FORWARD,
         "new" to KW_NEW,
         "delete" to KW_DELETE,
     )
