@@ -14,6 +14,7 @@ struct language
 {
     std::string name{};
     std::filesystem::path compiler{};
+    std::filesystem::path runtime{};
     std::string extension{};
 };
 
@@ -73,6 +74,19 @@ auto run_status(std::vector<std::string> const& arguments, std::optional<std::st
     return std::system(command.c_str());
 }
 
+auto java_runtime_command(std::filesystem::path const& runtime, std::filesystem::path const& classes) -> std::vector<std::string>
+{
+    return {
+        runtime.string(),
+        "-Xms256m",
+        "-Xmx256m",
+        "-XX:+UseSerialGC",
+        "-cp",
+        classes.string(),
+        "Main",
+    };
+}
+
 auto duration_ms(std::chrono::steady_clock::time_point start, std::chrono::steady_clock::time_point end) -> double
 {
     return std::chrono::duration<double, std::milli>{ end - start }.count();
@@ -109,6 +123,20 @@ auto compile_command(language const& value, std::filesystem::path const& source,
             output.string(),
         };
     }
+    if(value.name == "java") {
+        std::filesystem::create_directories(output);
+        return {
+            value.compiler.string(),
+            "--release",
+            "21",
+            "-g:none",
+            "-encoding",
+            "UTF-8",
+            "-d",
+            output.string(),
+            source.string(),
+        };
+    }
     return {
         value.compiler.string(),
         "-C",
@@ -121,9 +149,29 @@ auto compile_command(language const& value, std::filesystem::path const& source,
     };
 }
 
-auto binary_size(std::filesystem::path const& path) -> std::uintmax_t
+auto run_command(language const& value, std::filesystem::path const& binary) -> std::vector<std::string>
+{
+    if(value.name == "java") {
+        return java_runtime_command(value.runtime, binary);
+    }
+    return { binary.string() };
+}
+
+auto artifact_size(std::filesystem::path const& path) -> std::uintmax_t
 {
     auto error = std::error_code{};
+    if(std::filesystem::is_directory(path, error)) {
+        auto total = std::uintmax_t{ 0 };
+        for(auto const& entry : std::filesystem::recursive_directory_iterator{ path, error }) {
+            if(error) {
+                return total;
+            }
+            if(entry.is_regular_file(error)) {
+                total += entry.file_size(error);
+            }
+        }
+        return total;
+    }
     auto size = std::filesystem::file_size(path, error);
     if(error) {
         return 0;
@@ -146,7 +194,7 @@ auto measure_case(benchmark_case const& bench, language const& value, std::files
     }
 
     for(auto warmup = 0; warmup < 2; ++warmup) {
-        auto status = exit_code(run_status({ binary.string() }, bench.input));
+        auto status = exit_code(run_status(run_command(value, binary), bench.input));
         if(status != bench.expected_exit) {
             std::cerr << bench.name << '/' << value.name << " returned " << status << ", expected " << bench.expected_exit << '\n';
             return std::nullopt;
@@ -157,7 +205,7 @@ auto measure_case(benchmark_case const& bench, language const& value, std::files
     samples.reserve(bench.iterations);
     for(auto iteration = 0uz; iteration < bench.iterations; ++iteration) {
         auto start = std::chrono::steady_clock::now();
-        auto status = exit_code(run_status({ binary.string() }, bench.input));
+        auto status = exit_code(run_status(run_command(value, binary), bench.input));
         auto end = std::chrono::steady_clock::now();
         if(status != bench.expected_exit) {
             std::cerr << bench.name << '/' << value.name << " returned " << status << ", expected " << bench.expected_exit << '\n';
@@ -189,7 +237,7 @@ auto print_jsonl(run_measurement const& value, benchmark_case const& bench) -> v
         << ",\"run_median_ms\":" << value.median_ms
         << ",\"run_min_ms\":" << value.min_ms
         << ",\"run_max_ms\":" << value.max_ms
-        << ",\"binary_bytes\":" << binary_size(value.binary)
+        << ",\"binary_bytes\":" << artifact_size(value.binary)
         << "}\n";
 }
 
@@ -224,19 +272,22 @@ auto print_summary(std::vector<run_measurement> const& measurements) -> void
 
 auto main(int argc, char** argv) -> int
 {
-    if(argc != 5) {
-        std::cerr << "usage: cp_benchmark_runner <cp> <c++ compiler> <rustc> <cases-dir>\n";
+    if(argc != 7) {
+        std::cerr << "usage: cp_benchmark_runner <cp> <c++ compiler> <rustc> <javac> <java> <cases-dir>\n";
         return 2;
     }
 
     auto languages = std::vector<language> {
-        { .name = "c++", .compiler = argv[2], .extension = "cpp" },
-        { .name = "cp", .compiler = argv[1], .extension = "cp" },
-        { .name = "rust", .compiler = argv[3], .extension = "rs" },
+        { .name = "c++", .compiler = argv[2], .runtime = {}, .extension = "cpp" },
+        { .name = "cp", .compiler = argv[1], .runtime = {}, .extension = "cp" },
+        { .name = "rust", .compiler = argv[3], .runtime = {}, .extension = "rs" },
+        { .name = "java", .compiler = argv[4], .runtime = argv[5], .extension = "java" },
     };
     if(not require_tool("cp compiler", languages[1uz].compiler)
         or not require_tool("C++ compiler", languages[0uz].compiler)
-        or not require_tool("rustc", languages[2uz].compiler)) {
+        or not require_tool("rustc", languages[2uz].compiler)
+        or not require_tool("javac", languages[3uz].compiler)
+        or not require_tool("java", languages[3uz].runtime)) {
         return 2;
     }
 
@@ -250,7 +301,7 @@ auto main(int argc, char** argv) -> int
         { .name = "std_vector_string", .input = "500000", .expected_exit = 45, .iterations = 10 },
         { .name = "std_map_set", .input = "50000", .expected_exit = 55, .iterations = 10 },
     };
-    auto cases_dir = std::filesystem::path{ argv[4] };
+    auto cases_dir = std::filesystem::path{ argv[6] };
     auto output_dir = std::filesystem::temp_directory_path() / std::format("cp-benchmark-{}", std::chrono::steady_clock::now().time_since_epoch().count());
     std::filesystem::create_directories(output_dir);
 

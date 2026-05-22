@@ -1,5 +1,7 @@
 find_program(CP_BENCHMARK_CXX NAMES clang++ g++)
 find_program(CP_BENCHMARK_RUSTC NAMES rustc)
+find_program(CP_BENCHMARK_JAVAC NAMES javac)
+find_program(CP_BENCHMARK_JAVA NAMES java)
 
 add_executable(cp_benchmark_runner)
 
@@ -28,6 +30,8 @@ add_test(
         $<TARGET_FILE:cp>
         "${CP_BENCHMARK_CXX}"
         "${CP_BENCHMARK_RUSTC}"
+        "${CP_BENCHMARK_JAVAC}"
+        "${CP_BENCHMARK_JAVA}"
         ${CMAKE_CURRENT_SOURCE_DIR}/cases
 )
 
