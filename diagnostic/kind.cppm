@@ -24,6 +24,7 @@ export enum class diagnostic_kind : std::uint16_t
     expected_expression,
     expected_statement,
     expected_type,
+    empty_statement,
 
     // Semantic name, module, and symbol diagnostics.
     unknown_type,

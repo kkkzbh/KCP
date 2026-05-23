@@ -343,7 +343,7 @@ export struct semantic_result
 {
     auto accepted() const -> bool
     {
-        return diagnostics.empty();
+        return not contains_error_diagnostic(std::span{ diagnostics });
     }
 
     auto type_of(expr_id id) const -> semantic_type_id

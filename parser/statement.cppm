@@ -81,6 +81,10 @@ auto parser::parse_block_statement() -> std::optional<stmt_id>
 
     auto block = block_statement_syntax{};
     while(not check_any({ token_kind::r_brace, token_kind::eof })) {
+        if(consume_empty_statement()) {
+            continue;
+        }
+
         auto statement = parse_statement();
         if(not statement) {
             synchronize_statement();

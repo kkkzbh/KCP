@@ -307,7 +307,7 @@ struct llvm_type_lowerer
     {
         auto const* callable = callable_type(id);
         if(callable == nullptr) {
-            return llvm::FunctionType::get(llvm::Type::getVoidTy(context), false);
+            std::unreachable();
         }
 
         auto parameters = std::vector<llvm::Type*>{};
@@ -334,7 +334,7 @@ struct llvm_type_lowerer
         auto const& kind = module.types.get(length_type);
         auto const* value = std::get_if<integer_constant_type>(&kind);
         if(value == nullptr or value->value < 0) {
-            return 0;
+            std::unreachable();
         }
         return static_cast<std::uint64_t>(value->value);
     }
@@ -367,7 +367,12 @@ struct llvm_module_lowerer
     {
         declare_functions();
         for(auto const& function : ir.functions) {
-            lower_function(function);
+            if(not lower_function(function)) {
+                return llvm_emit_result {
+                    .verified = false,
+                    .error = error,
+                };
+            }
         }
 
         auto error = std::string{};
@@ -408,7 +413,7 @@ struct llvm_module_lowerer
         }
     }
 
-    auto lower_function(ir_function const& function) -> void
+    auto lower_function(ir_function const& function) -> bool
     {
         values.clear();
         blocks.clear();
@@ -430,9 +435,15 @@ struct llvm_module_lowerer
                 lower_instruction(instruction);
             }
             if(not blocks[index]->getTerminator()) {
-                emit_default_return(function.returns);
+                error = std::format(
+                    "unterminated MIR block '{}.{}'",
+                    function.name,
+                    function.blocks[index].name
+                );
+                return false;
             }
         }
+        return true;
     }
 
     auto lower_instruction(ir_instruction const& instruction) -> void
@@ -604,7 +615,7 @@ struct llvm_module_lowerer
             case minus_minus:
                 return builder.CreateSub(operand, llvm::ConstantInt::get(operand->getType(), 1));
             default:
-                return operand;
+                std::unreachable();
         }
     }
 
@@ -669,7 +680,7 @@ struct llvm_module_lowerer
             case greater_equal:
                 return bool_to_i8(compare(left, right, llvm::CmpInst::ICMP_SGE, llvm::CmpInst::FCMP_OGE));
             default:
-                return llvm::Constant::getNullValue(types.lower(instruction.type));
+                std::unreachable();
         }
     }
 
@@ -834,7 +845,7 @@ struct llvm_module_lowerer
             if(parameter->index < arguments.size()) {
                 return type_size(arguments[parameter->index]);
             }
-            return 0;
+            std::unreachable();
         }
         if(auto const* array = std::get_if<array_type>(&kind)) {
             return type_size_substituted(array->element, arguments) * types.array_length_value(types.substitute_integer(array->length, arguments));
@@ -914,7 +925,7 @@ struct llvm_module_lowerer
             if(parameter->index < arguments.size()) {
                 return type_align(arguments[parameter->index]);
             }
-            return 1;
+            std::unreachable();
         }
         if(auto const* array = std::get_if<array_type>(&kind)) {
             return type_align_substituted(array->element, arguments);
@@ -1028,16 +1039,6 @@ struct llvm_module_lowerer
         return builder.CreateZExt(value, llvm::Type::getInt8Ty(context));
     }
 
-    auto emit_default_return(semantic_type_id type) -> void
-    {
-        auto return_type = types.lower(type);
-        if(return_type->isVoidTy()) {
-            builder.CreateRetVoid();
-        } else {
-            builder.CreateRet(llvm::Constant::getNullValue(return_type));
-        }
-    }
-
     auto value(ir_value_id id) -> llvm::Value*
     {
         return values[id];
@@ -1059,6 +1060,7 @@ struct llvm_module_lowerer
     std::map<symbol_id, llvm::Function*> functions{};
     std::map<ir_value_id, llvm::Value*> values{};
     std::vector<llvm::BasicBlock*> blocks{};
+    std::string error{};
 };
 
 export auto emit_llvm_ir(ir_module const& ir) -> llvm_emit_result

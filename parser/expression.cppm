@@ -1058,6 +1058,10 @@ auto parser::parse_block_expression() -> std::optional<expr_id>
     auto statements = std::vector<stmt_id>{};
     auto tail = std::optional<expr_id>{};
     while(not check_any({ token_kind::r_brace, token_kind::eof })) {
+        if(consume_empty_statement()) {
+            continue;
+        }
+
         if (
             check_contextual("type")
             and peek(1uz).kind == token_kind::identifier

@@ -1838,11 +1838,18 @@ struct function_lowerer
         auto result_type = info_of(id).type;
         auto result_address = is_unit(result_type) ? ir_value_id{} : emit_alloca(result_type, "match.result");
         auto end_block = add_block("match.end");
-        auto fallback_block = end_block;
         auto arm_blocks = std::vector<ir_block_id>{};
         for(auto index = 0uz; index < node.arms.size(); ++index) {
             arm_blocks.emplace_back(add_block(std::format("match.arm.{}", index)));
         }
+        auto wildcard_arm = std::optional<std::size_t>{};
+        for(auto index = 0uz; index < node.arms.size(); ++index) {
+            if(std::holds_alternative<match_wildcard_pattern_syntax>(node.arms[index].pattern)) {
+                wildcard_arm = index;
+                break;
+            }
+        }
+        auto fallback_block = wildcard_arm ? arm_blocks[*wildcard_arm] : add_block("match.unreachable");
 
         auto tag = emit_extract_value(matched, semantic_type_ids::i32, 0uz);
         auto next_check = std::vector<ir_block_id>{};
@@ -1861,7 +1868,6 @@ struct function_lowerer
                     .opcode = ir_opcode::branch,
                     .targets = { arm_blocks[index] },
                 });
-                fallback_block = arm_blocks[index];
                 continue;
             }
 
@@ -1877,6 +1883,10 @@ struct function_lowerer
                 .operands = { condition_value },
                 .targets = { arm_blocks[index], next_check[index] },
             });
+        }
+        if(not wildcard_arm) {
+            current = fallback_block;
+            emit_panic(emit_string_literal("invalid match tag"));
         }
 
         auto reaches_end = false;
@@ -1897,6 +1907,8 @@ struct function_lowerer
         }
 
         if(not reaches_end) {
+            current = end_block;
+            emit_panic(emit_string_literal("entered unreachable match end"));
             current = arm_blocks.back();
             return {};
         }

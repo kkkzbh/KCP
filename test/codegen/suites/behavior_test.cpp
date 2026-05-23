@@ -324,6 +324,7 @@ answer() -> i32
     auto text = dump_ir(ir.module);
     test_parser::assert_true(text.contains("extract_value"), "MIR dump should inspect the variant tag and payload");
     test_parser::assert_true(text.contains("match.arm.0"), "MIR dump should contain match arms");
+    test_parser::assert_true(text.contains("match.unreachable"), "MIR dump should contain an explicit invalid-tag fallback");
 
     auto emitted = emit_llvm_ir(ir.module);
     test_parser::assert_true(emitted.verified, emitted.error.empty() ? "LLVM module should verify" : emitted.error);
@@ -505,6 +506,17 @@ main() -> i32
     test_parser::assert_true(emitted.ir.contains("define internal i32 @sum.mono."), "LLVM IR should define sum pack instance");
     test_parser::assert_true(emitted.ir.contains("define internal i32 @type_count.mono."), "LLVM IR should define type pack instance");
 }
+
+auto check_rejects_unterminated_ir_block() -> void
+{
+    auto module = ir_module{};
+    module.functions.emplace_back("bad", ir_linkage::external, semantic_type_ids::i32, symbol_id{0});
+    module.functions.back().blocks.emplace_back("entry");
+
+    auto emitted = emit_llvm_ir(module);
+    test_parser::assert_true(not emitted.verified, "LLVM lowering should reject unterminated MIR blocks");
+    test_parser::assert_true(emitted.error.contains("unterminated MIR block"), "unterminated MIR block should report a clear error");
+}
 } // namespace
 
 auto main() -> int
@@ -524,5 +536,6 @@ auto main() -> int
     check_new_delete_codegen();
     check_generic_function_codegen();
     check_parameter_pack_codegen();
+    check_rejects_unterminated_ir_block();
     return 0;
 }

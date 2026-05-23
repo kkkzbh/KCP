@@ -18,7 +18,9 @@ export auto parse_translation_unit(std::vector<token> tokens) -> parse_result
 {
     auto state = parser{ std::move(tokens) };
     auto root = state.parse_translation_unit_node();
-    auto accepted = state.diagnostics.empty() and root and state.peek().kind == token_kind::eof;
+    auto accepted = not contains_error_diagnostic(state.diagnostics.span())
+        and root
+        and state.peek().kind == token_kind::eof;
 
     return parse_result {
         .accepted = accepted,

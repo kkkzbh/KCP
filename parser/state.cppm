@@ -346,6 +346,17 @@ struct parser
         return consume();
     }
 
+    auto consume_empty_statement() -> bool
+    {
+        if(not check(token_kind::semicolon)) {
+            return false;
+        }
+
+        diagnostics.report(diagnostic_kind::empty_statement, peek().span);
+        consume();
+        return true;
+    }
+
     auto split_current_double_greater() -> bool
     {
         if(not injected.empty() or index >= tokens.size()) {

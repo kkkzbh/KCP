@@ -903,8 +903,11 @@ auto semantic_analyzer::validate_extern_c_function(function_syntax const& functi
 
 auto semantic_analyzer::is_extern_c_compatible_type(semantic_type_id type, bool allow_unit) const -> bool
 {
-    if(is_error(type) or is_inferred(type)) {
+    if(is_error(type)) {
         return true;
+    }
+    if(is_inferred(type)) {
+        return false;
     }
     auto const& kind = result.types.get(type);
     return std::visit(overloaded {

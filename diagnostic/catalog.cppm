@@ -56,6 +56,8 @@ export auto spec(diagnostic_kind kind) -> diagnostic_spec
             return { parser, error, "expected_statement"sv, "expected statement"sv };
         case expected_type:
             return { parser, error, "expected_type"sv, "expected type"sv };
+        case empty_statement:
+            return { parser, warning, "empty_statement"sv, "empty statement has no effect"sv };
         case unknown_type:
             return { semantic, error, "unknown_type"sv, "unknown type"sv };
         case invalid_type_argument:
@@ -141,4 +143,21 @@ export auto spec(diagnostic_kind kind) -> diagnostic_spec
     }
 
     std::unreachable();
+}
+
+export auto is_error_diagnostic(diagnostic_kind kind) -> bool
+{
+    return spec(kind).severity == diagnostic_severity::error;
+}
+
+export auto is_error_diagnostic(diagnostic const& value) -> bool
+{
+    return is_error_diagnostic(value.kind);
+}
+
+export auto contains_error_diagnostic(std::span<diagnostic const> diagnostics) -> bool
+{
+    return std::ranges::any_of(diagnostics, [](diagnostic const& value) {
+        return is_error_diagnostic(value);
+    });
 }

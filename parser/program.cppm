@@ -33,6 +33,10 @@ auto parser::parse_translation_unit_node() -> std::optional<translation_unit_syn
     }
 
     while(not check(token_kind::eof)) {
+        if(consume_empty_statement()) {
+            continue;
+        }
+
         auto exported = false;
         auto export_span = std::optional<source_span>{};
         if(check(token_kind::kw_export)) {
@@ -1035,39 +1039,43 @@ auto parser::parse_concept_id() -> std::optional<concept_id_syntax>
 
 auto parser::looks_like_concept_impl_block() const -> bool
 {
-    auto index = 1uz;
-    if(peek(index).kind == token_kind::less) {
-        auto depth = 0uz;
+    auto skip_angle_list = [&](std::size_t& index) -> bool {
+        if(peek(index).kind != token_kind::less) {
+            return true;
+        }
+
+        auto depth = 0;
         do {
             auto kind = peek(index).kind;
             if(kind == token_kind::less) {
                 ++depth;
             } else if(kind == token_kind::greater) {
                 --depth;
-            } else if(kind == token_kind::eof) {
+            } else if(kind == token_kind::greater_greater) {
+                depth -= 2;
+            } else if(kind == token_kind::greater_greater_equal or kind == token_kind::eof) {
+                return false;
+            }
+            if(depth < 0) {
                 return false;
             }
             ++index;
-        } while(depth > 0uz);
+        } while(depth > 0);
+
+        return true;
+    };
+
+    auto index = 1uz;
+    if(not skip_angle_list(index)) {
+        return false;
     }
 
     if(peek(index).kind != token_kind::identifier) {
         return false;
     }
     ++index;
-    if(peek(index).kind == token_kind::less) {
-        auto depth = 0uz;
-        do {
-            auto kind = peek(index).kind;
-            if(kind == token_kind::less) {
-                ++depth;
-            } else if(kind == token_kind::greater) {
-                --depth;
-            } else if(kind == token_kind::eof) {
-                return false;
-            }
-            ++index;
-        } while(depth > 0uz);
+    if(not skip_angle_list(index)) {
+        return false;
     }
     return peek(index).kind == token_kind::kw_for;
 }
@@ -1433,6 +1441,14 @@ auto parser::parse_default_or_deleted_impl_item(
     auto marker_text = marker->kind == token_kind::kw_delete
         ? std::string_view{ "delete" }
         : std::string_view{ marker->text };
+    if(marker_text != "default" and marker_text != "delete") {
+        diagnostics.report(
+            diagnostic_kind::expected_token,
+            "expected 'default' or 'delete' after '='",
+            marker->span
+        );
+        return std::nullopt;
+    }
     return arena.add(function_syntax {
         .full_span = combine_spans(start, semicolon->span),
         .kind = kind,

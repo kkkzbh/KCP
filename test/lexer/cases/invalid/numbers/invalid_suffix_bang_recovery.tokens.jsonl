@@ -1,0 +1,4 @@
+{"kind":"invalid","lexeme":"2A","start":0,"end":2,"line":1,"column":1,"flags":"start_of_line,recovered"}
+{"kind":"bang_equal","lexeme":"!=","start":2,"end":4,"line":1,"column":3,"flags":"-"}
+{"kind":"integer_literal","lexeme":"3","start":4,"end":5,"line":1,"column":5,"flags":"-"}
+{"kind":"eof","lexeme":"","start":5,"end":5,"line":1,"column":6,"flags":"-"}

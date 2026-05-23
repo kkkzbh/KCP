@@ -42,5 +42,13 @@ auto main() -> int
     assert_true(info.severity == diagnostic_severity::error, "diagnostic severity should be error");
     assert_true(info.code == "expected_expression", "diagnostic kind should be stable");
 
+    auto const warning = spec(diagnostic_kind::empty_statement);
+    assert_true(warning.stage == diagnostic_stage::parser, "empty statement should be a parser diagnostic");
+    assert_true(warning.severity == diagnostic_severity::warning, "empty statement should be a warning");
+    diagnostics.report(diagnostic_kind::empty_statement, span);
+    assert_true(not contains_error_diagnostic(diagnostics.span()), "warnings should not count as fatal diagnostics");
+    diagnostics.report(diagnostic_kind::expected_statement, span);
+    assert_true(contains_error_diagnostic(diagnostics.span()), "errors should count as fatal diagnostics");
+
     return 0;
 }

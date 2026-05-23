@@ -73,6 +73,7 @@ export auto constexpr is_recovery_delimiter(char ch) -> bool
         case '<':
         case '>':
         case '=':
+        case '!':
         case '&':
         case '|':
         case '^':

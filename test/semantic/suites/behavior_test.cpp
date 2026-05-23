@@ -1917,6 +1917,11 @@ export extern "C" answer() -> i32
         invalid_type_argument
     );
     expect_diagnostic(
+        "extern_c_inferred_return.cp",
+        "extern \"C\" text() { return \"abc\"; }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
         "extern_c_generic.cp",
         "extern \"C\" id<T>(value: T) -> T;",
         invalid_type_argument

@@ -262,10 +262,14 @@ requires T: partial_eq
 
 impl partial_eq<str> for string_like {
 }
+
+impl partial_eq<box<i32>> for box<i32> {
+}
 )"
     );
     auto generic_concept_parsed = parse_source(sources, generic_concept_source);
     test_parser::assert_true(generic_concept_parsed.accepted, "generic concept source should parse");
+    test_parser::assert_true(generic_concept_parsed.root->concept_impls.size() == 3, "generic concept source should preserve all concept impls");
     auto const& generic_concept = generic_concept_parsed.ast.node(generic_concept_parsed.root->concepts.front());
     test_parser::assert_true(generic_concept.generic_parameters.size() == 1, "concept should preserve generic parameters");
     test_parser::assert_true(
@@ -274,9 +278,13 @@ impl partial_eq<str> for string_like {
     auto const& generic_impl = generic_concept_parsed.ast.node(generic_concept_parsed.root->concept_impls.front());
     test_parser::assert_true(generic_impl.generic_parameters.size() == 1, "concept impl should preserve explicit generic parameters");
     test_parser::assert_true(generic_impl.concept_name.arguments.empty(), "concept impl should preserve omitted concept arguments");
-    auto const& explicit_impl = generic_concept_parsed.ast.node(generic_concept_parsed.root->concept_impls.back());
+    auto const& explicit_impl = generic_concept_parsed.ast.node(generic_concept_parsed.root->concept_impls[1]);
     test_parser::assert_true(explicit_impl.concept_name.arguments.size() == 1, "concept impl should preserve explicit concept arguments");
     test_parser::assert_true(explicit_impl.generic_parameters.empty(), "non-generic concept impl should allow an omitted impl parameter list");
+    auto const& nested_impl = generic_concept_parsed.ast.node(generic_concept_parsed.root->concept_impls.back());
+    auto const& nested_argument = std::get<type_argument_type_syntax>(nested_impl.concept_name.arguments.front());
+    auto const& nested_argument_type = generic_concept_parsed.ast.node(nested_argument.type);
+    test_parser::assert_true(nested_argument_type.arguments.size() == 1, "concept impl lookahead should preserve nested type arguments split from >>");
 
     auto const pack_source = sources.add_source (
         "api_template_for_pack.cp",
@@ -1024,6 +1032,17 @@ main()
     test_parser::assert_true(take_function.parameters.front().self_is_move, "self move& should be recorded on the receiver");
     auto const& reset_function = ownership.ast.node(ownership_impl.functions[2]);
     test_parser::assert_true(reset_function.deleted and not reset_function.has_body, "= delete should produce a bodyless deleted function");
+
+    auto const bad_default_source = sources.add_source (
+        "api_bad_default_marker.cp",
+        R"(struct broken {
+}
+
+impl broken {
+    reset() = nope;
+})");
+    auto bad_default = parse_source(sources, bad_default_source);
+    test_parser::assert_true(not bad_default.accepted, "impl items should reject default/delete markers other than default or delete");
 
     auto const memory_syntax_source = sources.add_source (
         "api_new_delete.cp",

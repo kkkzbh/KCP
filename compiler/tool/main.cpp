@@ -238,7 +238,8 @@ auto print_diagnostic(source_manager const& sources, diagnostic const& value) ->
 {
     print_position(sources, value.primary_span);
     auto const info = spec(value.kind);
-    std::cerr << stage_name(info.stage) << '(' << info.code << "): " << value.message << '\n';
+    std::cerr << severity_name(info.severity) << ": " << stage_name(info.stage) << '(' << info.code << "): "
+              << value.message << '\n';
 }
 
 auto shell_quote(std::string_view value) -> std::string
@@ -491,7 +492,7 @@ auto main(int argc, char** argv) -> int
         for(auto const& diagnostic : preprocessed.diagnostics) {
             print_diagnostic(sources, diagnostic);
         }
-        if(not preprocessed.diagnostics.empty()) {
+        if(contains_error_diagnostic(std::span{ preprocessed.diagnostics })) {
             parse_ok = false;
             continue;
         }
@@ -500,7 +501,7 @@ auto main(int argc, char** argv) -> int
         for(auto const& diagnostic : lexical.diagnostics) {
             print_diagnostic(sources, diagnostic);
         }
-        if(not lexical.diagnostics.empty()) {
+        if(contains_error_diagnostic(std::span{ lexical.diagnostics })) {
             parse_ok = false;
             continue;
         }

@@ -208,12 +208,12 @@ auto parse_source(std::string path, std::string text) -> module_source
     auto sources = source_manager{};
     auto const file = sources.add_source(path, text);
     auto preprocessed = preprocess(sources, file);
-    if(not preprocessed.diagnostics.empty()) {
+    if(contains_error_diagnostic(std::span{ preprocessed.diagnostics })) {
         return module_source{ .file = source_file{ .path = std::move(path), .text = std::move(text) } };
     }
 
     auto lexical = lex(preprocessed);
-    if(not lexical.diagnostics.empty()) {
+    if(contains_error_diagnostic(std::span{ lexical.diagnostics })) {
         return module_source{ .file = source_file{ .path = std::move(path), .text = std::move(text) } };
     }
 

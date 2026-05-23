@@ -280,6 +280,14 @@ auto check_error_rejects_output(test_tools const& tools) -> void
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status != 0, "semantic error should make cp fail");
     test_parser::assert_true(not std::filesystem::exists(app), "failed compile should not produce output");
+
+    auto extern_source = dir / "extern_bad.cp";
+    auto extern_app = dir / "extern_bad";
+    write_source(extern_source, "extern \"C\" text() { return \"abc\"; }");
+
+    auto extern_status = compile(tools, { extern_source.string(), "-o", extern_app.string() });
+    test_parser::assert_true(extern_status != 0, "extern C inferred return should make cp fail");
+    test_parser::assert_true(not std::filesystem::exists(extern_app), "failed extern C compile should not produce output");
 }
 
 auto check_keep_ll(test_tools const& tools) -> void
