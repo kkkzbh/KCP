@@ -32,7 +32,7 @@
 - `std.text.string`: 定义拥有字符存储的 `string`，维护 trailing `'\0'`，并可通过 `as_str()` 借出 `str`。
 - `std.ranges.iota`: 定义可被范围 `for` 消费的泛型半开范围 `iota(begin, end)`，要求元素类型满足 `equality_comparable<T>` 和 `incrementable`。
 - `std.compare`: `partial_ordering`、`weak_ordering`、`strong_ordering` 表达三路比较结果；`strict_weak_order<T>` 要求比较器可用 `compare(left, right)` 形式调用；`equality_comparable<Rhs = this>` 要求 `==` 返回 `bool`；`three_way_comparable<Rhs = this, Category = weak_ordering>` 要求 `<=>` 返回指定比较分类；`incrementable` 要求前置 `++` 返回 `this&`；`less<T>` 和 `greater<T>` 分别基于 `<` 和 `>`。第一版 `sort` / `map` / `set` 默认比较器仍基于 `strict_weak_order`，不把 `partial_ordering` 作为默认有序容器比较结果。
-- `std.algorithm.sort`: `sort<T: mutable_object, Compare: strict_weak_order<T> = less<T>>(values: span<T>, compare: Compare = Compare{}) -> void` 使用三路快速排序实现。`span<T>` 必须借用可写元素，`T: mutable_object` 会拒绝只读元素视图。
+- `std.algorithm.sort`: `sort<T: mutable_object, Compare: strict_weak_order<T> = less<T>>(values: span<T>, compare: Compare = Compare{}) -> void` 使用 Timsort 实现。`span<T>` 必须借用可写元素，`T: mutable_object` 会拒绝只读元素视图。
 
 `map` 和 `set` 的插入不覆盖已有 key。重复插入返回已有 node，结果中的 `inserted` 为 `false`。`find` 返回 `optional`，`at` 和 `nth` 是前置条件访问，违反时通过 `assert`/`panic` 终止。
 

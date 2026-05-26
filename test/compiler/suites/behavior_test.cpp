@@ -1874,6 +1874,11 @@ auto check_std_sort_binary(test_tools const& tools) -> void
         source,
         R"(import std;
 
+struct record {
+    key: i32;
+    order: i32;
+}
+
 main() -> i32
 {
     let values = vector<i32>{};
@@ -1921,6 +1926,35 @@ main() -> i32
     }
     if(*(text.data() + text.size()) != '\0') {
         return 9;
+    }
+
+    let records = vector<record>{};
+    let index: i32 = 0;
+    while(index < 70) {
+        let key = index % 7;
+        if(index % 2 == 0) {
+            key = 6 - key;
+        }
+        records.push_back(record{ .key = key, .order = index });
+        index += 1;
+    }
+
+    sort(records, f(left: record const&, right: record const&) -> bool {
+        left.key < right.key
+    });
+
+    let last_seen: [i32; 7] = [-1, -1, -1, -1, -1, -1, -1];
+    let record_index: usize = 0;
+    while(record_index < records.size()) {
+        if(record_index > 0 and records[record_index].key < records[record_index - 1].key) {
+            return 10;
+        }
+        let key = records[record_index].key;
+        if(records[record_index].order <= last_seen[key as usize]) {
+            return 11;
+        }
+        last_seen[key as usize] = records[record_index].order;
+        record_index += 1;
     }
 
     return values[0 as usize] + values[1 as usize] * 10 + values[2 as usize] * 7;
