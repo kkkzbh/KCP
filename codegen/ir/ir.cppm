@@ -415,6 +415,9 @@ struct function_lowerer
         auto address = emit_alloca(type, function->parameters.back().name);
         bind(parameter_symbol, address);
         emit_store(address, value, type);
+        if(not is_reference(type)) {
+            register_cleanup(parameter_symbol, address, type);
+        }
     }
 
     auto implicit_destructor_self_symbol() const -> symbol_id
@@ -578,6 +581,77 @@ struct function_lowerer
         return address;
     }
 
+    auto expression_requests_move(expr_id id) const -> bool
+    {
+        auto const& expression = parsed->ast.node(stripped_expression(id));
+        auto const* unary = std::get_if<unary_expr_syntax>(&expression);
+        return unary != nullptr
+               and (unary->operator_kind == token_kind::kw_move or unary->operator_kind == token_kind::kw_forward);
+    }
+
+    auto copy_move_constructor_for(expr_id argument, semantic_type_id target_type) const -> symbol_id
+    {
+        auto info = info_of(argument);
+        if(read_type(info.type) != read_type(target_type) or not info.is_lvalue) {
+            return {};
+        }
+        auto struct_index = struct_index_of(target_type);
+        if(not struct_index) {
+            return {};
+        }
+
+        auto wants_move = expression_requests_move(argument);
+        for(auto symbol : module.structs[*struct_index].constructors) {
+            auto const& constructor = semantics.symbols[symbol.value];
+            if(semantic_function_body_is_deleted(constructor.body_kind)) {
+                continue;
+            }
+            auto const* function = std::get_if<function_type>(&module.types.get(constructor.type));
+            if(function == nullptr or function->parameters.size() != 1uz) {
+                continue;
+            }
+            auto const* reference = std::get_if<reference_type>(&module.types.get(function->parameters.front()));
+            if(reference == nullptr or read_type(reference->pointee) != read_type(target_type)) {
+                continue;
+            }
+            if(wants_move) {
+                if(reference->reference_kind == reference_type::kind::move and not reference->is_const) {
+                    return symbol;
+                }
+                continue;
+            }
+            if(reference->reference_kind == reference_type::kind::regular and (reference->is_const or not info.is_const)) {
+                return symbol;
+            }
+        }
+        return {};
+    }
+
+    auto emit_constructed_value(expr_id argument, semantic_type_id target_type) -> ir_value_id
+    {
+        if(auto constructor = copy_move_constructor_for(argument, target_type); constructor.valid()) {
+            auto const* function = std::get_if<function_type>(&module.types.get(semantics.symbols[constructor.value].type));
+            if(function == nullptr or function->parameters.empty()) {
+                return unsupported_expression("copy/move constructor is missing function type");
+            }
+            auto value = emit_argument_for_parameter(argument, function->parameters.front());
+            if(not value.valid()) {
+                return {};
+            }
+
+            auto instruction = emit_value_instruction(ir_opcode::call, function->returns);
+            instruction.symbol = constructor;
+            instruction.operands = { value };
+            return emit(std::move(instruction));
+        }
+
+        auto value = emit_expression(argument);
+        if(not value.valid()) {
+            return {};
+        }
+        return cast_to(value, info_of(argument).read_type, target_type);
+    }
+
     auto emit_argument_for_parameter(expr_id argument, semantic_type_id parameter) -> ir_value_id
     {
         if(auto const* reference = std::get_if<reference_type>(&module.types.get(parameter))) {
@@ -594,11 +668,7 @@ struct function_lowerer
             emit_store(address, value, reference->pointee);
             return address;
         }
-        auto value = emit_expression(argument);
-        if(not value.valid()) {
-            return {};
-        }
-        return cast_to(value, info_of(argument).read_type, parameter);
+        return emit_constructed_value(argument, parameter);
     }
 
     auto parameter_symbol_for_default(std::size_t context, std::size_t unit, parameter_syntax const& parameter) const -> symbol_id
@@ -844,11 +914,11 @@ struct function_lowerer
                         register_cleanup(symbol, address, type);
                         return true;
                     }
-                    auto initializer = emit_expression(node.initializer);
+                    auto initializer = emit_constructed_value(node.initializer, type);
                     if(not initializer.valid()) {
                         return current_block().terminated();
                     }
-                    emit_store(address, materialize_conversion(node.initializer, initializer), type);
+                    emit_store(address, initializer, type);
                     register_cleanup(symbol, address, type);
                     return true;
                 },
@@ -866,19 +936,21 @@ struct function_lowerer
                 },
                 [&](return_statement_syntax const& node) {
                     if(node.value) {
+                        auto nrvo_candidate = semantics.nrvo_return_of(current_context_index(), unit_index, id);
                         auto value = ir_value_id{};
                         if(is_reference(function->returns)) {
                             value = emit_address(*node.value);
-                        } else {
+                        } else if(nrvo_candidate.valid()) {
                             value = emit_expression(*node.value);
+                        } else {
+                            value = emit_constructed_value(*node.value, function->returns);
                         }
                         if(not value.valid()) {
                             return current_block().terminated();
                         }
-                        if(not is_reference(function->returns)) {
+                        if(not is_reference(function->returns) and nrvo_candidate.valid()) {
                             value = materialize_conversion(*node.value, value);
                         }
-                        auto nrvo_candidate = semantics.nrvo_return_of(current_context_index(), unit_index, id);
                         emit_cleanups_to(0uz, nrvo_candidate);
                         emit_void(ir_instruction {
                             .opcode = ir_opcode::return_,
@@ -1430,11 +1502,11 @@ struct function_lowerer
             return emit_initialize_struct_initializer(*initializer, stripped_expression(id), address, target_type);
         }
 
-        auto value = emit_expression(id);
+        auto value = emit_constructed_value(id, target_type);
         if(not value.valid()) {
             return false;
         }
-        emit_store(address, materialize_conversion(id, value), target_type);
+        emit_store(address, value, target_type);
         return true;
     }
 
@@ -1447,11 +1519,11 @@ struct function_lowerer
         for(auto index = 0uz; index < elements.size(); ++index) {
             auto index_value = emit_integer_literal(semantic_type_ids::builtin(builtin_type_kind::usize), index);
             auto element_address = emit_element_address(address, index_value, type, shape->element);
-            auto value = emit_expression(elements[index]);
+            auto value = emit_constructed_value(elements[index], shape->element);
             if(not element_address.valid() or not value.valid()) {
                 return false;
             }
-            emit_store(element_address, materialize_conversion(elements[index], value), shape->element);
+            emit_store(element_address, value, shape->element);
         }
         return true;
     }
@@ -1464,11 +1536,11 @@ struct function_lowerer
         }
         for(auto index = 0uz; index < elements.size(); ++index) {
             auto element_address = emit_field_address(address, type, tuple->elements[index], index);
-            auto value = emit_expression(elements[index]);
+            auto value = emit_constructed_value(elements[index], tuple->elements[index]);
             if(not element_address.valid() or not value.valid()) {
                 return false;
             }
-            emit_store(element_address, materialize_conversion(elements[index], value), tuple->elements[index]);
+            emit_store(element_address, value, tuple->elements[index]);
         }
         return true;
     }
@@ -1507,11 +1579,11 @@ struct function_lowerer
                     continue;
                 }
                 auto field_address = emit_field_address(address, type, str_field_type(static_cast<std::uint32_t>(*field)), *field);
-                auto value = emit_expression(value_id);
+                auto value = emit_constructed_value(value_id, str_field_type(static_cast<std::uint32_t>(*field)));
                 if(not field_address.valid() or not value.valid()) {
                     return false;
                 }
-                emit_store(field_address, materialize_conversion(value_id, value), str_field_type(static_cast<std::uint32_t>(*field)));
+                emit_store(field_address, value, str_field_type(static_cast<std::uint32_t>(*field)));
             }
             return true;
         }
@@ -1520,11 +1592,11 @@ struct function_lowerer
             for(auto index = 0uz; index < positional.size(); ++index) {
                 auto index_value = emit_integer_literal(semantic_type_ids::builtin(builtin_type_kind::usize), index);
                 auto element_address = emit_element_address(address, index_value, type, shape->element);
-                auto value = emit_expression(positional[index]);
+                auto value = emit_constructed_value(positional[index], shape->element);
                 if(not element_address.valid() or not value.valid()) {
                     return false;
                 }
-                emit_store(element_address, materialize_conversion(positional[index], value), shape->element);
+                emit_store(element_address, value, shape->element);
             }
             return true;
         }
@@ -1560,15 +1632,11 @@ struct function_lowerer
             };
             auto field_type = struct_field_type(type, field_access);
             auto field_address = emit_field_address(address, type, field_type, *field);
-            auto value = is_reference(field_type) ? emit_address(value_id) : emit_expression(value_id);
+            auto value = is_reference(field_type) ? emit_address(value_id) : emit_constructed_value(value_id, field_type);
             if(not field_address.valid() or not value.valid()) {
                 return false;
             }
-            emit_store(
-                field_address,
-                is_reference(field_type) ? value : materialize_conversion(value_id, value),
-                field_type
-            );
+            emit_store(field_address, value, field_type);
         }
         return true;
     }
@@ -1594,7 +1662,7 @@ struct function_lowerer
         }
         auto aggregate = emit_aggregate_undef(type);
         for(auto index = 0uz; index < elements.size(); ++index) {
-            auto value = emit_expression(elements[index]);
+            auto value = emit_constructed_value(elements[index], shape->element);
             if(not value.valid()) {
                 return {};
             }
@@ -1619,12 +1687,13 @@ struct function_lowerer
 
     auto emit_tuple_literal(std::vector<expr_id> const& elements, semantic_type_id type) -> ir_value_id
     {
-        if(not std::holds_alternative<tuple_type>(module.types.get(type))) {
+        auto const* tuple = std::get_if<tuple_type>(&module.types.get(type));
+        if(tuple == nullptr) {
             return unsupported_expression("tuple literal is missing tuple type");
         }
         auto aggregate = emit_aggregate_undef(type);
         for(auto index = 0uz; index < elements.size(); ++index) {
-            auto value = emit_expression(elements[index]);
+            auto value = emit_constructed_value(elements[index], tuple->elements[index]);
             if(not value.valid()) {
                 return {};
             }
@@ -1677,23 +1746,23 @@ struct function_lowerer
                 if(not field or *field >= 2uz) {
                     continue;
                 }
-                auto value = emit_expression(value_id);
+                auto value = emit_constructed_value(value_id, str_field_type(*field));
                 if(not value.valid()) {
                     return {};
                 }
-                aggregate = emit_insert_value(aggregate, materialize_conversion(value_id, value), type, *field);
+                aggregate = emit_insert_value(aggregate, value, type, *field);
             }
             return aggregate;
         }
         if(not std::holds_alternative<struct_type>(module.types.get(type))) {
-            if(std::holds_alternative<array_type>(module.types.get(type))) {
+            if(auto const* array = std::get_if<array_type>(&module.types.get(type))) {
                 auto positional = positional_initializers(node);
                 for(auto index = 0uz; index < positional.size(); ++index) {
-                    auto value = emit_expression(positional[index]);
+                    auto value = emit_constructed_value(positional[index], array->element);
                     if(not value.valid()) {
                         return {};
                     }
-                    aggregate = emit_insert_value(aggregate, materialize_conversion(positional[index], value), type, index);
+                    aggregate = emit_insert_value(aggregate, value, type, index);
                 }
                 return aggregate;
             }
@@ -1726,16 +1795,11 @@ struct function_lowerer
                 .field_index = static_cast<std::uint32_t>(*field),
             };
             auto field_type = struct_field_type(type, field_access);
-            auto value = is_reference(field_type) ? emit_address(value_id) : emit_expression(value_id);
+            auto value = is_reference(field_type) ? emit_address(value_id) : emit_constructed_value(value_id, field_type);
             if(not value.valid()) {
                 return {};
             }
-            aggregate = emit_insert_value(
-                aggregate,
-                is_reference(field_type) ? value : materialize_conversion(value_id, value),
-                type,
-                *field
-            );
+            aggregate = emit_insert_value(aggregate, value, type, *field);
         }
         return aggregate;
     }
@@ -2079,7 +2143,7 @@ struct function_lowerer
         pointer_instruction.operands.emplace_back(count);
         pointer_instruction.aggregate_type = builtin.type;
         auto pointer = emit(std::move(pointer_instruction));
-        auto value = emit_expression(node.initializer);
+        auto value = emit_constructed_value(node.initializer, builtin.type);
         if(not pointer.valid() or not value.valid()) {
             return {};
         }
@@ -2562,7 +2626,7 @@ struct function_lowerer
             }
             case construct_at: {
                 auto pointer = emit_expression(node.arguments.front());
-                auto value = emit_expression(node.arguments[1uz]);
+                auto value = emit_constructed_value(node.arguments[1uz], builtin.type);
                 if(not pointer.valid() or not value.valid()) {
                     return {};
                 }

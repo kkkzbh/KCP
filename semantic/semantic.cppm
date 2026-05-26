@@ -360,6 +360,7 @@ private:
     auto pointer_value_pointee(semantic_type_id type) const -> std::optional<semantic_type_id>;
     auto aggregate_context_for(std::optional<semantic_type_id> expected) -> std::optional<aggregate_context>;
     auto struct_context_for(std::optional<semantic_type_id> expected) -> std::optional<std::uint32_t>;
+    auto parameter_conversion_score(expression_info const& argument, semantic_type_id parameter) -> std::optional<int>;
     auto choose_constructor(semantic_type_id type, std::vector<expression_info> const& arguments, source_span span) -> std::optional<symbol_id>;
     auto constructor_score(function_signature const& signature, std::vector<expression_info> const& arguments)
         -> std::optional<int>;

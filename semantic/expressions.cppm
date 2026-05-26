@@ -311,6 +311,25 @@ auto semantic_analyzer::operator_expression_info(symbol_id symbol) -> expression
     return expression_info{ .type = callable->returns };
 }
 
+auto semantic_analyzer::parameter_conversion_score(expression_info const& argument, semantic_type_id parameter) -> std::optional<int>
+{
+    if(not can_implicitly_convert(argument, parameter)) {
+        return std::nullopt;
+    }
+
+    auto exact = read_type(argument.type) == read_type(parameter);
+    auto reference_penalty = 0;
+    if(auto const* reference = std::get_if<reference_type>(&result.types.get(parameter))) {
+        if(exact
+           and reference->reference_kind == reference_type::kind::regular
+           and reference->is_const
+           and not argument.is_lvalue) {
+            reference_penalty = 1;
+        }
+    }
+    return (exact ? 0 : 2) + reference_penalty;
+}
+
 auto semantic_analyzer::operator_score(symbol_id symbol, std::vector<expression_info> const& arguments, std::optional<semantic_type_id> receiver_type, source_span span) -> std::optional<operator_match>
 {
     auto actual_symbol = symbol;
@@ -338,14 +357,11 @@ auto semantic_analyzer::operator_score(symbol_id symbol, std::vector<expression_
                 return std::nullopt;
             }
         }
-        if(read_type(arguments[index].type) == read_type(parameter) and can_implicitly_convert(arguments[index], parameter)) {
-            continue;
+        if(auto conversion_score = parameter_conversion_score(arguments[index], parameter)) {
+            score += *conversion_score;
+        } else {
+            return std::nullopt;
         }
-        if(can_implicitly_convert(arguments[index], parameter)) {
-            ++score;
-            continue;
-        }
-        return std::nullopt;
     }
     return operator_match{ actual_symbol, score, generic_score };
 }
@@ -2182,14 +2198,11 @@ auto semantic_analyzer::constructor_score(function_signature const& signature, s
     }
     auto score = 0;
     for(auto index = 0uz; index < arguments.size(); ++index) {
-        if(read_type(arguments[index].type) == read_type(signature.parameters[index])) {
-            continue;
+        if(auto conversion_score = parameter_conversion_score(arguments[index], signature.parameters[index])) {
+            score += *conversion_score;
+        } else {
+            return std::nullopt;
         }
-        if(can_implicitly_convert(arguments[index], signature.parameters[index])) {
-            ++score;
-            continue;
-        }
-        return std::nullopt;
     }
     return score;
 }
