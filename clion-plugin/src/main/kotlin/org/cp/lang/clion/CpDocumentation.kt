@@ -3,6 +3,7 @@ package org.cp.lang.clion
 import com.intellij.lang.documentation.AbstractDocumentationProvider
 import com.intellij.lang.documentation.DocumentationMarkup
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.util.Key
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 
@@ -52,14 +53,14 @@ object CpDocumentationEngine {
         val resolved = originalElement?.reference?.resolve() ?: originalElement?.parent?.reference?.resolve()
         val candidate = resolved ?: element.reference?.resolve() ?: element.parent?.reference?.resolve() ?: element
         return when (candidate.cpElementType()) {
-            CpElements.FUNCTION_NAME -> candidate.parentByType(CpElements.FUNCTION)?.functionDoc()
+            CpElements.FUNCTION_NAME -> candidate.parentByType(CpElements.FUNCTION)?.cachedDoc { functionDoc() }
             CpElements.TYPE_NAME -> candidate.typeDoc()
-            CpElements.FIELD_DECLARATION -> candidate.parentByType(CpElements.STRUCT_FIELD)?.fieldDoc()
-            CpElements.MEMBER_NAME -> candidate.reference?.resolve()?.parentByType(CpElements.STRUCT_FIELD)?.fieldDoc()
-            CpElements.GENERIC_PARAMETER_NAME -> CpDocTarget("generic ${candidate.text}", emptyList())
+            CpElements.FIELD_DECLARATION -> candidate.parentByType(CpElements.STRUCT_FIELD)?.cachedDoc { fieldDoc() }
+            CpElements.MEMBER_NAME -> candidate.reference?.resolve()?.parentByType(CpElements.STRUCT_FIELD)?.cachedDoc { fieldDoc() }
+            CpElements.GENERIC_PARAMETER_NAME -> candidate.cachedDoc { CpDocTarget("generic $text", emptyList()) }
             else -> when (candidate.cpElementType()) {
-                CpElements.FUNCTION -> candidate.functionDoc()
-                CpElements.STRUCT_FIELD -> candidate.fieldDoc()
+                CpElements.FUNCTION -> candidate.cachedDoc { functionDoc() }
+                CpElements.STRUCT_FIELD -> candidate.cachedDoc { fieldDoc() }
                 else -> null
             }
         }
@@ -92,11 +93,11 @@ object CpDocumentationEngine {
             else -> reference?.resolve()?.parent
         } ?: return null
         return when (declaration.cpElementType()) {
-            CpElements.STRUCT_DECLARATION -> declaration.structDoc()
-            CpElements.ENUM_DECLARATION -> declaration.enumDoc()
-            CpElements.VARIANT_DECLARATION -> declaration.variantDoc()
-            CpElements.CONCEPT_DECLARATION -> declaration.conceptDoc()
-            CpElements.TYPE_ALIAS -> declaration.typeAliasDoc()
+            CpElements.STRUCT_DECLARATION -> declaration.cachedDoc { structDoc() }
+            CpElements.ENUM_DECLARATION -> declaration.cachedDoc { enumDoc() }
+            CpElements.VARIANT_DECLARATION -> declaration.cachedDoc { variantDoc() }
+            CpElements.CONCEPT_DECLARATION -> declaration.cachedDoc { conceptDoc() }
+            CpElements.TYPE_ALIAS -> declaration.cachedDoc { typeAliasDoc() }
             else -> null
         }
     }
@@ -169,6 +170,20 @@ object CpDocumentationEngine {
             .replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")
+
+    private fun PsiElement.cachedDoc(build: PsiElement.() -> CpDocTarget?): CpDocTarget? {
+        val stamp = containingFile?.modificationStamp ?: docModificationStampFallback
+        getUserData(docCacheKey)?.takeIf { it.modificationStamp == stamp }?.let {
+            return it.target
+        }
+
+        val target = build()
+        putUserData(docCacheKey, CachedDocTarget(stamp, target))
+        return target
+    }
+
+    private val docCacheKey = Key.create<CachedDocTarget>("org.cp.lang.clion.documentation.target")
+    private const val docModificationStampFallback = -1L
 }
 
 data class CpDocTarget(
@@ -179,4 +194,9 @@ data class CpDocTarget(
 data class CpDocSection(
     val title: String,
     val content: String,
+)
+
+private data class CachedDocTarget(
+    val modificationStamp: Long,
+    val target: CpDocTarget?,
 )

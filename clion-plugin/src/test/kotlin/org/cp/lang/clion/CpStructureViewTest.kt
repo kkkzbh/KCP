@@ -2,6 +2,7 @@ package org.cp.lang.clion
 
 import com.intellij.lang.LanguageParserDefinitions
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import org.junit.Assert.assertFalse
 
 class CpStructureViewTest : BasePlatformTestCase() {
     private val parserDefinition = CpParserDefinition()
@@ -78,5 +79,22 @@ class CpStructureViewTest : BasePlatformTestCase() {
             "get",
             "main",
         )
+    }
+
+    fun testStructureCacheInvalidatesAfterEdit() {
+        myFixture.configureByText(
+            CpFileType.INSTANCE,
+            """
+            main() {}
+            <caret>
+            """.trimIndent(),
+        )
+
+        val first = CpStructureEngine.labels(myFixture.file)
+        myFixture.type("helper() {}\n")
+        val second = CpStructureEngine.labels(myFixture.file)
+
+        assertFalse("helper" in first)
+        assertContainsElements(second, "main", "helper")
     }
 }

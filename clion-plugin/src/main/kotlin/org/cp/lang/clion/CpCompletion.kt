@@ -6,7 +6,9 @@ import com.intellij.codeInsight.completion.CompletionProvider
 import com.intellij.codeInsight.completion.CompletionResultSet
 import com.intellij.codeInsight.completion.CompletionType
 import com.intellij.codeInsight.lookup.LookupElementBuilder
+import com.intellij.openapi.util.Key
 import com.intellij.patterns.PlatformPatterns
+import com.intellij.psi.PsiFile
 import com.intellij.util.ProcessingContext
 
 class CpCompletionContributor : CompletionContributor() {
@@ -75,38 +77,35 @@ object CpCompletionEngine {
         "nullptr",
     )
 
-    fun items(file: com.intellij.psi.PsiFile, offset: Int): List<CpCompletionItem> {
-        val text = file.text
+    fun items(file: PsiFile, offset: Int): List<CpCompletionItem> {
+        val text = file.completionText()
+        val importNameContext = looksLikeImportName(text, offset)
+        val memberAccessContext = looksLikeMemberAccess(text, offset)
+        val indexed = CpCompletionItemIndex.get(file)
         val items = mutableListOf<CpCompletionItem>()
         val seen = linkedSetOf<String>()
 
-        fun add(name: String, tail: String? = null, type: String? = null) {
-            if (name.isBlank() || !seen.add(name)) {
+        fun add(item: CpCompletionItem) {
+            if (item.name.isBlank() || !seen.add(item.name)) {
                 return
             }
-            items += CpCompletionItem(name, tail, type)
+            items += item
         }
 
-        if (looksLikeImportName(text, offset)) {
-            for (module in file.descendants(CpElements.MODULE_NAME)) {
-                add(module.text, type = "模块")
-            }
-            for (importName in file.descendants(CpElements.IMPORT_NAME)) {
-                add(importName.text, type = "模块")
+        fun add(name: String, tail: String? = null, type: String? = null) {
+            add(CpCompletionItem(name, tail, type))
+        }
+
+        if (importNameContext) {
+            for (item in indexed.imports) {
+                add(item)
             }
             return items
         }
 
-        if (looksLikeMemberAccess(text, offset)) {
-            for (field in file.descendants(CpElements.FIELD_DECLARATION)) {
-                if (field.parent?.cpElementType() == CpElements.STRUCT_FIELD) {
-                    add(field.text, type = "字段")
-                }
-            }
-            for (function in file.descendants(CpElements.FUNCTION_NAME)) {
-                if (function.parent?.parentByType(CpElements.IMPL_BLOCK) != null) {
-                    add(function.text, tail = "()", type = "方法")
-                }
+        if (memberAccessContext) {
+            for (item in indexed.members) {
+                add(item)
             }
             return items
         }
@@ -114,54 +113,209 @@ object CpCompletionEngine {
         for (keyword in keywords) {
             add(keyword)
         }
-        for (parameter in file.descendants(CpElements.PARAMETER_NAME)) {
-            if (parameter.textRange.startOffset < offset) {
-                add(parameter.text, type = "参数")
+        val activeSymbols = CpFileSymbolIndex.get(file)
+        for (parameter in activeSymbols.parameters) {
+            if (parameter.offset < offset) {
+                add(parameter.name, type = "参数")
             }
         }
-        for (local in file.descendants(CpElements.LOCAL_DECLARATION)) {
-            if (local.textRange.startOffset < offset) {
-                add(local.text, type = "局部变量")
+        for (local in activeSymbols.locals) {
+            if (local.offset < offset) {
+                add(local.name, type = "局部变量")
             }
         }
-        for (function in file.descendants(CpElements.FUNCTION_NAME)) {
-            add(function.text, tail = "()", type = "函数")
-        }
-        for (type in file.descendants(CpElements.TYPE_NAME)) {
-            if (type.isCompletionTypeDeclaration()) {
-                add(type.text, type = "类型")
-            }
-        }
-        for (caseName in file.descendants(CpElements.VARIANT_CASE_NAME)) {
-            add(caseName.text, type = "变体分支")
-        }
-        for (caseName in file.descendants(CpElements.ENUM_CASE_NAME)) {
-            add(caseName.text, type = "枚举项")
+        for (item in indexed.globals) {
+            add(item)
         }
         return items
     }
 
-    private fun looksLikeImportName(text: String, offset: Int): Boolean {
-        val lineStart = text.lastIndexOf('\n', (offset - 1).coerceAtLeast(0)).let { if (it < 0) 0 else it + 1 }
-        val prefix = text.substring(lineStart, offset.coerceIn(lineStart, text.length))
-        return Regex("""^\s*(?:export\s+)?import\s+[\w.]*$""").matches(prefix)
+    private fun looksLikeImportName(text: CharSequence, offset: Int): Boolean {
+        val end = offset.coerceIn(0, text.length)
+        var lineStart = end
+        while (lineStart > 0 && text[lineStart - 1] != '\n') {
+            lineStart -= 1
+        }
+
+        var index = skipWhitespace(text, lineStart, end)
+        if (startsWithKeyword(text, index, end, "export")) {
+            index += "export".length
+            if (index >= end || !text[index].isWhitespace()) {
+                return false
+            }
+            index = skipWhitespace(text, index, end)
+        }
+
+        if (!startsWithKeyword(text, index, end, "import")) {
+            return false
+        }
+        index += "import".length
+        if (index >= end || !text[index].isWhitespace()) {
+            return false
+        }
+        index = skipWhitespace(text, index, end)
+        while (index < end) {
+            val char = text[index]
+            if (!char.isLetterOrDigit() && char != '_' && char != '.') {
+                return false
+            }
+            index += 1
+        }
+        return true
     }
 
-    private fun looksLikeMemberAccess(text: String, offset: Int): Boolean {
-        var index = (offset - 1).coerceAtMost(text.lastIndex)
+    private fun looksLikeMemberAccess(text: CharSequence, offset: Int): Boolean {
+        var index = offset.coerceAtMost(text.length) - 1
         while (index >= 0 && (text[index].isLetterOrDigit() || text[index] == '_')) {
             index -= 1
         }
         return index >= 0 && text[index] == '.'
     }
 
-    private fun com.intellij.psi.PsiElement.isCompletionTypeDeclaration(): Boolean =
-        when (parent?.cpElementType()) {
-            CpElements.STRUCT_DECLARATION,
-            CpElements.ENUM_DECLARATION,
-            CpElements.VARIANT_DECLARATION,
-            CpElements.CONCEPT_DECLARATION,
-            CpElements.TYPE_ALIAS -> parent?.firstDescendant(CpElements.TYPE_NAME) == this
-            else -> false
+    private fun skipWhitespace(text: CharSequence, start: Int, end: Int): Int {
+        var index = start
+        while (index < end && text[index].isWhitespace()) {
+            index += 1
         }
+        return index
+    }
+
+    private fun startsWithKeyword(text: CharSequence, start: Int, end: Int, keyword: String): Boolean {
+        if (start + keyword.length > end) {
+            return false
+        }
+        for (index in keyword.indices) {
+            if (text[start + index] != keyword[index]) {
+                return false
+            }
+        }
+        val after = start + keyword.length
+        return after == end || (!text[after].isLetterOrDigit() && text[after] != '_')
+    }
 }
+
+private object CpCompletionItemIndex {
+    fun get(file: PsiFile): CpIndexedCompletionItems {
+        val snapshot = CpSymbolScope.snapshot(file)
+        val activeEntry = snapshot.entries.firstOrNull()
+        val importedEntries = snapshot.entries.drop(1)
+
+        val activeItems = activeEntry?.let { active(file, it) } ?: CpIndexedCompletionItems.empty
+        val importedItems = imported(file, importedEntries)
+        return activeItems.merge(importedItems)
+    }
+
+    private fun active(file: PsiFile, entry: CpSymbolScopeEntry): CpIndexedCompletionItems {
+        val signature = listOf(entry.stamp)
+        file.getUserData(activeCacheKey)?.takeIf { it.signature == signature }?.let {
+            return it.items
+        }
+
+        val items = build(listOf(entry))
+        file.putUserData(activeCacheKey, CachedCompletionItems(signature, items))
+        return items
+    }
+
+    private fun imported(file: PsiFile, entries: List<CpSymbolScopeEntry>): CpIndexedCompletionItems {
+        val signature = entries.map { it.stamp }
+        file.getUserData(importedCacheKey)?.takeIf { it.signature == signature }?.let {
+            return it.items
+        }
+
+        val items = build(entries)
+        file.putUserData(importedCacheKey, CachedCompletionItems(signature, items))
+        return items
+    }
+
+    private fun build(entries: List<CpSymbolScopeEntry>): CpIndexedCompletionItems =
+        CpIndexedCompletionItems(
+            imports = dedupe {
+                for (entry in entries) {
+                    for (module in entry.symbols.modules) {
+                        add(CpCompletionItem(module.name, type = "模块"))
+                    }
+                    for (importName in entry.symbols.imports) {
+                        add(CpCompletionItem(importName.name, type = "模块"))
+                    }
+                }
+            },
+            members = dedupe {
+                for (entry in entries) {
+                    for (field in entry.symbols.structFields) {
+                        add(CpCompletionItem(field.name, type = "字段"))
+                    }
+                    for (function in entry.symbols.functions) {
+                        if (function.receiverType != null) {
+                            add(CpCompletionItem(function.name, tail = "()", type = "方法"))
+                        }
+                    }
+                }
+            },
+            globals = dedupe {
+                for (entry in entries) {
+                    for (function in entry.symbols.functions) {
+                        add(CpCompletionItem(function.name, tail = "()", type = "函数"))
+                    }
+                    for (type in entry.symbols.typeDeclarations) {
+                        add(CpCompletionItem(type.name, type = "类型"))
+                    }
+                    for (caseName in entry.symbols.variantCases) {
+                        add(CpCompletionItem(caseName.name, type = "变体分支"))
+                    }
+                    for (caseName in entry.symbols.enumCases) {
+                        add(CpCompletionItem(caseName.name, type = "枚举项"))
+                    }
+                }
+            },
+        )
+
+    private fun dedupe(build: MutableList<CpCompletionItem>.() -> Unit): List<CpCompletionItem> {
+        val items = mutableListOf<CpCompletionItem>()
+        items.build()
+        val seen = linkedSetOf<String>()
+        return items.filter { item -> item.name.isNotBlank() && seen.add(item.name) }
+    }
+
+    private val activeCacheKey = Key.create<CachedCompletionItems>("org.cp.lang.clion.activeCompletionItemIndex")
+    private val importedCacheKey = Key.create<CachedCompletionItems>("org.cp.lang.clion.importedCompletionItemIndex")
+}
+
+private data class CpIndexedCompletionItems(
+    val imports: List<CpCompletionItem>,
+    val members: List<CpCompletionItem>,
+    val globals: List<CpCompletionItem>,
+) {
+    fun merge(imported: CpIndexedCompletionItems): CpIndexedCompletionItems =
+        CpIndexedCompletionItems(
+            imports = imports.merge(imported.imports),
+            members = members.merge(imported.members),
+            globals = globals.merge(imported.globals),
+        )
+
+    companion object {
+        val empty = CpIndexedCompletionItems(
+            imports = emptyList(),
+            members = emptyList(),
+            globals = emptyList(),
+        )
+    }
+}
+
+private fun List<CpCompletionItem>.merge(other: List<CpCompletionItem>): List<CpCompletionItem> {
+    val seen = linkedSetOf<String>()
+    val items = mutableListOf<CpCompletionItem>()
+    for (item in this + other) {
+        if (item.name.isNotBlank() && seen.add(item.name)) {
+            items += item
+        }
+    }
+    return items
+}
+
+private data class CachedCompletionItems(
+    val signature: List<CpSymbolScopeStamp>,
+    val items: CpIndexedCompletionItems,
+)
+
+private fun PsiFile.completionText(): CharSequence =
+    viewProvider.document?.charsSequence ?: text

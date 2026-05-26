@@ -54,6 +54,8 @@ dependencies {
 
     intellijPlatform {
         local(clionLocalPath)
+        bundledModule("intellij.cidr.execution")
+        bundledPlugin("com.intellij.nativeDebug")
         bundledPlugin("org.intellij.plugins.markdown")
         testFramework(TestFrameworkType.Platform)
     }

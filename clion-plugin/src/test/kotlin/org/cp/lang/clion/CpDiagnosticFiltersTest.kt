@@ -7,7 +7,7 @@ import com.intellij.psi.PsiDocumentManager
 import com.intellij.psi.PsiErrorElement
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 
-class CpMarkdownDiagnosticsTest : BasePlatformTestCase() {
+class CpDiagnosticFiltersTest : BasePlatformTestCase() {
     private val parserDefinition = CpParserDefinition()
 
     override fun setUp() {
@@ -42,19 +42,19 @@ class CpMarkdownDiagnosticsTest : BasePlatformTestCase() {
         assertTrue(CpInjectedFragmentPolicy.isCpMarkdownCodeFence(injectedFile))
         assertTrue(CpExternalAnnotatorsFilter().isProhibited(CpExternalAnnotator(), injectedFile))
         assertFalse(
-            CpMarkdownErrorFilter().shouldHighlightErrorElement(
+            CpPsiErrorFilter().shouldHighlightErrorElement(
                 injectedFile.collectPsiErrors().single { it.errorDescription == "expected top-level function" },
             ),
         )
     }
 
-    fun testRegularCpFileStillKeepsParserErrorsAndExternalAnnotator() {
+    fun testRegularCpFileSuppressesPsiParserErrorsAndKeepsExternalAnnotator() {
         val file = myFixture.configureByText(CpFileType.INSTANCE, "let data = 1;\n")
         val error = file.collectPsiErrors().single { it.errorDescription == "expected top-level function" }
 
         assertFalse(CpInjectedFragmentPolicy.isCpMarkdownCodeFence(file))
         assertFalse(CpExternalAnnotatorsFilter().isProhibited(CpExternalAnnotator(), file))
-        assertTrue(CpMarkdownErrorFilter().shouldHighlightErrorElement(error))
+        assertFalse(CpPsiErrorFilter().shouldHighlightErrorElement(error))
     }
 
     private fun findInjectedCpFile(hostOffset: Int) =

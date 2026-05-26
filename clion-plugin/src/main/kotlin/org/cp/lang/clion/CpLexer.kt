@@ -230,17 +230,117 @@ class CpLexer : LexerBase() {
     }
 
     private fun scanSymbolOrInvalid(offset: Int) {
-        val tail = buffer.subSequence(offset, endOffset)
-        for ((spelling, type) in CpTypes.punctuators) {
-            if (tail.startsWith(spelling)) {
-                tokenType = type
-                tokenEnd = offset + spelling.length
-                return
+        when (buffer[offset]) {
+            '(' -> acceptSymbol(CpTypes.L_PAREN, offset, 1)
+            ')' -> acceptSymbol(CpTypes.R_PAREN, offset, 1)
+            '{' -> acceptSymbol(CpTypes.L_BRACE, offset, 1)
+            '}' -> acceptSymbol(CpTypes.R_BRACE, offset, 1)
+            '[' -> acceptSymbol(CpTypes.L_BRACKET, offset, 1)
+            ']' -> acceptSymbol(CpTypes.R_BRACKET, offset, 1)
+            ',' -> acceptSymbol(CpTypes.COMMA, offset, 1)
+            ';' -> acceptSymbol(CpTypes.SEMICOLON, offset, 1)
+            ':' -> if (matchesAt(offset, "::")) {
+                acceptSymbol(CpTypes.COLON_COLON, offset, 2)
+            } else {
+                acceptSymbol(CpTypes.COLON, offset, 1)
+            }
+            '.' -> acceptSymbol(CpTypes.DOT, offset, 1)
+            '+' -> when {
+                matchesAt(offset, "++") -> acceptSymbol(CpTypes.PLUS_PLUS, offset, 2)
+                matchesAt(offset, "+=") -> acceptSymbol(CpTypes.PLUS_EQUAL, offset, 2)
+                else -> acceptSymbol(CpTypes.PLUS, offset, 1)
+            }
+            '-' -> when {
+                matchesAt(offset, "->") -> acceptSymbol(CpTypes.ARROW, offset, 2)
+                matchesAt(offset, "--") -> acceptSymbol(CpTypes.MINUS_MINUS, offset, 2)
+                matchesAt(offset, "-=") -> acceptSymbol(CpTypes.MINUS_EQUAL, offset, 2)
+                else -> acceptSymbol(CpTypes.MINUS, offset, 1)
+            }
+            '*' -> if (matchesAt(offset, "*=")) {
+                acceptSymbol(CpTypes.STAR_EQUAL, offset, 2)
+            } else {
+                acceptSymbol(CpTypes.STAR, offset, 1)
+            }
+            '/' -> if (matchesAt(offset, "/=")) {
+                acceptSymbol(CpTypes.SLASH_EQUAL, offset, 2)
+            } else {
+                acceptSymbol(CpTypes.SLASH, offset, 1)
+            }
+            '%' -> if (matchesAt(offset, "%=")) {
+                acceptSymbol(CpTypes.PERCENT_EQUAL, offset, 2)
+            } else {
+                acceptSymbol(CpTypes.PERCENT, offset, 1)
+            }
+            '=' -> if (matchesAt(offset, "==")) {
+                acceptSymbol(CpTypes.EQUAL_EQUAL, offset, 2)
+            } else {
+                acceptSymbol(CpTypes.EQUAL, offset, 1)
+            }
+            '!' -> if (matchesAt(offset, "!=")) {
+                acceptSymbol(CpTypes.BANG_EQUAL, offset, 2)
+            } else {
+                acceptSymbol(CpTypes.BANG, offset, 1)
+            }
+            '<' -> scanLess(offset)
+            '>' -> scanGreater(offset)
+            '&' -> if (matchesAt(offset, "&=")) {
+                acceptSymbol(CpTypes.AMP_EQUAL, offset, 2)
+            } else {
+                acceptSymbol(CpTypes.AMP, offset, 1)
+            }
+            '|' -> if (matchesAt(offset, "|=")) {
+                acceptSymbol(CpTypes.PIPE_EQUAL, offset, 2)
+            } else {
+                acceptSymbol(CpTypes.PIPE, offset, 1)
+            }
+            '^' -> if (matchesAt(offset, "^=")) {
+                acceptSymbol(CpTypes.CARET_EQUAL, offset, 2)
+            } else {
+                acceptSymbol(CpTypes.CARET, offset, 1)
+            }
+            '~' -> acceptSymbol(CpTypes.TILDE, offset, 1)
+            '?' -> acceptSymbol(CpTypes.QUESTION, offset, 1)
+            else -> {
+                tokenType = CpTypes.INVALID
+                tokenEnd = offset + 1
             }
         }
+    }
 
-        tokenType = CpTypes.INVALID
-        tokenEnd = offset + 1
+    private fun scanLess(offset: Int) {
+        when {
+            matchesAt(offset, "<=>") -> acceptSymbol(CpTypes.SPACESHIP, offset, 3)
+            matchesAt(offset, "<<=") -> acceptSymbol(CpTypes.LESS_LESS_EQUAL, offset, 3)
+            matchesAt(offset, "<<") -> acceptSymbol(CpTypes.LESS_LESS, offset, 2)
+            matchesAt(offset, "<=") -> acceptSymbol(CpTypes.LESS_EQUAL, offset, 2)
+            else -> acceptSymbol(CpTypes.LESS, offset, 1)
+        }
+    }
+
+    private fun scanGreater(offset: Int) {
+        when {
+            matchesAt(offset, ">>=") -> acceptSymbol(CpTypes.GREATER_GREATER_EQUAL, offset, 3)
+            matchesAt(offset, ">>") -> acceptSymbol(CpTypes.GREATER_GREATER, offset, 2)
+            matchesAt(offset, ">=") -> acceptSymbol(CpTypes.GREATER_EQUAL, offset, 2)
+            else -> acceptSymbol(CpTypes.GREATER, offset, 1)
+        }
+    }
+
+    private fun acceptSymbol(type: IElementType, offset: Int, length: Int) {
+        tokenType = type
+        tokenEnd = offset + length
+    }
+
+    private fun matchesAt(offset: Int, spelling: String): Boolean {
+        if (offset + spelling.length > endOffset) {
+            return false
+        }
+        for (index in spelling.indices) {
+            if (buffer[offset + index] != spelling[index]) {
+                return false
+            }
+        }
+        return true
     }
 
     private fun consumeEscape(offset: Int): EscapeResult {

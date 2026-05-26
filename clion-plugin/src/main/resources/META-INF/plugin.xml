@@ -9,6 +9,11 @@
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.clion</depends>
+    <dependencies>
+        <plugin id="com.intellij.nativeDebug" />
+        <module name="intellij.cidr.execution" />
+        <module name="intellij.cidr.runner" />
+    </dependencies>
 
     <extensions defaultExtensionNs="com.intellij">
         <fileType name="cp" language="cp" extensions="cp" implementationClass="org.cp.lang.clion.CpFileType" fieldName="INSTANCE" />
@@ -38,16 +43,22 @@
         <codeInsight.declarativeInlayProvider providerId="cp.type.hints"
                                                language="cp"
                                                implementationClass="org.cp.lang.clion.CpTypeHintsProvider"
-                                               isEnabledByDefault="true"
+                                               isEnabledByDefault="false"
                                                group="TYPES_GROUP"
                                                bundle="messages.CpBundle"
                                                nameKey="cp.inlay.type.hints.name"
                                                descriptionKey="cp.inlay.type.hints.description" />
-        <highlightErrorFilter implementation="org.cp.lang.clion.CpMarkdownErrorFilter" />
+        <highlightErrorFilter implementation="org.cp.lang.clion.CpPsiErrorFilter" />
         <daemon.externalAnnotatorsFilter implementation="org.cp.lang.clion.CpExternalAnnotatorsFilter" />
         <postStartupActivity implementation="org.cp.lang.clion.CpRealtimeDiagnosticsActivity" />
         <configurationType implementation="org.cp.lang.clion.CpRunConfigurationType" />
+        <projectTaskRunner implementation="org.cp.lang.clion.CpProjectTaskRunner" id="CpProjectTaskRunner" />
+        <stepsBeforeRunProvider implementation="org.cp.lang.clion.CpBuildBeforeRunTaskProvider" />
         <runConfigurationProducer implementation="org.cp.lang.clion.CpRunConfigurationProducer" />
         <runLineMarkerContributor language="cp" implementationClass="org.cp.lang.clion.CpRunLineMarkerContributor" />
+    </extensions>
+
+    <extensions defaultExtensionNs="cidr">
+        <buildConfigurationProvider id="CpBuildConfigurationProvider" implementation="org.cp.lang.clion.CpBuildConfigurationProvider" />
     </extensions>
 </idea-plugin>

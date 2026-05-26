@@ -6,34 +6,27 @@ import com.intellij.lang.annotation.HighlightSeverity
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.colors.TextAttributesKey
 import com.intellij.openapi.project.DumbAware
-import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.TextRange
 import com.intellij.psi.PsiFile
 
-class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, CpInspectionResult>(), DumbAware {
+class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, CpInspectionResult?>(), DumbAware {
     data class Request(
-        val inspection: CpInspectionRequest,
-        val project: Project? = null,
-        val modificationCount: Long = -1,
+        val result: CpInspectionResult,
     )
 
-    override fun collectInformation(file: PsiFile): Request? = buildRequest(file, file.text)
+    private data class HighlightAnnotationKey(
+        val category: String,
+        val startOffset: Int,
+        val endOffset: Int,
+    )
+
+    override fun collectInformation(file: PsiFile): Request? = buildRequest(file)
 
     override fun collectInformation(file: PsiFile, editor: Editor, hasErrors: Boolean): Request? =
-        buildRequest(file, editor.document.text)
+        buildRequest(file)
 
-    override fun doAnnotate(collectedInfo: Request?): CpInspectionResult =
-        collectedInfo?.let { request ->
-            CpHelperRunner.inspectOrNull(request.inspection)?.also { result ->
-                request.project?.let { project ->
-                    CpSemanticCache.get(project).store(request.inspection, result, request.modificationCount)
-                }
-            } ?: emptyInspectionResult()
-        } ?: CpInspectionResult(
-            accepted = false,
-            diagnostics = emptyList(),
-            highlights = emptyList(),
-        )
+    override fun doAnnotate(collectedInfo: Request?): CpInspectionResult? =
+        collectedInfo?.result
 
     override fun apply(file: PsiFile, annotationResult: CpInspectionResult?, holder: AnnotationHolder) {
         if (annotationResult == null) {
@@ -41,7 +34,7 @@ class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, CpIns
         }
 
         val textLength = file.textLength
-        for (highlight in annotationResult.highlights) {
+        for (highlight in annotationResult.highlights.distinctBy(::highlightAnnotationKey)) {
             val key = highlightKey(highlight.category) ?: continue
             val start = highlight.startOffset.coerceIn(0, textLength)
             val end = highlight.endOffset.coerceIn(start, textLength)
@@ -55,14 +48,18 @@ class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, CpIns
         }
     }
 
-    private fun buildRequest(file: PsiFile, text: String): Request? {
-        return CpProjectSnapshotCollector.collect(file, text)?.let {
-            Request(
-                inspection = it,
-                project = file.project,
-                modificationCount = cpModificationCount(file.project),
-            )
+    private fun highlightAnnotationKey(highlight: CpHelperHighlight): HighlightAnnotationKey =
+        HighlightAnnotationKey(
+            category = highlight.category,
+            startOffset = highlight.startOffset,
+            endOffset = highlight.endOffset,
+        )
+
+    private fun buildRequest(file: PsiFile): Request? {
+        if (file.language != CpLanguage) {
+            return null
         }
+        return CpSemanticCache.get(file.project).presentation(file)?.let(::Request)
     }
 
     private fun highlightKey(category: String): TextAttributesKey? = when (category) {

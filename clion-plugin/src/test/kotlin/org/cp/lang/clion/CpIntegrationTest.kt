@@ -1,10 +1,16 @@
 package org.cp.lang.clion
 
+import com.intellij.execution.ExecutionException
 import com.intellij.lang.annotation.HighlightSeverity
+import com.intellij.execution.configurations.RuntimeConfigurationError
+import com.intellij.mock.MockProject
+import com.intellij.openapi.Disposable
 import com.intellij.testFramework.LightVirtualFile
+import org.jdom.Element
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.nio.file.Files
@@ -21,6 +27,27 @@ class CpIntegrationTest {
     }
 
     @Test
+    fun pluginRegistersBuildBeforeRunTaskOnCurrentExtensionPoint() {
+        val pluginXml = Files.readString(pluginXmlPath())
+
+        assertTrue(
+            pluginXml.contains("""<stepsBeforeRunProvider implementation="org.cp.lang.clion.CpBuildBeforeRunTaskProvider" />"""),
+        )
+        assertTrue(
+            pluginXml.contains("""<projectTaskRunner implementation="org.cp.lang.clion.CpProjectTaskRunner" id="CpProjectTaskRunner" />"""),
+        )
+        assertTrue(
+            pluginXml.contains("""<buildConfigurationProvider id="CpBuildConfigurationProvider" implementation="org.cp.lang.clion.CpBuildConfigurationProvider" />"""),
+        )
+        assertTrue(pluginXml.contains("""<module name="intellij.cidr.execution" />"""))
+        assertTrue(pluginXml.contains("""<module name="intellij.cidr.runner" />"""))
+        assertTrue(pluginXml.contains("""<plugin id="com.intellij.nativeDebug" />"""))
+        assertFalse(pluginXml.contains("<beforeRunTaskProvider "))
+        assertFalse(pluginXml.contains("CpRunToolbarBuildAction"))
+        assertFalse(pluginXml.contains("RunToolbarMainActionGroup"))
+    }
+
+    @Test
     fun fileTypeOverriderClaimsCpExtension() {
         val overrider = CpFileTypeOverrider()
 
@@ -29,9 +56,9 @@ class CpIntegrationTest {
     }
 
     @Test
-    fun externalAnnotatorReportsLexerErrors() {
-        val request = CpExternalAnnotator.Request(
-            inspection = CpInspectionRequest(
+    fun helperReportsLexerErrors() {
+        val diagnostics = CpHelperRunner.inspect(
+            CpInspectionRequest(
                 activeFile = "broken.cp",
                 files = listOf(
                     CpInspectionFile(
@@ -40,16 +67,14 @@ class CpIntegrationTest {
                     ),
                 ),
             ),
-        )
-
-        val diagnostics = CpExternalAnnotator().doAnnotate(request).diagnostics
+        ).diagnostics
         assertTrue(
             diagnostics.any { it.code == "unterminated_string_literal" && it.message == "unterminated string literal" },
         )
     }
 
     @Test
-    fun externalAnnotatorReportsTargetSemanticFacts() {
+    fun helperReportsTargetSemanticFacts() {
         val mainSource = """
             import math.x;
 
@@ -67,32 +92,40 @@ class CpIntegrationTest {
             }
         """.trimIndent()
 
-        val mainDiagnostics = CpExternalAnnotator().doAnnotate(
-            CpExternalAnnotator.Request(
-                inspection = CpInspectionRequest(
-                    activeFile = "main.cp",
-                    files = listOf(
-                        CpInspectionFile("math.cp", mathSource),
-                        CpInspectionFile("main.cp", mainSource),
-                    ),
+        val mainDiagnostics = CpHelperRunner.inspect(
+            CpInspectionRequest(
+                activeFile = "main.cp",
+                files = listOf(
+                    CpInspectionFile("math.cp", mathSource),
+                    CpInspectionFile("main.cp", mainSource),
                 ),
             ),
         ).diagnostics
         assertTrue(mainDiagnostics.any { it.code == "unexported_name" })
         assertTrue(mainDiagnostics.any { it.code == "missing_return" })
 
-        val providerDiagnostics = CpExternalAnnotator().doAnnotate(
-            CpExternalAnnotator.Request(
-                inspection = CpInspectionRequest(
-                    activeFile = "math.cp",
-                    files = listOf(
-                        CpInspectionFile("math.cp", mathSource),
-                        CpInspectionFile("main.cp", mainSource),
-                    ),
+        val providerDiagnostics = CpHelperRunner.inspect(
+            CpInspectionRequest(
+                activeFile = "math.cp",
+                files = listOf(
+                    CpInspectionFile("math.cp", mathSource),
+                    CpInspectionFile("main.cp", mainSource),
                 ),
             ),
         ).diagnostics
         assertTrue(providerDiagnostics.any { it.code == "unexported_name" && it.startOffset == mathSource.indexOf("add") })
+    }
+
+    @Test
+    fun externalAnnotatorOnlyPresentsCachedResults() {
+        val result = CpInspectionResult(
+            accepted = false,
+            diagnostics = emptyList(),
+            highlights = listOf(CpHelperHighlight("function.declaration", 0, 4)),
+        )
+
+        assertEquals(result, CpExternalAnnotator().doAnnotate(CpExternalAnnotator.Request(result)))
+        assertNull(CpExternalAnnotator().doAnnotate(null))
     }
 
     @Test
@@ -478,15 +511,169 @@ class CpIntegrationTest {
     }
 
     @Test
-    fun runScriptIncludesCompileOptionsBeforeSources() {
-        val script = buildCpRunScript(
+    fun runSourceClosureCacheInvalidatesWhenImportsChange() {
+        val root = Files.createTempDirectory("cp-run-sources")
+        try {
+            val project = root.resolve("project")
+            val main = project.resolve("main.cp")
+            val math = project.resolve("math.cp")
+            writeSource(main, "import math;\nmain() -> i32 { return add(); }\n")
+            writeSource(math, "export module math;\nexport add() -> i32 { return 1; }\n")
+
+            val first = CpRunPaths.resolveSourceClosure(main, listOf(project))
+                .map { root.relativize(it).toString() }
+
+            writeSource(main, "main() -> i32 { return 0; }\n")
+            val second = CpRunPaths.resolveSourceClosure(main, listOf(project))
+                .map { root.relativize(it).toString() }
+
+            assertTrue(first.contains("project/main.cp"))
+            assertTrue(first.contains("project/math.cp"))
+            assertTrue(second.contains("project/main.cp"))
+            assertFalse(second.contains("project/math.cp"))
+        } finally {
+            Files.walk(root).use { stream ->
+                stream.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists)
+            }
+        }
+    }
+
+    @Test
+    fun runSourceClosureFailsWhenResolverCannotBuildRequest() {
+        assertThrows(ExecutionException::class.java) {
+            CpRunPaths.resolveSourceClosure(Path.of("/path/that/does/not/exist/main.cp"), emptyList())
+        }
+    }
+
+    @Test
+    fun buildCommandLineIncludesCompileOptionsBeforeSources() {
+        val commandLine = buildCpBuildCommandLine(
             compiler = Path.of("/tool/cp"),
             sources = listOf(Path.of("/project/main.cp"), Path.of("/project/math.cp")),
             compileOptions = "--release --clang-arg -O0",
             executable = Path.of("/tmp/cp run/main"),
+            workingDirectory = Path.of("/project"),
         )
 
-        assertTrue(script.contains("'/tool/cp' --release --clang-arg -O0 '/project/main.cp' '/project/math.cp' -o '/tmp/cp run/main'"))
+        assertEquals("/tool/cp", commandLine.exePath)
+        assertEquals(
+            listOf("--release", "--clang-arg", "-O0", "/project/main.cp", "/project/math.cp", "-o", "/tmp/cp run/main"),
+            commandLine.parametersList.list,
+        )
+    }
+
+    @Test
+    fun runCommandLineParsesProgramArgumentsAndRuntimeEnvironment() {
+        val input = Files.createTempFile("cp-run-input", ".txt")
+        try {
+            val commandLine = buildCpRunCommandLine(
+                executable = Path.of("/tmp/cp-run/main"),
+                programArguments = """alpha "two words"""",
+                workingDirectory = Path.of("/project"),
+                envs = mapOf("CASE" to "1"),
+                passParentEnvs = false,
+                inputFile = input.toFile(),
+                emulateTerminal = false,
+            )
+
+            assertEquals("/tmp/cp-run/main", commandLine.exePath)
+            assertEquals(listOf("alpha", "two words"), commandLine.parametersList.list)
+            assertEquals("1", commandLine.environment["CASE"])
+            assertFalse(commandLine.isPassParentEnvironment)
+            assertEquals(input.toFile(), commandLine.inputFile)
+        } finally {
+            Files.deleteIfExists(input)
+        }
+    }
+
+    @Test
+    fun runConfigurationPersistsClionSingleFileFields() {
+        val configuration = newCpRunConfiguration()
+        configuration.mainFile = "/project/main.cp"
+        configuration.compilerPath = "/tool/cp"
+        configuration.compileOptions = "--release"
+        configuration.workingDirectory = "/project"
+        configuration.programArguments = "1 2"
+        configuration.envs = mutableMapOf("A" to "B")
+        configuration.passParentEnvs = false
+        configuration.redirectInput = true
+        configuration.redirectInputPath = "/project/input.txt"
+        configuration.emulateTerminal = true
+
+        val element = Element("configuration")
+        configuration.writeExternal(element)
+        val copy = newCpRunConfiguration()
+        copy.readExternal(element)
+
+        assertEquals("/project/main.cp", copy.mainFile)
+        assertEquals("/tool/cp", copy.compilerPath)
+        assertEquals("--release", copy.compileOptions)
+        assertEquals("/project", copy.workingDirectory)
+        assertEquals("1 2", copy.programArguments)
+        assertEquals(mapOf("A" to "B"), copy.envs)
+        assertFalse(copy.passParentEnvs)
+        assertTrue(copy.redirectInput)
+        assertEquals("/project/input.txt", copy.redirectInputPath)
+        assertTrue(copy.emulateTerminal)
+    }
+
+    @Test
+    fun runConfigurationDefaultBuildTaskIsAddedOnce() {
+        val configuration = newCpRunConfiguration()
+
+        configuration.ensureBuildBeforeRunTask()
+        configuration.ensureBuildBeforeRunTask()
+
+        assertEquals(1, configuration.beforeRunTasks.count { it.providerId == CpBuildBeforeRunTaskProvider.ID })
+    }
+
+    @Test
+    fun runConfigurationRedirectInputOptionsAcceptNullablePath() {
+        val configuration = newCpRunConfiguration()
+        val options = configuration.inputRedirectOptions
+
+        options.setRedirectInputPath("/project/input.txt")
+        assertEquals("/project/input.txt", configuration.redirectInputPath)
+        assertEquals("/project/input.txt", options.redirectInputPath)
+
+        options.setRedirectInputPath(null)
+        assertEquals("", configuration.redirectInputPath)
+        assertNull(options.redirectInputPath)
+    }
+
+    @Test
+    fun legacyRunConfigurationMigratesBuildTaskOnce() {
+        val element = Element("configuration")
+        val configuration = newCpRunConfiguration()
+
+        configuration.readExternal(element)
+        assertEquals(1, configuration.beforeRunTasks.count { it.providerId == CpBuildBeforeRunTaskProvider.ID })
+        configuration.beforeRunTasks = emptyList()
+        val migratedElement = Element("configuration")
+        configuration.writeExternal(migratedElement)
+
+        val copy = newCpRunConfiguration()
+        copy.readExternal(migratedElement)
+        assertEquals(0, copy.beforeRunTasks.count { it.providerId == CpBuildBeforeRunTaskProvider.ID })
+    }
+
+    @Test
+    fun redirectInputValidationRequiresExistingFile() {
+        val error = assertThrows(RuntimeConfigurationError::class.java) {
+            resolveRedirectInputFile(true, "/path/that/does/not/exist/input.txt")
+        }
+
+        assertTrue(error.localizedMessage.orEmpty().contains("重定向输入文件不存在"))
+    }
+
+    @Test
+    fun stableBuildOutputPathDoesNotUseProjectDirectory() {
+        val project = Path.of("/project")
+        val source = project.resolve("src/main.cp")
+        val output = CpRunPaths.resolveBuildOutput(project, source)
+
+        assertFalse(output.startsWith(project))
+        assertTrue(output.toString().contains("cp-run"))
     }
 
     @Test
@@ -630,11 +817,17 @@ class CpIntegrationTest {
                 assertHighlight(text, result.highlights, "println", "function.call")
                 assertHighlight(text, result.highlights, "size", "member.function.call")
                 assertHighlight(text, result.highlights, "tokens", "field.reference")
-                assertHighlight(text, result.highlights, "kw_int", "enum.case")
+                assertHighlight(text, result.highlights, "kw_void", "enum.case")
                 assertHighlight(text, result.highlights, "eof", "enum.case")
             }
         }
     }
+
+    private fun pluginXmlPath(): Path =
+        sequenceOf(
+            Path.of("src/main/resources/META-INF/plugin.xml"),
+            Path.of("clion-plugin/src/main/resources/META-INF/plugin.xml"),
+        ).first { Files.isRegularFile(it) }
 
     private fun cpSourcesUnder(root: Path): List<Path> =
         Files.walk(root).use { stream ->
@@ -647,6 +840,12 @@ class CpIntegrationTest {
     private fun writeSource(path: Path, text: String) {
         Files.createDirectories(path.parent)
         Files.writeString(path, text)
+    }
+
+    private fun newCpRunConfiguration(): CpRunConfiguration {
+        val project = MockProject(null, Disposable {})
+        val factory = CpRunConfigurationType().configurationFactories.single()
+        return CpRunConfiguration(project, factory, "main")
     }
 
     private fun assertHighlight(text: String, highlights: List<CpHelperHighlight>, fragment: String, category: String) {

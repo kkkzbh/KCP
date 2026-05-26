@@ -1,6 +1,7 @@
 package org.cp.lang.clion
 
 import com.intellij.psi.TokenType
+import com.intellij.psi.tree.IElementType
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Test
@@ -36,6 +37,14 @@ class CpLexerContractTest {
 
         assertEquals("kw_forward", token.kind)
         assertEquals("forward", token.lexeme)
+    }
+
+    @Test
+    fun lexerScansPunctuatorsWithoutSlicingRemainingBuffer() {
+        val text = CpTypes.punctuators.joinToString(" ") { it.first }
+        val tokenTypes = tokenizeTypesWithPlugin(NoSliceCharSequence(text))
+
+        assertEquals(CpTypes.punctuators.map { it.second }, tokenTypes)
     }
 
     private fun compareCase(path: Path) {
@@ -80,6 +89,21 @@ class CpLexerContractTest {
         return result
     }
 
+    private fun tokenizeTypesWithPlugin(text: CharSequence): List<IElementType> {
+        val lexer = CpLexer()
+        lexer.start(text, 0, text.length, 0)
+
+        val result = mutableListOf<IElementType>()
+        while (true) {
+            val tokenType = lexer.tokenType ?: break
+            if (tokenType != TokenType.WHITE_SPACE) {
+                result += tokenType
+            }
+            lexer.advance()
+        }
+        return result
+    }
+
     private fun repoRoot(): Path =
         Path.of(System.getProperty("cp.repo.root") ?: error("cp.repo.root is not configured"))
 
@@ -89,4 +113,20 @@ class CpLexerContractTest {
         val startOffset: Int,
         val endOffset: Int,
     )
+
+    private class NoSliceCharSequence(
+        private val text: String,
+    ) : CharSequence {
+        override val length: Int
+            get() = text.length
+
+        override fun get(index: Int): Char =
+            text[index]
+
+        override fun subSequence(startIndex: Int, endIndex: Int): CharSequence =
+            error("symbol lexing must not slice the remaining input")
+
+        override fun toString(): String =
+            text
+    }
 }

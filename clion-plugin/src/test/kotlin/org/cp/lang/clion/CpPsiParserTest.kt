@@ -100,6 +100,20 @@ class CpPsiParserTest : BasePlatformTestCase() {
         assertTrue("after declaration should survive recovery", "after" in declarations)
     }
 
+    fun testExtraSemicolonDoesNotProducePsiError() {
+        val file = parse(
+            """
+            main() -> i32
+            {
+                let value = 1;;
+                return value;
+            }
+            """.trimIndent(),
+        )
+
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
     fun testLambdaUsesFMarker() {
         val file = parse(
             """

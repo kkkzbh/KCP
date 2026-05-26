@@ -10,13 +10,16 @@ class CpReference(
     override fun getCanonicalText(): String = element.text
 
     override fun resolve(): PsiElement? =
-        cpResolveDeclarationForReference(element)
+        CpSemanticDeclarationResolver.resolve(element, null)
 
-    override fun isReferenceTo(element: PsiElement): Boolean =
-        (resolve() ?: CpSemanticDeclarationResolver.resolveNow(this.element, null))?.let { resolved ->
+    override fun isReferenceTo(element: PsiElement): Boolean {
+        val resolved = resolve()
+            ?: if (isExplicitReferenceCheck()) CpSemanticDeclarationResolver.resolveNow(this.element, null) else null
+        return resolved?.let {
             val target = element.cpNavigationTargetElement() ?: element
-            resolved == target || resolved.manager.areElementsEquivalent(resolved, target)
+            it == target || it.manager.areElementsEquivalent(it, target)
         } == true
+    }
 
     override fun handleElementRename(newElementName: String): PsiElement {
         val current = element
@@ -25,4 +28,11 @@ class CpReference(
         }
         return current
     }
+
+    private fun isExplicitReferenceCheck(): Boolean =
+        Thread.currentThread().stackTrace.any { frame ->
+            frame.className.startsWith("com.intellij.psi.search.") ||
+                frame.className.startsWith("com.intellij.find.findUsages.") ||
+                frame.className.startsWith("com.intellij.refactoring.")
+        }
 }

@@ -3,6 +3,7 @@ package org.cp.lang.clion
 import com.intellij.lang.LanguageParserDefinitions
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.fileTypes.FileTypeManager
+import com.intellij.psi.PsiFile
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -208,6 +209,7 @@ class CpTypeHintsTest : BasePlatformTestCase() {
             """.trimIndent(),
         )
         myFixture.configureFromExistingVirtualFile(program.virtualFile)
+        seedSemanticCache(myFixture.file)
 
         val hints = CpTypeHintEngine.items(myFixture.file).associate { it.name to it.type }
 
@@ -216,6 +218,52 @@ class CpTypeHintsTest : BasePlatformTestCase() {
         assertEquals("optional<token>", hints["name"])
         assertEquals("optional<token>", hints["open"])
         assertEquals("optional<stmt_id>", hints["body"])
+    }
+
+    fun testTypeHintCacheInvalidatesWhenImportedSnapshotChanges() {
+        myFixture.configureByText(
+            CpFileType.INSTANCE,
+            """
+            import math;
+
+            main()
+            {
+                let result = answer();
+            }
+            """.trimIndent(),
+        )
+        val activePath = myFixture.file.virtualFile.path
+        val importedPath = "$activePath.math.cp"
+        storeImportClosure(
+            activePath,
+            importedPath,
+            """
+            export module math;
+
+            answer() -> i32
+            {
+                return 1;
+            }
+            """.trimIndent(),
+        )
+        val first = CpTypeHintEngine.items(myFixture.file).associate { it.name to it.type }
+
+        storeImportClosure(
+            activePath,
+            importedPath,
+            """
+            export module math;
+
+            answer() -> f64
+            {
+                return 2.0;
+            }
+            """.trimIndent(),
+        )
+        val second = CpTypeHintEngine.items(myFixture.file).associate { it.name to it.type }
+
+        assertEquals("i32", first["result"])
+        assertEquals("f64", second["result"])
     }
 
     fun testInfersBuiltinEscapeBuiltinImplAndUfcsTypes() {
@@ -268,4 +316,24 @@ class CpTypeHintsTest : BasePlatformTestCase() {
 
     private fun repoRoot(): Path =
         Path.of(System.getProperty("cp.repo.root") ?: "..").normalize().toAbsolutePath()
+
+    private fun seedSemanticCache(file: PsiFile) {
+        val request = CpProjectSnapshotCollector.collect(file, file.text)
+            ?: error("cp project snapshot was not created")
+        CpSemanticCache.get(project).store(request, CpExternalAnnotator.emptyInspectionResult(), cpModificationCount(project))
+    }
+
+    private fun storeImportClosure(activePath: String, importedPath: String, importedText: String) {
+        CpSemanticCache.get(project).store(
+            CpInspectionRequest(
+                activeFile = activePath,
+                files = listOf(
+                    CpInspectionFile(activePath, myFixture.file.text),
+                    CpInspectionFile(importedPath, importedText),
+                ),
+            ),
+            CpExternalAnnotator.emptyInspectionResult(),
+            cpModificationCount(project),
+        )
+    }
 }

@@ -92,8 +92,7 @@ class CpNamedElement(node: ASTNode) : CpPsiElement(node), PsiNameIdentifierOwner
     override fun setName(name: String): PsiElement {
         val references = containingFile
             ?.let { file ->
-                CpNavigationKinds.referenceTypes
-                    .flatMap { file.descendants(it) }
+                CpFileSymbolIndex.get(file).referenceElements
                     .mapNotNull { it.reference }
                     .filter { it.isReferenceTo(this) }
                     .map { it.element }

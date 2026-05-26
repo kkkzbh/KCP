@@ -475,6 +475,21 @@ R"(> i32 {
     assert_true(not has_diagnostic(parser_error, "semantic", "unknown_name"),
         "parser error inspect should not run semantic analysis");
 
+    auto const parser_warning = cp_lexer_helper::inspect(cp_lexer_helper::inspect_request {
+        .active_file = "parser_warning.cp",
+        .files = {
+            cp_lexer_helper::source_file_record {
+                "parser_warning.cp",
+                "main() -> i32 { let value = 1;; return value; }\n",
+            },
+        },
+    });
+    assert_true(parser_warning.accepted, "parser warning inspect should remain accepted");
+    assert_true(has_diagnostic(parser_warning, "parser", "empty_statement"),
+        "parser warning inspect should report empty statement diagnostics");
+    assert_true(parser_warning.diagnostics.front().severity == "warning",
+        "empty statement diagnostic should be a warning");
+
     auto const active_only = cp_lexer_helper::inspect(cp_lexer_helper::inspect_request {
         .active_file = "active.cp",
         .files = {

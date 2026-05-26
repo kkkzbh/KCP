@@ -3,6 +3,7 @@ package org.cp.lang.clion
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiReference
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.util.Pass
 import com.intellij.refactoring.listeners.RefactoringElementListener
 import com.intellij.refactoring.rename.RenamePsiElementProcessor
@@ -28,8 +29,10 @@ class CpRenameProcessor : RenamePsiElementProcessor() {
     override fun findReferences(element: PsiElement, searchInComments: Boolean): Collection<PsiReference> {
         val declaration = element.cpRenameTargetElement() ?: return emptyList()
         val file = declaration.containingFile ?: return emptyList()
-        return CpNavigationKinds.referenceTypes
-            .flatMap { file.descendants(it) }
+        if (CpSemanticCache.get(file.project).current(file) == null) {
+            CpSemanticCache.get(file.project).computeNow(file, file.activeRenameText())
+        }
+        return CpFileSymbolIndex.get(file).referenceElements
             .mapNotNull { it.reference }
             .filter { it.isReferenceTo(declaration) }
     }
@@ -59,3 +62,7 @@ class CpRenameProcessor : RenamePsiElementProcessor() {
 private fun PsiElement.cpRenameTargetElement(): PsiElement? =
     cpNavigationTargetElement()
         ?: cpNavigationElement()?.let { CpSemanticDeclarationResolver.resolveNow(it, null) }
+
+private fun com.intellij.psi.PsiFile.activeRenameText(): String =
+    virtualFile?.let { FileDocumentManager.getInstance().getDocument(it)?.text }
+        ?: text

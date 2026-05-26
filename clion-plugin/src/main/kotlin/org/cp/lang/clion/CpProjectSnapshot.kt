@@ -7,15 +7,42 @@ import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiFile
+import com.intellij.psi.search.FileTypeIndex
+import com.intellij.psi.search.GlobalSearchScope
 import java.nio.file.Path
+import java.util.concurrent.ConcurrentHashMap
 
 data class CpSnapshotSource(
     val path: String,
     val text: String,
 )
 
+data class CpSnapshotContext(
+    val activePath: String,
+    val activeText: String,
+    val targetPath: String,
+    val importRoots: List<String>,
+    val moduleSearchRoots: List<String>,
+    val projectFiles: List<CpSnapshotSource>,
+) {
+    fun resolve(): CpInspectionRequest =
+        CpProjectSnapshotCollector.buildRequest(
+            activePath = activePath,
+            activeText = activeText,
+            targetPath = targetPath,
+            importRoots = importRoots,
+            moduleSearchRoots = moduleSearchRoots,
+            projectFiles = projectFiles,
+        ).also { request ->
+            CpProjectSnapshotCollector.traceResolved(this, request)
+        }
+}
+
 object CpProjectSnapshotCollector {
-    fun collect(file: PsiFile, activeText: String): CpInspectionRequest? {
+    fun collect(file: PsiFile, activeText: String): CpInspectionRequest? =
+        prepare(file, activeText)?.resolve()
+
+    internal fun prepare(file: PsiFile, activeText: String): CpSnapshotContext? {
         if (file.language != CpLanguage) {
             return null
         }
@@ -24,19 +51,21 @@ object CpProjectSnapshotCollector {
         val targetPath = selectedTargetPath(file) ?: activePath
         val importRoots = importRoots(file, targetPath)
         val moduleSearchRoots = moduleSearchRoots(file, activePath, targetPath)
-        return buildRequest(
+        return CpSnapshotContext(
             activePath = activePath,
             activeText = activeText,
             targetPath = targetPath,
             importRoots = importRoots,
             moduleSearchRoots = moduleSearchRoots,
             projectFiles = unsavedCpFiles() + nonLocalProjectCpFiles(file),
-        ).also { request ->
-            CpDiagnosticsTrace.info("snapshot:${request.activeFile}:${request.files.map { it.path }}") {
-                "cp snapshot active=${request.activeFile} target=$targetPath " +
-                    "importRoots=$importRoots moduleSearchRoots=$moduleSearchRoots " +
-                    "files=${request.files.map { it.path }}"
-            }
+        )
+    }
+
+    internal fun traceResolved(context: CpSnapshotContext, request: CpInspectionRequest) {
+        CpDiagnosticsTrace.info("snapshot:${request.activeFile}:${request.files.map { it.path }}") {
+            "cp snapshot active=${request.activeFile} target=${context.targetPath} " +
+                "importRoots=${context.importRoots} moduleSearchRoots=${context.moduleSearchRoots} " +
+                "files=${request.files.map { it.path }}"
         }
     }
 
@@ -63,14 +92,16 @@ object CpProjectSnapshotCollector {
         }
         knownFiles[active] = CpInspectionFile(path = active, text = activeText)
 
-        return CpHelperRunner.resolveInspectionRequest(
-            CpInspectionResolveRequest(
-                activeFile = active,
-                targetFile = target,
-                importRoots = roots,
-                searchRoots = searchRoots,
-                files = knownFiles.values.toList(),
-            ),
+        val resolveRequest = CpInspectionResolveRequest(
+            activeFile = active,
+            targetFile = target,
+            importRoots = roots,
+            searchRoots = searchRoots,
+            files = knownFiles.values.toList(),
+        )
+        return CpResolvedRequestCache.resolve(
+            request = resolveRequest,
+            knownFiles = knownFiles,
         ) ?: CpInspectionRequest(
             activeFile = active,
             files = listOf(CpInspectionFile(path = active, text = activeText)),
@@ -95,23 +126,17 @@ object CpProjectSnapshotCollector {
     }
 
     private fun nonLocalProjectCpFiles(file: PsiFile): List<CpSnapshotSource> {
-        val files = mutableListOf<CpSnapshotSource>()
-        val roots = ProjectRootManager.getInstance(file.project).contentRoots
-        for (root in roots) {
-            if (root.fileSystem == LocalFileSystem.getInstance()) {
-                continue
+        return FileTypeIndex.getFiles(CpFileType.INSTANCE, GlobalSearchScope.projectScope(file.project))
+            .asSequence()
+            .filter { it.isValid && !it.isDirectory && it.fileSystem != LocalFileSystem.getInstance() }
+            .map { virtualFile ->
+                CpSnapshotSource(
+                    path = virtualFile.path,
+                    text = loadVirtualFileText(virtualFile),
+                )
             }
-            VfsUtilCore.iterateChildrenRecursively(root, null) { virtualFile ->
-                if (!virtualFile.isDirectory && virtualFile.extension == CpFileType.INSTANCE.defaultExtension) {
-                    files += CpSnapshotSource(
-                        path = virtualFile.path,
-                        text = loadVirtualFileText(virtualFile),
-                    )
-                }
-                true
-            }
-        }
-        return files
+            .distinctBy { cpNormalizePath(it.path) }
+            .toList()
     }
 
     private fun loadVirtualFileText(file: VirtualFile): String =
@@ -157,3 +182,72 @@ object CpProjectSnapshotCollector {
             .toList()
     }
 }
+
+internal object CpResolvedRequestCache {
+    private val entries = ConcurrentHashMap<CpResolvedRequestCacheKey, List<CpInspectionFile>>()
+
+    fun resolve(request: CpInspectionResolveRequest, knownFiles: Map<String, CpInspectionFile> = emptyMap()): CpInspectionRequest? {
+        val key = request.cacheKey()
+        entries[key]?.let { files ->
+            CpDiagnosticsTrace.info("snapshot-resolve-cache-hit:${request.activeFile}:${request.targetFile}") {
+                "cp snapshot resolve cache hit active=${request.activeFile} target=${request.targetFile}"
+            }
+            return CpInspectionRequest(
+                activeFile = request.activeFile,
+                files = files.withKnownTexts(knownFiles),
+            )
+        }
+
+        val resolved = CpHelperRunner.resolveInspectionRequest(request) ?: return null
+        if (entries.size > maxEntries) {
+            entries.clear()
+        }
+        entries[key] = resolved.files
+        return resolved
+    }
+
+    private fun CpInspectionResolveRequest.cacheKey(): CpResolvedRequestCacheKey =
+        CpResolvedRequestCacheKey(
+            activeFile = activeFile,
+            targetFile = targetFile,
+            entryFiles = entryFiles,
+            importRoots = importRoots,
+            searchRoots = searchRoots,
+            followStdlibImports = followStdlibImports,
+            files = files
+                .map { CpResolvedRequestFileKey(it.path, importSignature(it.text)) }
+                .sortedBy { it.path },
+        )
+
+    private fun List<CpInspectionFile>.withKnownTexts(knownFiles: Map<String, CpInspectionFile>): List<CpInspectionFile> =
+        map { file -> knownFiles[file.path] ?: file }
+
+    private fun importSignature(text: String): String =
+        text
+            .lineSequence()
+            .map(String::trim)
+            .filter { line ->
+                line.startsWith("import ") ||
+                    line.startsWith("module ") ||
+                    line.startsWith("export import ") ||
+                    line.startsWith("export module ")
+            }
+            .joinToString("\n")
+
+    private const val maxEntries = 256
+}
+
+private data class CpResolvedRequestCacheKey(
+    val activeFile: String,
+    val targetFile: String,
+    val entryFiles: List<String>,
+    val importRoots: List<String>,
+    val searchRoots: List<String>,
+    val followStdlibImports: Boolean,
+    val files: List<CpResolvedRequestFileKey>,
+)
+
+private data class CpResolvedRequestFileKey(
+    val path: String,
+    val importSignature: String,
+)

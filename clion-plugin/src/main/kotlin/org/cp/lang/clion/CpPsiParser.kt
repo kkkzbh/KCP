@@ -26,6 +26,9 @@ private class CpBuilder(
             parseImportDeclaration()
         }
         while (!builder.eof()) {
+            if (consume(CpTypes.SEMICOLON)) {
+                continue
+            }
             if (parseTopLevelItem()) {
                 continue
             }
@@ -756,6 +759,10 @@ private class CpBuilder(
                 parseExpressionStatement()
                 true
             }
+            at(CpTypes.SEMICOLON) -> {
+                advance()
+                true
+            }
             else -> {
                 builder.error("expected statement")
                 false
@@ -1280,22 +1287,7 @@ private class CpBuilder(
 
         var start = 1
         if (lookAhead(start) == CpTypes.LESS) {
-            var angleDepth = 0
-            while (true) {
-                when (lookAhead(start) ?: return false) {
-                    CpTypes.LESS -> angleDepth += 1
-                    CpTypes.GREATER -> angleDepth -= 1
-                    CpTypes.GREATER_GREATER -> angleDepth -= 2
-                    CpTypes.GREATER_GREATER_EQUAL -> return false
-                }
-                start += 1
-                if (angleDepth == 0) {
-                    break
-                }
-                if (angleDepth < 0) {
-                    return false
-                }
-            }
+            start = scanAngleArgumentListEnd(start) ?: return false
         }
         if (lookAhead(start) != CpTypes.L_PAREN) {
             return false
@@ -1331,24 +1323,8 @@ private class CpBuilder(
         if (!at(CpTypes.LESS)) {
             return false
         }
-        var depth = 0
-        var index = 0
-        while (true) {
-            val kind = lookAhead(index) ?: return false
-            when (kind) {
-                CpTypes.LESS -> depth += 1
-                CpTypes.GREATER -> depth -= 1
-                CpTypes.GREATER_GREATER -> depth -= 2
-                CpTypes.GREATER_GREATER_EQUAL -> return false
-            }
-            index += 1
-            if (depth == 0) {
-                return lookAhead(index) == nextType
-            }
-            if (depth < 0) {
-                return false
-            }
-        }
+        val index = scanAngleArgumentListEnd(0) ?: return false
+        return lookAhead(index) == nextType
     }
 
     private fun scanTypeSuffixFor(nextType: IElementType): Boolean {
@@ -1357,23 +1333,7 @@ private class CpBuilder(
         }
         var index = 1
         if (lookAhead(index) == CpTypes.LESS) {
-            var depth = 0
-            while (true) {
-                val kind = lookAhead(index) ?: return false
-                when (kind) {
-                    CpTypes.LESS -> depth += 1
-                    CpTypes.GREATER -> depth -= 1
-                    CpTypes.GREATER_GREATER -> depth -= 2
-                    CpTypes.GREATER_GREATER_EQUAL -> return false
-                }
-                index += 1
-                if (depth == 0) {
-                    break
-                }
-                if (depth < 0) {
-                    return false
-                }
-            }
+            index = scanAngleArgumentListEnd(index) ?: return false
         }
         while (lookAhead(index) == CpTypes.COLON_COLON && lookAhead(index + 1) == CpTypes.IDENTIFIER) {
             index += 2
@@ -1396,6 +1356,64 @@ private class CpBuilder(
             index += 2
         }
         return lookAhead(index) == nextType
+    }
+
+    private fun scanAngleArgumentListEnd(start: Int): Int? {
+        if (lookAhead(start) != CpTypes.LESS) {
+            return null
+        }
+
+        var angleDepth = 0
+        var parenDepth = 0
+        var bracketDepth = 0
+        var index = start
+        while (true) {
+            val kind = lookAhead(index) ?: return null
+            when (kind) {
+                CpTypes.LESS -> angleDepth += 1
+                CpTypes.GREATER -> {
+                    angleDepth -= 1
+                    if (angleDepth == 0) {
+                        return index + 1
+                    }
+                    if (angleDepth < 0) {
+                        return null
+                    }
+                }
+                CpTypes.GREATER_GREATER -> {
+                    angleDepth -= 2
+                    if (angleDepth == 0) {
+                        return index + 1
+                    }
+                    if (angleDepth < 0) {
+                        return null
+                    }
+                }
+                CpTypes.GREATER_GREATER_EQUAL -> return null
+                CpTypes.L_PAREN -> parenDepth += 1
+                CpTypes.R_PAREN -> {
+                    if (parenDepth == 0) {
+                        return null
+                    }
+                    parenDepth -= 1
+                }
+                CpTypes.L_BRACKET -> bracketDepth += 1
+                CpTypes.R_BRACKET -> {
+                    if (bracketDepth == 0) {
+                        return null
+                    }
+                    bracketDepth -= 1
+                }
+                CpTypes.L_BRACE, CpTypes.R_BRACE -> return null
+                CpTypes.SEMICOLON -> if (bracketDepth == 0) {
+                    return null
+                }
+                in ANGLE_ARGUMENT_SCAN_STOPS -> if (parenDepth == 0 && bracketDepth == 0) {
+                    return null
+                }
+            }
+            index += 1
+        }
     }
 
     private fun markIdentifier(type: IElementType, message: String): Boolean {
@@ -1624,6 +1642,29 @@ private class CpBuilder(
             CpTypes.CARET_EQUAL,
             CpTypes.LESS_LESS_EQUAL,
             CpTypes.GREATER_GREATER_EQUAL,
+        )
+
+        private val ANGLE_ARGUMENT_SCAN_STOPS = setOf(
+            CpTypes.ARROW,
+            CpTypes.PLUS,
+            CpTypes.MINUS,
+            CpTypes.SLASH,
+            CpTypes.PERCENT,
+            CpTypes.EQUAL,
+            CpTypes.EQUAL_EQUAL,
+            CpTypes.BANG_EQUAL,
+            CpTypes.LESS_EQUAL,
+            CpTypes.GREATER_EQUAL,
+            CpTypes.LESS_LESS,
+            CpTypes.LESS_LESS_EQUAL,
+            CpTypes.AMP_EQUAL,
+            CpTypes.PIPE,
+            CpTypes.PIPE_EQUAL,
+            CpTypes.CARET,
+            CpTypes.CARET_EQUAL,
+            CpTypes.KW_AND,
+            CpTypes.KW_OR,
+            CpTypes.KW_AS,
         )
 
         private fun binaryOperator(type: IElementType?): BinaryOperator? =

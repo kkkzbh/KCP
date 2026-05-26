@@ -845,6 +845,9 @@ auto collect_ast_highlights(highlight_collector& collector, parse_result const& 
         for(auto const& field : value.fields) {
             collector.add("field.declaration", field.name);
             collect_type_highlights(collector, parsed.ast, checked, unit_index, field.type);
+            if(field.default_value) {
+                collect_expression_highlights(collector, parsed.ast, checked, unit_index, *field.default_value);
+            }
         }
     }
     for(auto id : root.enums) {
@@ -1405,6 +1408,9 @@ auto collect_ast_navigation(navigation_collector& collector, parse_result const&
         collect_generic_parameter_navigation(collector, parsed.ast, checked, unit_index, value.generic_parameters);
         for(auto const& field : value.fields) {
             collect_type_navigation(collector, parsed.ast, checked, unit_index, field.type);
+            if(field.default_value) {
+                collect_expression_navigation(collector, parsed.ast, checked, unit_index, *field.default_value);
+            }
         }
     }
     for(auto id : root.enums) {
@@ -1908,7 +1914,7 @@ auto inspect(inspect_request request) -> inspect_result
     for(auto index = 0uz; index < file_ids.size(); ++index) {
         auto const file = file_ids[index];
         auto preprocessed = preprocess(sources, file);
-        if(not preprocessed.diagnostics.empty()) {
+        if(contains_error_diagnostic(std::span{ preprocessed.diagnostics })) {
             frontend_ok = false;
             append_diagnostics(all_diagnostics, preprocessed.diagnostics);
             continue;
@@ -1918,7 +1924,7 @@ auto inspect(inspect_request request) -> inspect_result
         if(file == *active_file) {
             active_tokens = lexical.tokens;
         }
-        if(not lexical.diagnostics.empty()) {
+        if(contains_error_diagnostic(std::span{ lexical.diagnostics })) {
             frontend_ok = false;
             append_diagnostics(all_diagnostics, lexical.diagnostics);
             continue;

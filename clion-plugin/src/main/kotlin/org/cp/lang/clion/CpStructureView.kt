@@ -8,6 +8,7 @@ import com.intellij.ide.structureView.TreeBasedStructureViewBuilder
 import com.intellij.ide.structureView.impl.common.PsiTreeElementBase
 import com.intellij.lang.PsiStructureViewFactory
 import com.intellij.openapi.editor.Editor
+import com.intellij.openapi.util.Key
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 
@@ -58,10 +59,29 @@ object CpStructureEngine {
         CpElements.REQUIRES_CLAUSE,
     )
 
-    fun labels(file: PsiFile): List<String> =
-        children(file).flatMap { flattenLabels(it) }
+    fun labels(file: PsiFile): List<String> {
+        val stamp = file.modificationStamp
+        file.getUserData(labelsCacheKey)?.takeIf { it.modificationStamp == stamp }?.let {
+            return it.labels
+        }
 
-    fun label(element: PsiElement): String =
+        val labels = children(file).flatMap { flattenLabels(it) }
+        file.putUserData(labelsCacheKey, CachedStructureLabels(stamp, labels))
+        return labels
+    }
+
+    fun label(element: PsiElement): String {
+        val stamp = element.structureModificationStamp()
+        element.getUserData(labelCacheKey)?.takeIf { it.modificationStamp == stamp }?.let {
+            return it.label
+        }
+
+        val label = computeLabel(element)
+        element.putUserData(labelCacheKey, CachedStructureLabel(stamp, label))
+        return label
+    }
+
+    private fun computeLabel(element: PsiElement): String =
         when (element.cpElementType()) {
             CpElements.MODULE_HEADER -> "module ${element.directChild(CpElements.MODULE_NAME)?.text.orEmpty()}"
             CpElements.IMPORT_DECLARATION -> "import ${element.directChild(CpElements.IMPORT_NAME)?.text.orEmpty()}"
@@ -80,8 +100,15 @@ object CpStructureEngine {
         }
 
     fun children(element: PsiElement): List<PsiElement> {
+        val stamp = element.structureModificationStamp()
+        element.getUserData(childrenCacheKey)?.takeIf { it.modificationStamp == stamp }?.let {
+            return it.children
+        }
+
         val wanted = if (element is PsiFile) rootTypes else nestedTypes
-        return element.children.filter { it.cpElementType() in wanted }
+        val children = element.children.filter { it.cpElementType() in wanted }
+        element.putUserData(childrenCacheKey, CachedStructureChildren(stamp, children))
+        return children
     }
 
     private fun flattenLabels(element: PsiElement): List<String> =
@@ -92,4 +119,27 @@ object CpStructureEngine {
         val type = element.directChild(CpElements.TYPE_REFERENCE)?.text
         return if (type == null) name else "$name: $type"
     }
+
+    private fun PsiElement.structureModificationStamp(): Long =
+        containingFile?.modificationStamp ?: modificationStampFallback
+
+    private val labelsCacheKey = Key.create<CachedStructureLabels>("org.cp.lang.clion.structure.labels")
+    private val labelCacheKey = Key.create<CachedStructureLabel>("org.cp.lang.clion.structure.label")
+    private val childrenCacheKey = Key.create<CachedStructureChildren>("org.cp.lang.clion.structure.children")
+    private const val modificationStampFallback = -1L
 }
+
+private data class CachedStructureLabels(
+    val modificationStamp: Long,
+    val labels: List<String>,
+)
+
+private data class CachedStructureLabel(
+    val modificationStamp: Long,
+    val label: String,
+)
+
+private data class CachedStructureChildren(
+    val modificationStamp: Long,
+    val children: List<PsiElement>,
+)

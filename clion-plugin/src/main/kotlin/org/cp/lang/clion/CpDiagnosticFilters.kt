@@ -31,9 +31,9 @@ object CpInjectedFragmentPolicy {
         fileType.name == "Markdown" || language.id == "Markdown"
 }
 
-class CpMarkdownErrorFilter : HighlightErrorFilter() {
+class CpPsiErrorFilter : HighlightErrorFilter() {
     override fun shouldHighlightErrorElement(element: PsiErrorElement): Boolean =
-        !CpInjectedFragmentPolicy.isCpMarkdownCodeFence(element.containingFile)
+        element.containingFile?.language != CpLanguage
 }
 
 class CpExternalAnnotatorsFilter : ExternalAnnotatorsFilter {

@@ -2,6 +2,7 @@ package org.cp.lang.clion
 
 import com.intellij.lang.LanguageParserDefinitions
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 
@@ -58,6 +59,29 @@ class CpDocumentationTest : BasePlatformTestCase() {
         assertTrue(doc!!, "struct box" in doc)
         assertTrue(doc, "value: i32" in doc)
         assertTrue(doc, "ready: bool" in doc)
+    }
+
+    fun testDocumentationCacheInvalidatesAfterEdit() {
+        myFixture.configureByText(
+            CpFileType.INSTANCE,
+            """
+            struct box {
+                value: i32;
+                <caret>
+            }
+            """.trimIndent(),
+        )
+
+        val firstTypeName = myFixture.file.descendants(CpElements.TYPE_NAME).first { it.text == "box" }
+        val first = CpDocumentationEngine.documentation(firstTypeName)
+        myFixture.type("ready: bool;\n")
+        val secondTypeName = myFixture.file.descendants(CpElements.TYPE_NAME).first { it.text == "box" }
+        val second = CpDocumentationEngine.documentation(secondTypeName)
+
+        assertNotNull(first)
+        assertNotNull(second)
+        assertFalse(first!!, "ready: bool" in first)
+        assertTrue(second!!, "ready: bool" in second)
     }
 
     fun testConceptDocumentationShowsRequirements() {

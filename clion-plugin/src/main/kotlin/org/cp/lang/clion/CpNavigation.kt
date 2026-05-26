@@ -8,13 +8,13 @@ import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.roots.ProjectRootManager
 import com.intellij.openapi.vfs.LocalFileSystem
-import com.intellij.openapi.vfs.VfsUtilCore
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
 import com.intellij.psi.PsiManager
+import com.intellij.psi.search.FileTypeIndex
+import com.intellij.psi.search.GlobalSearchScope
 import java.util.concurrent.CancellationException
 
 class CpGotoDeclarationHandler : GotoDeclarationHandler {
@@ -85,8 +85,14 @@ object CpSemanticDeclarationResolver {
             return resolveFromInspection(file, element, cached.request, cached.result)
         }
 
+        cache.latest(file)?.let { cached ->
+            CpNavigationLog.debug { "semantic cache latest source=${element.cpDebug()} entries=${cached.result.navigation.size}" }
+            cache.requestRefresh(file)
+            return resolveFromInspection(file, element, cached.request, cached.result)
+        }
+
         CpNavigationLog.debug { "semantic cache miss source=${element.cpDebug()} refresh=background" }
-        cache.requestRefresh(file, file.activeText(editor))
+        cache.requestRefresh(file)
         return null
     }
 
@@ -279,20 +285,8 @@ internal fun isCtrlMousePreviewQuery(): Boolean =
     }
 
 private fun findProjectVirtualFile(project: Project, path: String): VirtualFile? {
-    for (root in ProjectRootManager.getInstance(project).contentRoots) {
-        var result: VirtualFile? = null
-        VfsUtilCore.iterateChildrenRecursively(root, null) { virtualFile ->
-            if (normalizePath(virtualFile.path) == path) {
-                result = virtualFile
-                return@iterateChildrenRecursively false
-            }
-            true
-        }
-        if (result != null) {
-            return result
-        }
-    }
-    return null
+    return FileTypeIndex.getFiles(CpFileType.INSTANCE, GlobalSearchScope.projectScope(project))
+        .firstOrNull { it.isValid && !it.isDirectory && normalizePath(it.path) == path }
 }
 
 private fun Throwable.rethrowIfControlFlow() {

@@ -13,6 +13,7 @@ import com.intellij.testFramework.ExtensionTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 
 class CpNavigationTest : BasePlatformTestCase() {
@@ -280,7 +281,7 @@ class CpNavigationTest : BasePlatformTestCase() {
         assertEquals(resolved, target)
     }
 
-    fun testColdReferenceResolveComputesSemanticTarget() {
+    fun testColdReferenceResolveDoesNotComputeSemanticTarget() {
         myFixture.configureByText(
             CpFileType.INSTANCE,
             """
@@ -301,9 +302,8 @@ class CpNavigationTest : BasePlatformTestCase() {
         assertNotNull(reference)
         val target = reference!!.resolve()
 
-        assertNotNull(target)
-        assertEquals(CpElements.FUNCTION_NAME, target!!.cpElementType())
-        assertEquals("build_parser_tables", target.text)
+        assertNull(target)
+        assertNull(CpSemanticCache.get(project).current(myFixture.file))
     }
 
     fun testExplicitGotoComputesColdSemanticTarget() {

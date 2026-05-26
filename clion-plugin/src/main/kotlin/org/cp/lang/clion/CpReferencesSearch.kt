@@ -55,7 +55,7 @@ class CpReferencesSearch : QueryExecutor<PsiReference, ReferencesSearch.SearchPa
 
         for (virtualFile in projectFiles) {
             ProgressManager.checkCanceled()
-            val candidate = readAction {
+            val candidateContext = readAction {
                 if (!virtualFile.isValid || virtualFile.isDirectory || !searchScope.contains(virtualFile)) {
                     return@readAction null
                 }
@@ -66,19 +66,21 @@ class CpReferencesSearch : QueryExecutor<PsiReference, ReferencesSearch.SearchPa
                 }
 
                 val sourceFile = psiManager.findFile(virtualFile) ?: return@readAction null
-                val request = CpProjectSnapshotCollector.collect(sourceFile, activeText) ?: return@readAction null
-                if (request.files.none { normalizeSearchPath(it.path) == targetInfo.path }) {
-                    return@readAction null
+                CpProjectSnapshotCollector.prepare(sourceFile, activeText)?.let { context ->
+                    SearchCandidateContext(virtualFile, sourceFile, context)
                 }
-
-                SearchCandidate(
-                    virtualFile = virtualFile,
-                    request = request,
-                )
             } ?: continue
+            val request = candidateContext.context.resolve()
+            if (request.files.none { normalizeSearchPath(it.path) == targetInfo.path }) {
+                continue
+            }
+            val candidate = SearchCandidate(
+                virtualFile = virtualFile,
+                sourceFile = candidateContext.sourceFile,
+                request = request,
+            )
 
-            val result = CpHelperRunner.inspectOrNull(candidate.request) ?: continue
-            CpSemanticCache.get(project).store(candidate.request, result, cpModificationCount(project))
+            val result = candidate.cachedOrInspect(project) ?: continue
             for (navigation in result.navigation) {
                 if (normalizeSearchPath(navigation.targetFile) != targetInfo.path ||
                     navigation.targetStartOffset != targetInfo.range.first ||
@@ -112,6 +114,22 @@ class CpReferencesSearch : QueryExecutor<PsiReference, ReferencesSearch.SearchPa
         ApplicationManager.getApplication().runReadAction<T>(block)
 }
 
+private fun SearchCandidate.cachedOrInspect(project: com.intellij.openapi.project.Project): CpInspectionResult? {
+    val cache = CpSemanticCache.get(project)
+    cache.current(sourceFile)?.takeIf { it.request.sameInputAs(request) }?.let {
+        return it.result
+    }
+
+    val result = CpHelperRunner.inspectOrNull(request) ?: return null
+    cache.store(request, result, cpModificationCount(project))
+    return result
+}
+
+private fun CpInspectionRequest.sameInputAs(other: CpInspectionRequest): Boolean =
+    activeFile == other.activeFile &&
+        files.size == other.files.size &&
+        files.zip(other.files).all { (left, right) -> left.path == right.path && left.text == right.text }
+
 private fun normalizeSearchPath(path: String): String =
     runCatching { Path.of(path).toAbsolutePath().normalize().toString() }.getOrDefault(path)
 
@@ -125,5 +143,12 @@ private data class SearchTarget(
 
 private data class SearchCandidate(
     val virtualFile: VirtualFile,
+    val sourceFile: PsiFile,
     val request: CpInspectionRequest,
+)
+
+private data class SearchCandidateContext(
+    val virtualFile: VirtualFile,
+    val sourceFile: PsiFile,
+    val context: CpSnapshotContext,
 )

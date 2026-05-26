@@ -9,13 +9,9 @@ import com.intellij.codeInsight.hints.declarative.InlayTreeSink
 import com.intellij.codeInsight.hints.declarative.InlineInlayPosition
 import com.intellij.codeInsight.hints.declarative.SharedBypassCollector
 import com.intellij.openapi.editor.Editor
-import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.openapi.util.Key
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
-import com.intellij.psi.PsiManager
-import com.intellij.psi.search.FileTypeIndex
-import com.intellij.psi.search.GlobalSearchScope
-import java.nio.file.Path
 
 class CpTypeHintsProvider : InlayHintsProvider {
     override fun createCollector(file: PsiFile, editor: Editor): InlayHintsCollector? {
@@ -69,10 +65,13 @@ object CpTypeHintEngine {
         CpElements.BLOCK_EXPRESSION,
     )
 
-    fun items(file: PsiFile): List<CpTypeHint> {
-        val context = CpTypeContext(file)
+    fun items(file: PsiFile): List<CpTypeHint> =
+        CpTypeHintIndex.get(file)
+
+    private fun compute(file: PsiFile, snapshot: CpSymbolScopeSnapshot): List<CpTypeHint> {
+        val context = CpTypeContext(snapshot)
         val hints = mutableListOf<CpTypeHint>()
-        for (declaration in file.descendants(CpElements.DECLARATION_STATEMENT)) {
+        for (declaration in CpFileSymbolIndex.get(file).declarationStatements) {
             val name = declaration.directChild(CpElements.LOCAL_DECLARATION) ?: continue
             val explicitType = declaration.directTypeReference()
             val inferred = explicitType?.text ?: context.infer(declaration.directExpression())
@@ -93,18 +92,15 @@ object CpTypeHintEngine {
     private fun PsiElement.directExpression(): PsiElement? =
         children.firstOrNull { it.cpElementType() in expressionTypes }
 
-    private class CpTypeContext(file: PsiFile) {
+    private class CpTypeContext(snapshot: CpSymbolScopeSnapshot) {
         val locals = linkedMapOf<String, String>()
-        private val files = typeHintFiles(file)
         private val functions = mutableMapOf<String, String>()
         private val memberFunctions = mutableMapOf<String, MutableMap<String, String>>()
         private val structFields = mutableMapOf<String, MutableMap<String, String>>()
 
         init {
-            for (source in files) {
-                collectTopLevelFunctions(source)
-                collectMemberFunctions(source)
-                collectStructFields(source)
+            for (entry in snapshot.entries) {
+                collectSymbols(entry.symbols)
             }
         }
 
@@ -207,40 +203,22 @@ object CpTypeHintEngine {
             return "f(${parameterTypes.joinToString(", ")}) -> $returnType"
         }
 
-        private fun collectTopLevelFunctions(file: PsiFile) {
-            for (function in file.descendants(CpElements.FUNCTION)) {
-                if (function.parentByType(CpElements.IMPL_BLOCK) != null ||
-                    function.parentByType(CpElements.CONCEPT_DECLARATION) != null
-                ) {
+        private fun collectSymbols(symbols: CpFileSymbols) {
+            for (function in symbols.functions) {
+                if (function.receiverType != null || function.element.parent?.parentByType(CpElements.CONCEPT_DECLARATION) != null) {
                     continue
                 }
-                val name = function.directChild(CpElements.FUNCTION_NAME)?.text ?: continue
-                functions.putIfAbsent(name, function.returnTypeText() ?: "void")
+                functions.putIfAbsent(function.name, function.returnType)
             }
-        }
-
-        private fun collectMemberFunctions(file: PsiFile) {
-            for (impl in file.descendants(CpElements.IMPL_BLOCK)) {
-                val receiver = impl.directChild(CpElements.TYPE_REFERENCE)?.typeName()?.baseType() ?: continue
-                val functions = memberFunctions.getOrPut(receiver) { mutableMapOf() }
-                for (function in impl.directChildren(CpElements.FUNCTION)) {
-                    val name = function.directChild(CpElements.FUNCTION_NAME)?.text ?: continue
-                    functions.putIfAbsent(name, function.returnTypeText() ?: "void")
-                }
+            for (function in symbols.functions) {
+                val receiver = function.receiverType ?: continue
+                val receiverFunctions = memberFunctions.getOrPut(receiver) { mutableMapOf() }
+                receiverFunctions.putIfAbsent(function.name, function.returnType)
             }
-        }
-
-        private fun collectStructFields(file: PsiFile) {
-            for (struct in file.descendants(CpElements.STRUCT_DECLARATION)) {
-                val type = struct.directChild(CpElements.TYPE_NAME)?.text ?: continue
-                val fields = structFields.getOrPut(type.baseType()) { mutableMapOf() }
-                for (field in struct.descendants(CpElements.FIELD_DECLARATION)) {
-                    if (field.parent?.cpElementType() != CpElements.STRUCT_FIELD) {
-                        continue
-                    }
-                    val fieldType = field.parent?.directChild(CpElements.TYPE_REFERENCE)?.text ?: continue
-                    fields.putIfAbsent(field.text, fieldType)
-                }
+            for (field in symbols.structFields) {
+                val owner = field.ownerType ?: continue
+                val fields = structFields.getOrPut(owner) { mutableMapOf() }
+                fields.putIfAbsent(field.name, field.type)
             }
         }
 
@@ -282,27 +260,24 @@ object CpTypeHintEngine {
     private fun String.baseType(): String =
         takeWhile { it.isLetterOrDigit() || it == '_' }
 
-    private fun typeHintFiles(file: PsiFile): List<PsiFile> {
-        val request = CpProjectSnapshotCollector.collect(file, file.text)
-        val wantedPaths = request?.files?.map { normalizeHintPath(it.path) }
-            ?: listOf(normalizeHintPath(file.virtualFile?.path ?: file.name))
-        val psiManager = PsiManager.getInstance(file.project)
-        val projectFiles = FileTypeIndex.getFiles(CpFileType.INSTANCE, GlobalSearchScope.projectScope(file.project))
-            .associateBy { normalizeHintPath(it.path) }
-        val files = linkedMapOf<String, PsiFile>()
+    private object CpTypeHintIndex {
+        fun get(file: PsiFile): List<CpTypeHint> {
+            val snapshot = CpSymbolScope.snapshot(file)
+            val signature = snapshot.entries.map { it.stamp }
+            file.getUserData(cacheKey)?.takeIf { it.signature == signature }?.let {
+                return it.hints
+            }
 
-        file.virtualFile?.path?.let { files[normalizeHintPath(it)] = file }
-        for (path in wantedPaths) {
-            val psiFile = when {
-                files.containsKey(path) -> files[path]
-                projectFiles.containsKey(path) -> psiManager.findFile(projectFiles[path]!!)
-                else -> LocalFileSystem.getInstance().refreshAndFindFileByPath(path)?.let { psiManager.findFile(it) }
-            } ?: continue
-            files[path] = psiFile
+            val hints = compute(file, snapshot)
+            file.putUserData(cacheKey, CachedTypeHints(signature, hints))
+            return hints
         }
-        return files.values.toList()
-    }
 
-    private fun normalizeHintPath(path: String): String =
-        runCatching { Path.of(path).toAbsolutePath().normalize().toString() }.getOrDefault(path)
+        private val cacheKey = Key.create<CachedTypeHints>("org.cp.lang.clion.typeHintIndex")
+    }
 }
+
+private data class CachedTypeHints(
+    val signature: List<CpSymbolScopeStamp>,
+    val hints: List<CpTypeHint>,
+)
