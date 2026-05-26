@@ -329,7 +329,7 @@ parser 主线采用规范 LR(1) 分析，不再把预测分析作为后续阶段
 - `parser/grammar.cp`: 在 `make_minic_grammar()` 中直接写出 miniC 产生式。
 - `parser/table.cp`: 计算 FIRST 集、closure、goto、规范 LR(1) 项目集族、DFA 转移以及 ACTION/GOTO 表。
 - `parser/state.cp`: 执行表驱动移进/规约分析，并在每条 reduce 动作上构造现有 AST。
-- `parser/parser.cp`: 暴露 `parse(tokens)` 和 `parse_with_options(tokens, options)`，供语义分析和 IR 继续使用。
+- `parser/parser.cp`: 暴露 `parse(tokens, options = parse_options{})`，供语义分析和 IR 继续使用。
 
 LR(1) 项目写作 `[A -> alpha . beta, a]`。其中 `A -> alpha beta` 是一条产生式，点表示已经识别到的位置，`a` 是 1 个向前看终结符。closure 遇到 `[A -> alpha . B beta, a]` 时，会加入 `B` 的所有候选产生式，并用 `FIRST(beta a)` 决定新项目的 lookahead。goto 把点前为某个符号的项目统一右移一格，再做 closure，得到自动机下一状态。
 

@@ -31,5 +31,14 @@ add_dependencies(compiler_behavior_test cp)
 
 add_test(
     NAME compiler_behavior
-    COMMAND compiler_behavior_test $<TARGET_FILE:cp> ${CP_TEST_CLANG} ${CP_TEST_LLVM_AS} ${CMAKE_SOURCE_DIR}/test/fixtures/examples
+    COMMAND ${CMAKE_SOURCE_DIR}/test/run_isolated.sh
+        $<TARGET_FILE:compiler_behavior_test>
+        $<TARGET_FILE:cp>
+        ${CP_TEST_CLANG}
+        ${CP_TEST_LLVM_AS}
+        ${CMAKE_SOURCE_DIR}/test/fixtures/examples
+)
+
+set_tests_properties(compiler_behavior PROPERTIES
+    RUN_SERIAL TRUE
 )

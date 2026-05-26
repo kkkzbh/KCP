@@ -122,6 +122,7 @@ auto check_harness(test_tools const& tools) -> void
 import preprocessor;
 import lexer;
 import parser;
+import parser.table;
 import diagnostic;
 
 preprocess_text(text: str) -> preprocessed_file
@@ -130,25 +131,25 @@ preprocess_text(text: str) -> preprocessed_file
     return preprocess(file);
 }
 
-parse_text(text: str) -> parse_result
+parse_text(text: str, tables: parser_tables const&) -> parse_result
 {
     let preprocessed = preprocess_text(text);
     let lexical = lex(preprocessed);
-    return parse(move lexical.tokens);
+    return parse_with_tables(move lexical.tokens, tables);
 }
 
-parse_text_with_trace(text: str) -> parse_result
+parse_text_with_trace(text: str, tables: parser_tables const&) -> parse_result
 {
     let preprocessed = preprocess_text(text);
     let lexical = lex(preprocessed);
-    return parse_with_options(move lexical.tokens, parse_options{ .trace_enabled = true });
+    return parse_with_tables(move lexical.tokens, tables, parse_options{ .trace_enabled = true });
 }
 
 read_source(path: str) -> string
 {
     match file::open(path, open_options{}.read()) {
         .value(input) => {
-            let storage = buffer<u8>{8192 as usize};
+            let storage = raw_buffer<u8>{8192 as usize};
             let read = input.read(span<u8>{storage.data(), storage.capacity()});
             let count = read.value_or(0 as usize);
             return string{str{ .ptr = storage.data() as char const*, .len = count }};
@@ -271,17 +272,20 @@ first_var_decl_count(parsed: parse_result const&) -> usize
 
 main() -> i32
 {
-    let empty = parse_text("");
+    let tables = build_parser_tables();
+    if(tables.conflicts.size() != 0) { return 35; }
+
+    let empty = parse_text("", tables);
     if(not empty.accepted) { return 1; }
     if(empty.ast.programs[empty.root.value].functions.size() != 0) { return 2; }
 
-    let basic = parse_text("int main() { return 0; }");
+    let basic = parse_text("int main() { return 0; }", tables);
     if(not basic.accepted) { return 3; }
     if(basic.ast.programs[basic.root.value].functions.size() != 1) { return 4; }
     if(basic.ast.statements.size() != 2) { return 5; }
     if(basic.trace.size() != 0) { return 26; }
 
-    let traced = parse_text_with_trace("int main() { return 0; }");
+    let traced = parse_text_with_trace("int main() { return 0; }", tables);
     if(not traced.accepted) { return 27; }
     if(traced.trace.size() == 0) { return 28; }
     if(not trace_contains(traced, "enter", "Program")) { return 29; }
@@ -290,23 +294,23 @@ main() -> i32
     if(last_trace.action.as_str() != "accept") { return 31; }
 
     let sample_source = read_source("lab/test.c");
-    let sample = parse_text(sample_source.as_str());
+    let sample = parse_text(sample_source.as_str(), tables);
     if(not sample.accepted) { return 6; }
     if(sample.ast.programs[sample.root.value].functions.size() != 4) { return 7; }
 
-    let features = parse_text("int add(int a, int b) { return a + b; } int main() { int x = add(1, 2); int y; y = x; add(y, 3); if (y >= 3) { y = y - 1; } else { y = 0; } while (y > 0) { y = y - 1; } return y; }");
+    let features = parse_text("int add(int a, int b) { return a + b; } int main() { int x = add(1, 2); int y; y = x; add(y, 3); if (y >= 3) { y = y - 1; } else { y = 0; } while (y > 0) { y = y - 1; } return y; }", tables);
     if(not features.accepted) { return 8; }
     if(features.ast.programs[features.root.value].functions.size() != 2) { return 9; }
 
-    let declaration_list = parse_text("int main() { int a = 2, c = 0; return a + c; }");
+    let declaration_list = parse_text("int main() { int a = 2, c = 0; return a + c; }", tables);
     if(not declaration_list.accepted) { return 23; }
     if(first_var_decl_count(declaration_list) != 2 as usize) { return 24; }
 
-    let arrays = parse_text("void sort(int values[]) { for (int i = 0; i < 3; i = i + 1) { values[i] = values[i] + 1; if (values[i] < 0) { continue; } if (values[i] > 9) { break; } } } int main() { int scores[3] = {3, 1, 2}; sort(scores); return scores[0]; }");
+    let arrays = parse_text("void sort(int values[]) { for (int i = 0; i < 3; i = i + 1) { values[i] = values[i] + 1; if (values[i] < 0) { continue; } if (values[i] > 9) { break; } } } int main() { int scores[3] = {3, 1, 2}; sort(scores); return scores[0]; }", tables);
     if(not arrays.accepted) { return 32; }
     if(arrays.ast.programs[arrays.root.value].functions.size() != 2) { return 33; }
 
-    let precedence = parse_text("int main() { return 1 + 2 * 3; }");
+    let precedence = parse_text("int main() { return 1 + 2 * 3; }", tables);
     if(not precedence.accepted) { return 10; }
     let value = first_return_value(precedence);
     if(not value.has_value()) { return 11; }
@@ -317,27 +321,30 @@ main() -> i32
     let right_id = expr_id{ .value = (*right).value };
     if(not is_binary(precedence.ast, right_id, token_kind::star)) { return 14; }
 
-    let missing_semicolon = parse_text("int main() { return 0 }");
+    let logical_or = parse_text("int main() { return 1 || 0; }", tables);
+    if(not logical_or.accepted) { return 34; }
+
+    let missing_semicolon = parse_text("int main() { return 0 }", tables);
     if(missing_semicolon.accepted) { return 15; }
     if(missing_semicolon.diagnostics.size() == 0) { return 16; }
     if(missing_semicolon.diagnostics[0].stage != diagnostic_stage::parser) { return 17; }
 
-    let missing_paren = parse_text("int main( { return 0; }");
+    let missing_paren = parse_text("int main( { return 0; }", tables);
     if(missing_paren.accepted) { return 18; }
 
-    let missing_body = parse_text("int main();");
+    let missing_body = parse_text("int main();", tables);
     if(missing_body.accepted) { return 19; }
 
-    let expression_statement = parse_text("int main() { 1 + 2; return 0; }");
+    let expression_statement = parse_text("int main() { 1 + 2; return 0; }", tables);
     if(expression_statement.accepted) { return 20; }
 
-    let void_parameter = parse_text("int bad(void value) { return 0; }");
+    let void_parameter = parse_text("int bad(void value) { return 0; }", tables);
     if(void_parameter.accepted) { return 21; }
 
-    let identifier_tail = parse_text("int main() { value + 1; return 0; }");
+    let identifier_tail = parse_text("int main() { value + 1; return 0; }", tables);
     if(identifier_tail.accepted) { return 22; }
 
-    let incomplete_declaration_list = parse_text("int main() { int a = 1, ; return 0; }");
+    let incomplete_declaration_list = parse_text("int main() { int a = 1, ; return 0; }", tables);
     if(incomplete_declaration_list.accepted) { return 25; }
 
     return 0;

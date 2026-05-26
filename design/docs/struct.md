@@ -8,7 +8,7 @@
 
 ```text
 StructDecl      -> export? struct identifier { FieldDecl* }
-FieldDecl       -> identifier : Type ;
+FieldDecl       -> identifier : Type ( = Expression )? ;
 
 ImplBlock       -> impl TypeName { ImplItem* }
 ImplItem        -> Constructor
@@ -36,8 +36,8 @@ NamedFieldInit  -> . identifier = Expression
 
 ```cp
 struct vec2 {
-    x: f64;
-    y: f64;
+    x: f64 = 0.0;
+    y: f64 = 0.0;
 }
 ```
 
@@ -47,6 +47,8 @@ struct vec2 {
 
 - 字段名在同一个 `struct` 内不能重复。
 - 字段类型必须能被解析为合法类型。
+- 字段可以写 `= Expression` 指定缺省初始化表达式。
+- 字段缺省表达式按字段声明类型检查，不能访问 `self` 或函数局部变量。
 - 不设计 `public/private`，字段都视为 public。
 - `struct` 是名义类型。两个字段完全相同的结构体仍然是不同类型。
 
@@ -350,7 +352,7 @@ let b = vec2{ .x = 1.0 };
 规则：
 
 - 显式指定的字段不能重复。
-- 未指定字段按字段类型默认初始化。
+- 未指定字段优先使用字段声明上的缺省表达式；没有缺省表达式时按字段类型默认初始化。
 - 字段顺序不影响语义。
 - 字段初始化表达式按字段声明类型做上下文检查。
 - 因为所有字段都是 public，命名字段聚合始终允许，即使结构体声明了构造函数。
@@ -373,7 +375,7 @@ let b = vec2{ 1.0 };
 
 - 实参数量不能超过字段数量。
 - 已提供实参按字段声明顺序填充字段。
-- 剩余字段按字段类型默认初始化。
+- 剩余字段优先使用字段声明上的缺省表达式；没有缺省表达式时按字段类型默认初始化。
 - 字段初始化表达式按字段声明类型做上下文检查。
 
 本语言没有 C++ `initializer_list` 特权。`vector{ n, 0 }` 不会被隐式解释为元素列表；它只表示构造函数调用或顺序聚合。元素列表应使用数组字面量和显式关联函数，例如 `vector::from_array([10, 0])` 或 `vector::filled(n, 0)`。
@@ -391,7 +393,16 @@ let a = vec2{};
 1. 优先匹配零参数构造函数，包括显式 `type_name() = default;`。
 2. 没有零参数构造函数匹配时，按字段默认初始化。
 
-如果某个缺省字段的类型不可默认初始化，初始化失败并报告错误。默认初始化结果由 [type_system.md](type_system.md) 定义。
+按字段默认初始化时，字段声明上的 `= Expression` 优先于字段类型默认初始化：
+
+```cp
+struct production {
+    lhs: nonterminal_kind = nonterminal_kind::augmented;
+    rhs: vector<grammar_symbol> = vector<grammar_symbol>{};
+}
+```
+
+如果某个缺省字段既没有字段缺省表达式，字段类型又不可默认初始化，初始化失败并报告错误。默认初始化结果由 [type_system.md](type_system.md) 定义。
 
 ### 构造函数候选选择
 

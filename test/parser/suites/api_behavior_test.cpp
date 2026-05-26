@@ -859,6 +859,22 @@ main()
         is<index_expr_syntax>(indexed.ast.node(index_assignment.left)),
         "index expression should parse as an assignment target");
 
+    auto const field_default_source = sources.add_source (
+        "api_field_default.cp",
+        R"(struct point {
+    x: i32 = 1 + 2;
+    y: i32;
+})");
+    auto field_default = parse_source(sources, field_default_source);
+    test_parser::assert_true(field_default.accepted, "field default source should parse");
+    auto const& point_struct = field_default.ast.node(field_default.root->structs.front());
+    test_parser::assert_true(point_struct.fields.size() == 2, "field default source should keep both fields");
+    test_parser::assert_true(point_struct.fields.front().default_value != std::nullopt, "field should keep default expression");
+    test_parser::assert_true(point_struct.fields.back().default_value == std::nullopt, "field without default should stay empty");
+    test_parser::assert_true(
+        is<binary_expr_syntax>(field_default.ast.node(*point_struct.fields.front().default_value)),
+        "field default expression should preserve parsed expression shape");
+
     auto const operator_source = sources.add_source (
         "api_operator.cp",
         R"(struct vec2 {

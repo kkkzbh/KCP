@@ -35,6 +35,77 @@ auto semantic_analyzer::check_bodies() -> void
     }
 }
 
+auto semantic_analyzer::check_struct_field_defaults() -> void
+{
+    auto old_context = active_context_index;
+    auto old_unit_index = active_unit_index;
+    auto old_unit = active_unit;
+    auto old_ast = active_ast;
+    auto old_function = active_function;
+    auto old_substitutions = active_type_substitutions;
+    auto old_pack_substitutions = active_type_pack_substitutions;
+    auto old_self_type = active_self_type;
+    auto old_type_aliases = active_type_aliases;
+    auto old_self = active_self;
+    auto old_scopes = std::move(scopes);
+    auto old_type_scopes = std::move(type_scopes);
+    auto old_generic_parameters = std::move(active_generic_parameters);
+    auto old_generic_parameter_packs = std::move(active_generic_parameter_packs);
+
+    active_context_index = 0uz;
+    active_type_substitutions = nullptr;
+    active_type_pack_substitutions = nullptr;
+    active_self_type = {};
+    active_type_aliases = nullptr;
+    active_self = {};
+    active_function = {};
+
+    for(auto unit_index : std::views::iota(0uz, units.size())) {
+        active_unit_index = unit_index;
+        active_unit = &units[unit_index];
+        active_ast = &active_unit->ast;
+        enter_function_scope();
+
+        for(auto struct_id : active_unit->root.structs) {
+            auto const& syntax = active_ast->node(struct_id);
+            bind_active_generic_parameters(syntax.generic_parameters);
+
+            auto found = std::ranges::find_if(result.structs, [&](semantic_struct const& item) {
+                return item.unit_index == unit_index and item.syntax == struct_id;
+            });
+            if(found == result.structs.end()) {
+                continue;
+            }
+            auto struct_index = static_cast<std::uint32_t>(std::distance(result.structs.begin(), found));
+            for(auto const& field : syntax.fields) {
+                if(not field.default_value) {
+                    continue;
+                }
+                auto semantic_field = field_index(struct_index, ast_source.identifier(field.name));
+                if(not semantic_field) {
+                    continue;
+                }
+                check_expression(*active_ast, *field.default_value, result.structs[struct_index].fields[*semantic_field].type);
+            }
+        }
+    }
+
+    active_generic_parameter_packs = std::move(old_generic_parameter_packs);
+    active_generic_parameters = std::move(old_generic_parameters);
+    type_scopes = std::move(old_type_scopes);
+    scopes = std::move(old_scopes);
+    active_self = old_self;
+    active_type_aliases = old_type_aliases;
+    active_self_type = old_self_type;
+    active_type_pack_substitutions = old_pack_substitutions;
+    active_type_substitutions = old_substitutions;
+    active_function = old_function;
+    active_ast = old_ast;
+    active_unit = old_unit;
+    active_unit_index = old_unit_index;
+    active_context_index = old_context;
+}
+
 auto semantic_analyzer::check_function(std::size_t unit_index, function_id id) -> void
 {
     auto signature_id = result.signature_of(unit_index, id);

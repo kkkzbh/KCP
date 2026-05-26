@@ -16,7 +16,7 @@
 | `examples/variants/main.cp` | payload case、空 case、case 构造和 `match` |
 | `examples/lambdas/main.cp` | 函数类型、函数指针、表达式 lambda、块 lambda 和捕获 |
 | `examples/memory/main.cp` | `alloc`、`construct_at`、`destroy_at`、`free` 和析构 |
-| `examples/std/main.cp` | `optional`、`expected`、`buffer`、`vector`、`map`、`set`、`string`、`iota`、格式化输出 |
+| `examples/std/main.cp` | `optional`、`expected`、`raw_buffer`、`vector`、`map`、`set`、`string`、`iota`、格式化输出 |
 | `examples/interop/main.cp` | 强类型 `enum`、opaque alias、`extern "C"` |
 | `examples/errors/main.cp` | `assert`、`panic`、`!`、`optional` 可恢复失败分支 |
 | `examples/fs/main.cp` | `std.fs` 文件打开、写入、读取和 `span<u8>` 缓冲区 |

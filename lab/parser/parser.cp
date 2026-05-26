@@ -6,6 +6,7 @@ export import diagnostic;
 export import parser.ast;
 export import parser.trace;
 import parser.state;
+import parser.table;
 
 export struct parse_result {
     accepted: bool;
@@ -15,9 +16,16 @@ export struct parse_result {
     trace: vector<trace_record>;
 }
 
-export parse_with_options(tokens: vector<token>, options: parse_options) -> parse_result
+export parse(tokens: vector<token>, options: parse_options = parse_options{}) -> parse_result
 {
-    let result = parse_lr(move tokens, options);
+    let tables = build_parser_tables();
+    return parse_with_tables(move tokens, tables, options);
+}
+
+export parse_with_tables(tokens: vector<token>, tables: parser_tables const&, options: parse_options = parse_options{}) -> parse_result
+{
+    let state = parser_state{move tokens, options};
+    let result = state.run(tables);
     return parse_result{
         .accepted = result.accepted,
         .ast = move result.ast,
@@ -25,9 +33,4 @@ export parse_with_options(tokens: vector<token>, options: parse_options) -> pars
         .diagnostics = move result.diagnostics,
         .trace = move result.trace
     };
-}
-
-export parse(tokens: vector<token>) -> parse_result
-{
-    return parse_with_options(move tokens, parse_options{});
 }

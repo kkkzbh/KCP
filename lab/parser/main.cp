@@ -8,7 +8,7 @@ read_source(path: str) -> string
 {
     match file::open(path, open_options{}.read()) {
         .value(input) => {
-            let storage = buffer<u8>{4096 as usize};
+            let storage = raw_buffer<u8>{4096 as usize};
             let read = input.read(span<u8>{storage.data(), storage.capacity()});
             let count = read.value_or(0 as usize);
             return string{str{ .ptr = storage.data() as char const*, .len = count }};
@@ -145,7 +145,7 @@ main() -> i32
         return 3;
     }
 
-    let result = parse_with_options(move lexical.tokens, parse_options{ .trace_enabled = true });
+    let result = parse_with_tables(move lexical.tokens, tables, parse_options{ .trace_enabled = true });
     let program = result.ast.programs[result.root.value];
     println("mini c parser accepted: {}", result.accepted);
     println("mini c parser diagnostics: {}", result.diagnostics.size());

@@ -62,13 +62,16 @@ auto constexpr std_io_modules = {
     std::string_view{ "core/expected.cp" },
     std::string_view{ "core/iter.cp" },
     std::string_view{ "detail/runtime.cp" },
-    std::string_view{ "memory/buffer.cp" },
+    std::string_view{ "memory/raw_buffer.cp" },
     std::string_view{ "memory/span.cp" },
-    std::string_view{ "collections/detail/rb_tree.cp" },
+    std::string_view{ "collections/detail/vector_storage.cp" },
     std::string_view{ "collections/vector.cp" },
+    std::string_view{ "collections/detail/btree_storage.cp" },
+    std::string_view{ "collections/detail/btree.cp" },
     std::string_view{ "collections/map.cp" },
     std::string_view{ "collections/set.cp" },
     std::string_view{ "text/str.cp" },
+    std::string_view{ "text/detail/string_storage.cp" },
     std::string_view{ "text/string.cp" },
     std::string_view{ "core.cp" },
     std::string_view{ "memory.cp" },
@@ -372,7 +375,7 @@ main() -> i32
 
 main() -> i32
 {
-    let storage = buffer<i32>{3};
+    let storage = raw_buffer<i32>{3};
     sort(storage);
     return 0;
 })"
@@ -1191,6 +1194,33 @@ main() -> i32
         "local_name_blocks_implicit_self_call.cp",
         "struct a { } impl a { foo(self&) -> void { } test(self&) -> void { let foo = 1; foo(); } }",
         not_callable
+    );
+}
+
+auto check_struct_field_default_semantics() -> void
+{
+    auto result = analyze_one(
+        "struct_field_defaults.cp",
+        R"(struct point {
+    x: i32 = 7;
+    y: i32 = 11;
+}
+
+main() -> i32
+{
+    let empty = point{};
+    let named = point{ .y = 5 };
+    let positional = point{ 3 };
+    return empty.x + named.y + positional.x;
+})"
+    );
+    test_parser::assert_true(result.accepted(), "struct field default source should pass semantic analysis");
+
+    using enum diagnostic_kind;
+    expect_diagnostic(
+        "bad_struct_field_default.cp",
+        "struct point { x: i32 = true; } main() { let value = point{}; }",
+        type_mismatch
     );
 }
 
@@ -2791,6 +2821,7 @@ auto main() -> int
     check_anonymous_modules();
     check_reference_pointer_types();
     check_struct_impl_semantics();
+    check_struct_field_default_semantics();
     check_generic_struct_semantics();
     check_generic_function_semantics();
     check_parameter_pack_semantics();

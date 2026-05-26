@@ -195,6 +195,32 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 5, "member default argument should use the declared expression");
 }
 
+auto check_struct_field_default_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("struct-field-default");
+    auto source = dir / "struct_field_default.cp";
+    auto app = dir / "struct_field_default";
+    write_source(
+        source,
+R"(struct point {
+    x: i32 = 7;
+    y: i32 = 11;
+}
+
+main() -> i32
+{
+    let empty = point{};
+    let named = point{ .y = 5 };
+    let positional = point{ 3 };
+    return empty.x + empty.y + named.x + named.y + positional.x + positional.y;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile struct field defaults");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 44, "struct field defaults should fill omitted fields");
+}
+
 auto check_ufcs_receiver_conversion_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("ufcs-receiver-conversion");
@@ -1465,6 +1491,100 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "string comparison binary should use lexicographic str operators");
 }
 
+auto check_string_copy_move_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("string-copy-move");
+    auto source = dir / "string_copy_move.cp";
+    auto app = dir / "string_copy_move";
+    write_source(
+        source,
+        R"(import std;
+
+copy_value(value: string) -> string
+{
+    return value;
+}
+
+main() -> i32
+{
+    let left = string{"b"};
+    let right = string{"a"};
+    let copied = right;
+    right = left;
+    if(copied.as_str() != "a") {
+        return 1;
+    }
+    if(right.as_str() != "b") {
+        return 2;
+    }
+
+    let moved = move right;
+    if(moved.as_str() != "b") {
+        return 3;
+    }
+    if(right.size() != 0) {
+        return 4;
+    }
+
+    let explicit_copy = string{copied};
+    if(explicit_copy.as_str() != "a") {
+        return 5;
+    }
+
+    let values = vector<string>{};
+    values.push_back(string{"b"});
+    values.push_back(string{"a"});
+    let old_second = values[1 as usize];
+    values[1 as usize] = values[0 as usize];
+    if(old_second.as_str() != "a") {
+        return 6;
+    }
+
+    values.clear();
+    values.push_back(string{"c"});
+    values.push_back(string{"a"});
+    values.push_back(string{"b"});
+    sort(values, f(left: string const&, right: string const&) -> bool {
+        left.as_str() < right.as_str()
+    });
+    if(values[0 as usize].as_str() != "a" or values[1 as usize].as_str() != "b" or values[2 as usize].as_str() != "c") {
+        return 7;
+    }
+
+    let copied_storage = alloc<string>(1);
+    construct_at(copied_storage, values[0 as usize]);
+    values[0 as usize] = string{"z"};
+    if((*copied_storage).as_str() != "a") {
+        return 8;
+    }
+    destroy_at(copied_storage);
+    free(copied_storage);
+
+    let moved_storage = alloc<string>(1);
+    construct_at(moved_storage, move values[1 as usize]);
+    if((*moved_storage).as_str() != "b") {
+        return 9;
+    }
+    if(values[1 as usize].size() != 0) {
+        return 10;
+    }
+    destroy_at(moved_storage);
+    free(moved_storage);
+
+    let roundtrip = copy_value(copied);
+    if(roundtrip.as_str() != "a" or copied.as_str() != "a") {
+        return 11;
+    }
+
+    return 42;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile string copy/move binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "string copy/move binary should preserve ownership");
+}
+
 auto check_io_nul_string_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("io-nul-string");
@@ -1674,7 +1794,7 @@ main() -> i32
     }};
     match file::open(path, open_options{{}}.read()) {{
         .value(input) => {{
-            let storage = buffer<u8>{{5}};
+            let storage = raw_buffer<u8>{{5}};
             let read = input.read(span<u8>{{storage.data(), 5}});
             if(read.value_or(0 as usize) != (5 as usize)) {{
                 return 3;
@@ -1929,6 +2049,7 @@ main() -> i32
     }
 
     let records = vector<record>{};
+    let stable_records = vector<record>{};
     let index: i32 = 0;
     while(index < 70) {
         let key = index % 7;
@@ -1936,6 +2057,7 @@ main() -> i32
             key = 6 - key;
         }
         records.push_back(record{ .key = key, .order = index });
+        stable_records.push_back(record{ .key = key, .order = index });
         index += 1;
     }
 
@@ -1949,11 +2071,24 @@ main() -> i32
         if(record_index > 0 and records[record_index].key < records[record_index - 1].key) {
             return 10;
         }
-        let key = records[record_index].key;
-        if(records[record_index].order <= last_seen[key as usize]) {
+        record_index += 1;
+    }
+
+    stable_sort(stable_records, f(left: record const&, right: record const&) -> bool {
+        left.key < right.key
+    });
+
+    last_seen = [-1, -1, -1, -1, -1, -1, -1];
+    record_index = 0;
+    while(record_index < stable_records.size()) {
+        if(record_index > 0 and stable_records[record_index].key < stable_records[record_index - 1].key) {
             return 11;
         }
-        last_seen[key as usize] = records[record_index].order;
+        let key = stable_records[record_index].key;
+        if(stable_records[record_index].order <= last_seen[key as usize]) {
+            return 12;
+        }
+        last_seen[key as usize] = stable_records[record_index].order;
         record_index += 1;
     }
 
@@ -2140,6 +2275,115 @@ main() -> i32
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status == 0, "cp should compile std map/set binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 40, "std map/set binary should return ordered-container checksum");
+}
+
+auto check_std_map_set_btree_stress_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("std-map-set-btree-stress");
+    auto source = dir / "std_map_set_btree_stress.cp";
+    auto app = dir / "std_map_set_btree_stress";
+    write_source(
+        source,
+        R"(import std;
+
+check_set_order(values: set<i32>&, expected_count: i32, removed_mod: i32) -> i32
+{
+    if(values.size() != expected_count as usize) {
+        return 10;
+    }
+    let index: usize = 0;
+    let previous = -1000000;
+    while(index < values.size()) {
+        let value = values.nth(index);
+        if(index > 0 as usize and not (previous < value)) {
+            return 11;
+        }
+        if(removed_mod != 0 and value % removed_mod == 0) {
+            return 12;
+        }
+        if(values.rank(value) != index) {
+            return 13;
+        }
+        previous = value;
+        index += 1;
+    }
+    return 0;
+}
+
+main() -> i32
+{
+    let values = set<i32>{};
+    let index = 0;
+    while(index < 400) {
+        let key = (index * 37) % 997;
+        values.insert(key);
+        values.insert(key);
+        index += 1;
+    }
+    let first_check = check_set_order(ref values, 400, 0);
+    if(first_check != 0) {
+        return first_check;
+    }
+
+    let probe = 0;
+    while(probe < 997) {
+        let rank = values.rank(probe);
+        if(values.contains(probe) and (rank >= values.size() or values.nth(rank) != probe)) {
+            return 14;
+        }
+        probe += 1;
+    }
+
+    let remove_index = 0;
+    while(remove_index < 997) {
+        if(remove_index % 3 == 0) {
+            values.remove(remove_index);
+        }
+        remove_index += 1;
+    }
+    let second_check = check_set_order(ref values, 267, 3);
+    if(second_check != 0) {
+        return second_check;
+    }
+
+    let table = map<i32, i32>{};
+    let insert_index = 0;
+    while(insert_index < 300) {
+        let key = (insert_index * 53) % 701;
+        table.insert(key, key * 2 + 1);
+        insert_index += 1;
+    }
+    let item_index: usize = 0;
+    while(item_index < table.size()) {
+        let item = table.nth(item_index);
+        if(table.rank(item.key) != item_index or table.at(item.key) != item.key * 2 + 1) {
+            return 20;
+        }
+        item_index += 1;
+    }
+
+    let erase = 0;
+    while(erase < 701) {
+        if(erase % 4 == 1) {
+            table.remove(erase);
+        }
+        erase += 1;
+    }
+    let after_index: usize = 0;
+    while(after_index < table.size()) {
+        let item = table.nth(after_index);
+        if(item.key % 4 == 1 or table.rank(item.key) != after_index) {
+            return 21;
+        }
+        after_index += 1;
+    }
+    return 42;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile B-tree map/set stress binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "B-tree map/set stress binary should preserve ordering, rank, nth, and remove");
 }
 
 auto check_compiler_lab_workload_binary(test_tools const& tools) -> void
@@ -3226,6 +3470,7 @@ auto main(int argc, char** argv) -> int
     check_short_circuit_binary(tools);
     check_extern_c_binary(tools);
     check_member_default_argument_binary(tools);
+    check_struct_field_default_binary(tools);
     check_ufcs_receiver_conversion_binary(tools);
     check_emit_ll(tools);
     check_emit_obj(tools);
@@ -3267,6 +3512,7 @@ auto main(int argc, char** argv) -> int
     check_string_index_binary(tools);
     check_string_iteration_binary(tools);
     check_string_compare_binary(tools);
+    check_string_copy_move_binary(tools);
     check_io_print_binary(tools);
     check_io_nul_string_binary(tools);
     check_io_format_errors_binary(tools);
@@ -3279,6 +3525,7 @@ auto main(int argc, char** argv) -> int
     check_iota_public_import_binary(tools);
     check_iota_custom_incrementable_binary(tools);
     check_std_map_set_binary(tools);
+    check_std_map_set_btree_stress_binary(tools);
     check_compiler_lab_workload_binary(tools);
     check_compiler_lab_ll1_sets_binary(tools);
     check_compiler_lab_semantic_scope_binary(tools);

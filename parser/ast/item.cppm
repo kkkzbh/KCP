@@ -188,6 +188,7 @@ export struct struct_field_syntax
     source_span full_span{};
     source_span name{};
     type_id type{};
+    std::optional<expr_id> default_value{};
 };
 
 export struct struct_syntax

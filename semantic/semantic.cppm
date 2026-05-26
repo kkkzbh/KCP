@@ -142,6 +142,7 @@ struct semantic_analyzer
     {
         build_module_index();
         infer_return_types();
+        check_struct_field_defaults();
         check_bodies();
         return finish();
     }
@@ -391,6 +392,7 @@ private:
     auto report_cannot_infer_return_type(std::size_t unit_index, function_id id) -> void;
 
     auto check_bodies() -> void;
+    auto check_struct_field_defaults() -> void;
     auto check_function(std::size_t unit_index, function_id id) -> void;
     auto check_function_instance(std::size_t instance_index) -> void;
     auto check_function_body(std::size_t unit_index, function_id id, std::size_t context_index, function_signature_id signature_id, symbol_id function_symbol, std::map<std::string, semantic_type_id> const* substitutions, std::map<std::string, std::vector<semantic_type_id>> const* pack_substitutions) -> void;

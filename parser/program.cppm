@@ -614,6 +614,14 @@ auto parser::parse_struct_field() -> std::optional<struct_field_syntax>
         return std::nullopt;
     }
     auto type = parse_expected_type();
+    auto default_value = std::optional<expr_id>{};
+    if(check(token_kind::equal)) {
+        consume();
+        default_value = parse_expected_expression();
+        if(not default_value) {
+            return std::nullopt;
+        }
+    }
     auto semicolon = expect(token_kind::semicolon);
     if(not type or not semicolon) {
         return std::nullopt;
@@ -622,6 +630,7 @@ auto parser::parse_struct_field() -> std::optional<struct_field_syntax>
         .full_span = combine_spans(name->span, semicolon->span),
         .name = name->span,
         .type = *type,
+        .default_value = default_value,
     };
 }
 

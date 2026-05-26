@@ -17,7 +17,7 @@ import std;
 | 模块 | 内容 |
 | --- | --- |
 | `std.core` | `optional<T>`、`expected<T,E>`、`iterator`、`iterable` |
-| `std.memory` | `buffer<T>`、`span<T>` 和连续内存基础类型 |
+| `std.memory` | `raw_buffer<T>`、`span<T>` 和连续内存基础类型 |
 | `std.collections` | `vector<T>`、`map<K,V>`、`set<K>` |
 | `std.text` | compiler-recognized `str` 的扩展和拥有字符串 `string` |
 | `std.ranges` | 可被范围 `for` 消费的范围对象，第一版提供 `iota` |
@@ -48,14 +48,14 @@ main() -> i32
 
 相关参考：[错误处理](error_handling.md)。
 
-## buffer、span、vector
+## raw_buffer、span、vector
 
-`buffer<T>` 拥有原始连续存储，负责容量和释放；元素构造和析构由上层容器或调用者控制。`span<T>` 借用连续区间，不拥有内存。`vector<T>` 是基于 `buffer<T>` 的动态数组。
+`raw_buffer<T>` 拥有原始连续存储，负责容量和释放；元素构造和析构由上层容器或调用者控制。`span<T>` 借用连续区间，不拥有内存。`vector<T>` 是基于 `vector_storage<T>` 的动态数组，`string` 通过 `string_storage` 封装 trailing `'\0'` 所需的物理容量。
 
 ```cp
 main() -> i32
 {
-    let storage = buffer<i32>{2};
+    let storage = raw_buffer<i32>{2};
     construct_at(storage.data(), 5);
     construct_at(storage.data() + 1, 7);
 
@@ -76,7 +76,7 @@ main() -> i32
 
 ## map 和 set
 
-`map` / `set` 是有序唯一键容器，底层基于维护 subtree size 的红黑树。重复插入不会覆盖已有 key，结果会标记 `inserted = false`。
+`map` / `set` 是有序唯一键容器，底层基于维护 subtree size 的 B-tree。重复插入不会覆盖已有 key，结果会标记 `inserted = false`。查询或插入返回的引用在下一次容器修改后可能失效。
 
 ```cp
 main() -> i32

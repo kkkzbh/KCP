@@ -1,13 +1,13 @@
 export module std.text.string;
 
-import std.memory.buffer;
 import std.memory.span;
 import std.core.option;
+import std.text.detail.string_storage;
 import std.text.str;
 export import std.core.iter;
 
 export struct string {
-    storage: buffer<char>;
+    storage: string_storage;
     len: usize;
 }
 
@@ -19,9 +19,7 @@ export struct string_iter {
 impl string {
     string()
     {
-        let result = string{ .storage = buffer<char>{1}, .len = 0 };
-        result.terminate();
-        return result;
+        return string{ .storage = string_storage{}, .len = 0 };
     }
 
     string(text: str)
@@ -40,9 +38,7 @@ impl string {
 
     string(other: this move&)
     {
-        let result = string{ .storage = buffer<char>{ .ptr = other.storage.ptr, .cap = other.storage.cap }, .len = other.len };
-        other.storage.ptr = nullptr;
-        other.storage.cap = 0;
+        let result = string{ .storage = other.storage.take(), .len = other.len };
         other.len = 0;
         return result;
     }
@@ -64,13 +60,9 @@ impl string {
             return ref self;
         }
 
-        free(storage.data());
-        storage.ptr = rhs.storage.ptr;
-        storage.cap = rhs.storage.cap;
+        storage.replace(move rhs.storage);
         len = rhs.len;
 
-        rhs.storage.ptr = nullptr;
-        rhs.storage.cap = 0;
         rhs.len = 0;
         return ref self;
     }
@@ -102,10 +94,7 @@ impl string {
 
     capacity(self const&) -> usize
     {
-        if(storage.capacity() == 0) {
-            return 0;
-        }
-        return storage.capacity() - 1;
+        return storage.capacity();
     }
 
     empty(self const&) -> bool
@@ -137,18 +126,14 @@ impl string {
             return;
         }
 
-        let next = buffer<char>{new_capacity + 1};
+        let next = string_storage{new_capacity};
         let index: usize = 0;
         while(index < len) {
             *(next.data() + index) = *(storage.data() + index);
             index += 1;
         }
 
-        free(storage.data());
-        storage.ptr = next.ptr;
-        storage.cap = next.cap;
-        next.ptr = nullptr;
-        next.cap = 0;
+        storage.replace(move next);
         terminate();
     }
 
@@ -227,10 +212,7 @@ impl string {
 
     terminate(self&) -> void
     {
-        if(storage.capacity() == 0) {
-            return;
-        }
-        *(storage.data() + len) = '\0';
+        storage.terminate(len);
     }
 }
 

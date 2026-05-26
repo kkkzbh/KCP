@@ -900,10 +900,10 @@ impl parser_state {
 
     reduce(self&, action: parser_action, tables: parser_tables const&) -> bool
     {
-        let production = tables.grammar.productions[action.production];
+        let production = &tables.grammar.productions[action.production];
         let rhs = vector<parser_value>{};
         let count: usize = 0;
-        while(count < production.rhs.size()) {
+        while(count < (*production).rhs.size()) {
             assert(state_stack.size() != 0 as usize, "LR(1) state stack underflow");
             assert(value_stack.size() != 0 as usize, "LR(1) value stack underflow");
             state_stack.pop_back();
@@ -913,7 +913,7 @@ impl parser_state {
         }
 
         let goto_state = state_stack.back();
-        let target = tables.goto_table.find(goto_key{ .state = goto_state, .nonterminal = production.lhs });
+        let target = tables.goto_table.find(goto_key{ .state = goto_state, .nonterminal = (*production).lhs });
         if(not target.has_value()) {
             diagnostics.report(diagnostic_kind::unexpected_token, tokens[tokens.size() - 1].span);
             return false;
@@ -969,11 +969,4 @@ impl parser_state {
         }
         return finish(false);
     }
-}
-
-export parse_lr(tokens: vector<token>, options: parse_options) -> parser_state_result
-{
-    let tables = build_parser_tables();
-    let state = parser_state{move tokens, options};
-    return state.run(tables);
 }

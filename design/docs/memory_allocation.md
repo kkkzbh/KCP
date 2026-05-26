@@ -2,7 +2,7 @@
 
 本文档记录 cp 的底层内存分配与释放设计。语言提供四个最小原语，并在其上提供 `new` / `delete` 语法糖；不引入 `new[]` 或 `delete[]`。
 
-`unique<T>`、`vector<T>`、`buffer<T>`、`string` 等拥有资源的类型作为核心库类型或标准库类型建立在这些原语之上。
+`unique<T>`、`raw_buffer<T>`、`vector<T>`、`string` 等拥有资源的类型作为核心库类型或标准库类型建立在这些原语之上。
 
 ## 设计目标
 
@@ -211,7 +211,7 @@ delete p;
 - `free` 的指针是否是分配块起始地址。
 - `delete` 的指针是否一定来自 `new`。
 
-这些属于底层 unsafe 契约。安全使用通过 `unique<T>`、`vector<T>`、`buffer<T>` 等库类型封装。
+这些属于底层 unsafe 契约。安全使用通过 `unique<T>`、`raw_buffer<T>`、`vector<T>` 等库类型封装。
 
 ## Runtime ABI
 
@@ -268,7 +268,7 @@ runtime/
 unique<T>  = alloc + construct_at + destroy_at + free
 box<T>     = new + delete
 vector<T>  = alloc + 多次 construct_at + 多次 destroy_at + free
-buffer<T>  = 保存 ptr / capacity 的底层原始存储拥有容器，元素构造数量由上层容器维护
+raw_buffer<T> = 保存 ptr / capacity 的底层原始存储拥有类型，元素构造数量由上层容器维护
 ```
 
-这些封装负责保存长度、容量、已构造数量和所有权状态。裸指针不承担这些职责。
+这些封装按各自层级保存容量、长度、已构造数量和所有权状态。`raw_buffer<T>` 只保存容量和原始存储所有权；`vector<T>`、`string` 等上层类型再维护长度和已构造元素。裸指针不承担这些职责。

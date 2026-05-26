@@ -12,7 +12,7 @@ read_source(path: str) -> string
 {
     match file::open(path, open_options{}.read()) {
         .value(input) => {
-            let storage = buffer<u8>{8192 as usize};
+            let storage = raw_buffer<u8>{8192 as usize};
             let read = input.read(span<u8>{storage.data(), storage.capacity()});
             let count = read.value_or(0 as usize);
             return string{str{ .ptr = storage.data() as char const*, .len = count }};

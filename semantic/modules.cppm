@@ -658,7 +658,7 @@ auto semantic_analyzer::collect_struct_fields(std::size_t unit_index, ast_arena 
             continue;
         }
         names.emplace(field_name);
-        item.fields.emplace_back(std::move(field_name), field.name, lower_type(ast, field.type));
+        item.fields.emplace_back(std::move(field_name), field.name, lower_type(ast, field.type), field.default_value);
     }
     active_generic_parameters = std::move(old_parameters);
     active_generic_parameter_packs = std::move(old_packs);

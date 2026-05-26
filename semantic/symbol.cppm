@@ -133,16 +133,18 @@ export struct semantic_struct_field
 {
     semantic_struct_field() = default;
 
-    semantic_struct_field(std::string field_name, source_span field_span, semantic_type_id field_type) :
+    semantic_struct_field(std::string field_name, source_span field_span, semantic_type_id field_type, std::optional<expr_id> default_expr) :
         name(std::move(field_name)),
         span(field_span),
-        type(field_type) {}
+        type(field_type),
+        default_value(default_expr) {}
 
     auto constexpr operator==(semantic_struct_field const&) const -> bool = default;
 
     std::string name{};
     source_span span{};
     semantic_type_id type{};
+    std::optional<expr_id> default_value{};
 };
 
 export struct semantic_generic_parameter

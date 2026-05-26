@@ -1,12 +1,12 @@
 export module std.collections.vector;
 
-import std.memory.buffer;
+import std.collections.detail.vector_storage;
 import std.memory.span;
 import std.core.iter;
 import std.core.option;
 
 export struct vector<T> {
-    storage: buffer<T>;
+    storage: vector_storage<T>;
     len: usize;
 }
 
@@ -63,11 +63,9 @@ impl vector<T> {
     vector(other: this move&)
     {
         let result = vector<T>{
-            .storage = buffer<T>{ .ptr = other.storage.ptr, .cap = other.storage.cap },
+            .storage = other.storage.take(),
             .len = other.len
         };
-        other.storage.ptr = nullptr;
-        other.storage.cap = 0;
         other.len = 0;
         return result;
     }
@@ -102,14 +100,9 @@ impl vector<T> {
         }
 
         clear();
-        free(storage.data());
-
-        storage.ptr = rhs.storage.ptr;
-        storage.cap = rhs.storage.cap;
+        storage.replace(move rhs.storage);
         len = rhs.len;
 
-        rhs.storage.ptr = nullptr;
-        rhs.storage.cap = 0;
         rhs.len = 0;
         return ref self;
     }
@@ -168,7 +161,7 @@ impl vector<T> {
             return;
         }
 
-        let next = buffer<T>{new_capacity};
+        let next = vector_storage<T>{new_capacity};
         let index: usize = 0;
         while(index < len) {
             construct_at(next.data() + index, move *(storage.data() + index));
@@ -176,11 +169,7 @@ impl vector<T> {
             index += 1;
         }
 
-        free(storage.data());
-        storage.ptr = next.ptr;
-        storage.cap = next.cap;
-        next.ptr = nullptr;
-        next.cap = 0;
+        storage.replace(move next);
     }
 
     clear(self&) -> void

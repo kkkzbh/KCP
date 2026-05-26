@@ -98,36 +98,52 @@ add_dependencies(lab_semantic_ir_behavior_test cp)
 
 add_test(
     NAME lab_lexer_behavior
-    COMMAND lab_lexer_behavior_test $<TARGET_FILE:cp> ${CMAKE_SOURCE_DIR}/lab
+    COMMAND ${CMAKE_SOURCE_DIR}/test/run_isolated.sh
+        $<TARGET_FILE:lab_lexer_behavior_test>
+        $<TARGET_FILE:cp>
+        ${CMAKE_SOURCE_DIR}/lab
 )
 
 add_test(
     NAME lab_parser_behavior
-    COMMAND lab_parser_behavior_test $<TARGET_FILE:cp> ${CMAKE_SOURCE_DIR}/lab
+    COMMAND ${CMAKE_SOURCE_DIR}/test/run_isolated.sh
+        $<TARGET_FILE:lab_parser_behavior_test>
+        $<TARGET_FILE:cp>
+        ${CMAKE_SOURCE_DIR}/lab
 )
 
 add_test(
     NAME lab_operator_precedence_behavior
-    COMMAND lab_operator_precedence_behavior_test $<TARGET_FILE:cp> ${CMAKE_SOURCE_DIR}/lab
+    COMMAND ${CMAKE_SOURCE_DIR}/test/run_isolated.sh
+        $<TARGET_FILE:lab_operator_precedence_behavior_test>
+        $<TARGET_FILE:cp>
+        ${CMAKE_SOURCE_DIR}/lab
 )
 
 add_test(
     NAME lab_semantic_ir_behavior
-    COMMAND lab_semantic_ir_behavior_test $<TARGET_FILE:cp> ${CMAKE_SOURCE_DIR}/lab
+    COMMAND ${CMAKE_SOURCE_DIR}/test/run_isolated.sh
+        $<TARGET_FILE:lab_semantic_ir_behavior_test>
+        $<TARGET_FILE:cp>
+        ${CMAKE_SOURCE_DIR}/lab
 )
 
 set_tests_properties(lab_lexer_behavior PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    RUN_SERIAL TRUE
 )
 
 set_tests_properties(lab_parser_behavior PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    RUN_SERIAL TRUE
 )
 
 set_tests_properties(lab_operator_precedence_behavior PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    RUN_SERIAL TRUE
 )
 
 set_tests_properties(lab_semantic_ir_behavior PROPERTIES
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    RUN_SERIAL TRUE
 )

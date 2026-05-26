@@ -522,7 +522,7 @@ auto semantic_analyzer::build_lambda_info(lambda_expr_syntax const& node, std::v
             {}
         };
         for(auto const& capture : info.captures) {
-            closure.fields.emplace_back(capture.name, capture.span, capture.type);
+            closure.fields.emplace_back(capture.name, capture.span, capture.type, std::nullopt);
         }
         result.structs.emplace_back(std::move(closure));
 

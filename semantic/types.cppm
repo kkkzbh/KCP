@@ -754,7 +754,8 @@ auto semantic_analyzer::is_default_initializable(semantic_type_id type) -> bool
             [&](struct_type const& value) {
                 auto const& item = result.structs[value.index];
                 return std::ranges::all_of(item.fields, [&](auto const& field) {
-                    return is_default_initializable(substitute_type(field.type, value.arguments));
+                    return field.default_value
+                        or is_default_initializable(substitute_type(field.type, value.arguments));
                 });
             },
             [](enum_type const&) { return false; },

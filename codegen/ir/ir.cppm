@@ -184,6 +184,13 @@ struct function_lowerer
         std::vector<std::size_t> context_stack{};
     };
 
+    enum class field_default_initialization_state
+    {
+        absent,
+        present,
+        deferred,
+    };
+
     using address_binding_state = std::pair<symbol_id, std::optional<ir_value_id>>;
 
     function_lowerer(source_manager const& sources, std::span<parse_result const> units, semantic_result const& semantics, ir_module& module, ir_emit_options options, std::size_t unit_index, function_id id, std::size_t context_index = 0uz) :
@@ -736,6 +743,189 @@ struct function_lowerer
         restore_lowerer_state(std::move(old_state));
 
         return value;
+    }
+
+    auto explicit_struct_initializer_fields(struct_init_expr_syntax const& node, std::uint32_t struct_index) -> std::set<std::uint64_t>
+    {
+        auto result = std::set<std::uint64_t>{};
+        auto positional_index = 0uz;
+        auto const& item = module.structs[struct_index];
+        for(auto const& initializer : node.initializers) {
+            if(auto const* named = std::get_if<named_field_initializer_syntax>(&initializer)) {
+                auto found = std::ranges::find_if(item.fields, [&](semantic_struct_field const& field) {
+                    return field.name == ast_source.slice(named->name);
+                });
+                if(found != item.fields.end()) {
+                    result.emplace(static_cast<std::uint64_t>(std::distance(item.fields.begin(), found)));
+                }
+                continue;
+            }
+            if(positional_index < item.fields.size()) {
+                result.emplace(positional_index);
+            }
+            ++positional_index;
+        }
+        return result;
+    }
+
+    auto emit_struct_field_default_value(std::uint32_t struct_index, std::uint64_t field_index, semantic_type_id field_type) -> ir_value_id
+    {
+        auto const& field = module.structs[struct_index].fields[field_index];
+        if(not field.default_value) {
+            return emit_default_initialized_value(field_type);
+        }
+
+        auto old_state = save_lowerer_state();
+        enter_lowerer_state(module.structs[struct_index].unit_index, 0uz);
+        auto value = ir_value_id{};
+        if(is_reference(field_type)) {
+            value = emit_address(*field.default_value);
+        } else {
+            value = emit_constructed_value(*field.default_value, field_type);
+        }
+        restore_lowerer_state(std::move(old_state));
+        return value;
+    }
+
+    auto field_default_initialization_of(semantic_type_id type, std::set<semantic_type_id>& visiting) -> field_default_initialization_state
+    {
+        if(auto found = field_default_initialization_cache.find(type); found != field_default_initialization_cache.end()) {
+            return found->second ? field_default_initialization_state::present : field_default_initialization_state::absent;
+        }
+        if(not visiting.emplace(type).second) {
+            return field_default_initialization_state::deferred;
+        }
+
+        auto result = field_default_initialization_state::absent;
+        if(auto shape = aggregate_shape_of(type)) {
+            result = field_default_initialization_of(shape->element, visiting);
+        } else if(auto const* instance = std::get_if<struct_type>(&module.types.get(type))) {
+            auto struct_index = instance->index;
+            auto const& item = module.structs[struct_index];
+            if(std::ranges::any_of(item.fields, [](semantic_struct_field const& field) {
+                return static_cast<bool>(field.default_value);
+            })) {
+                result = field_default_initialization_state::present;
+            }
+            for(auto index = 0uz; index < item.fields.size(); ++index) {
+                if(result == field_default_initialization_state::present) {
+                    break;
+                }
+                auto field_access = semantic_field_access {
+                    .struct_index = struct_index,
+                    .field_index = static_cast<std::uint32_t>(index),
+                };
+                auto field_type = struct_field_type(type, field_access);
+                auto field_result = field_default_initialization_of(field_type, visiting);
+                if(field_result == field_default_initialization_state::present) {
+                    result = field_default_initialization_state::present;
+                    break;
+                }
+                if(field_result == field_default_initialization_state::deferred) {
+                    result = field_default_initialization_state::deferred;
+                }
+            }
+        }
+
+        visiting.erase(type);
+        if(result != field_default_initialization_state::deferred) {
+            field_default_initialization_cache.emplace(type, result == field_default_initialization_state::present);
+        }
+        return result;
+    }
+
+    auto type_has_field_default_initialization(semantic_type_id type) -> bool
+    {
+        auto visiting = std::set<semantic_type_id>{};
+        auto result = field_default_initialization_of(type, visiting);
+        contract_assert(result != field_default_initialization_state::deferred);
+        return result == field_default_initialization_state::present;
+    }
+
+    auto emit_default_initialized_value(semantic_type_id type) -> ir_value_id
+    {
+        auto aggregate = emit_default_value(type);
+        if(auto shape = aggregate_shape_of(type)) {
+            if(not type_has_field_default_initialization(shape->element)) {
+                return aggregate;
+            }
+            for(auto index : std::views::iota(0uz, shape->length)) {
+                auto value = emit_default_initialized_value(shape->element);
+                if(not value.valid()) {
+                    return {};
+                }
+                aggregate = emit_insert_value(aggregate, value, type, index);
+            }
+            return aggregate;
+        }
+
+        auto const* instance = std::get_if<struct_type>(&module.types.get(type));
+        if(instance == nullptr) {
+            return aggregate;
+        }
+
+        auto struct_index = instance->index;
+        auto const& item = module.structs[struct_index];
+        for(auto index = 0uz; index < item.fields.size(); ++index) {
+            auto field_access = semantic_field_access {
+                .struct_index = struct_index,
+                .field_index = static_cast<std::uint32_t>(index),
+            };
+            auto field_type = struct_field_type(type, field_access);
+            if(not item.fields[index].default_value and not type_has_field_default_initialization(field_type)) {
+                continue;
+            }
+            auto value = emit_struct_field_default_value(struct_index, index, field_type);
+            if(not value.valid()) {
+                return {};
+            }
+            aggregate = emit_insert_value(aggregate, value, type, index);
+        }
+        return aggregate;
+    }
+
+    auto emit_initialize_default_value(ir_value_id address, semantic_type_id type) -> bool
+    {
+        auto default_value = emit_default_value(type);
+        emit_store(address, default_value, type);
+        if(auto shape = aggregate_shape_of(type)) {
+            if(not type_has_field_default_initialization(shape->element)) {
+                return true;
+            }
+            for(auto index : std::views::iota(0uz, shape->length)) {
+                auto index_value = emit_integer_literal(semantic_type_ids::builtin(builtin_type_kind::usize), index);
+                auto element_address = emit_element_address(address, index_value, type, shape->element);
+                if(not element_address.valid() or not emit_initialize_default_value(element_address, shape->element)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        auto const* instance = std::get_if<struct_type>(&module.types.get(type));
+        if(instance == nullptr) {
+            return true;
+        }
+
+        auto struct_index = instance->index;
+        auto const& item = module.structs[struct_index];
+        for(auto index = 0uz; index < item.fields.size(); ++index) {
+            auto field_access = semantic_field_access {
+                .struct_index = struct_index,
+                .field_index = static_cast<std::uint32_t>(index),
+            };
+            auto field_type = struct_field_type(type, field_access);
+            if(not item.fields[index].default_value and not type_has_field_default_initialization(field_type)) {
+                continue;
+            }
+            auto field_address = emit_field_address(address, type, field_type, index);
+            auto value = emit_struct_field_default_value(struct_index, index, field_type);
+            if(not field_address.valid() or not value.valid()) {
+                return false;
+            }
+            emit_store(field_address, value, field_type);
+        }
+        return true;
     }
 
     auto emit_element_address(ir_value_id base, ir_value_id index, semantic_type_id aggregate_type, semantic_type_id element_type) -> ir_value_id
@@ -1606,13 +1796,40 @@ struct function_lowerer
             return true;
         }
         auto struct_index = instance->index;
+        auto const& item = module.structs[struct_index];
+        auto explicit_fields = explicit_struct_initializer_fields(node, struct_index);
+        for(auto index = 0uz; index < item.fields.size(); ++index) {
+            if(explicit_fields.contains(index)) {
+                continue;
+            }
+            auto field_access = semantic_field_access {
+                .struct_index = struct_index,
+                .field_index = static_cast<std::uint32_t>(index),
+            };
+            auto field_type = struct_field_type(type, field_access);
+            if(not item.fields[index].default_value and not type_has_field_default_initialization(field_type)) {
+                continue;
+            }
+            auto field_address = emit_field_address(address, type, field_type, index);
+            if(not field_address.valid()) {
+                return false;
+            }
+            if(item.fields[index].default_value) {
+                auto value = emit_struct_field_default_value(struct_index, index, field_type);
+                if(not value.valid()) {
+                    return false;
+                }
+                emit_store(field_address, value, field_type);
+            } else if(not emit_initialize_default_value(field_address, field_type)) {
+                return false;
+            }
+        }
         auto positional_index = 0uz;
         for(auto const& initializer : node.initializers) {
             auto field = std::optional<std::uint64_t>{};
             auto value_id = expr_id{};
             if(auto const* named = std::get_if<named_field_initializer_syntax>(&initializer)) {
                 value_id = named->value;
-                auto const& item = module.structs[struct_index];
                 for(auto index = 0uz; index < item.fields.size(); ++index) {
                     if(item.fields[index].name == ast_source.slice(named->name)) {
                         field = index;
@@ -1770,13 +1987,37 @@ struct function_lowerer
         }
         auto const& instance = std::get<struct_type>(module.types.get(type));
         auto struct_index = instance.index;
+        auto const& item = module.structs[struct_index];
+        auto explicit_fields = explicit_struct_initializer_fields(node, struct_index);
+        for(auto index = 0uz; index < item.fields.size(); ++index) {
+            if(explicit_fields.contains(index)) {
+                continue;
+            }
+            auto field_access = semantic_field_access {
+                .struct_index = struct_index,
+                .field_index = static_cast<std::uint32_t>(index),
+            };
+            auto field_type = struct_field_type(type, field_access);
+            if(not item.fields[index].default_value and not type_has_field_default_initialization(field_type)) {
+                continue;
+            }
+            auto value = ir_value_id{};
+            if(item.fields[index].default_value) {
+                value = emit_struct_field_default_value(struct_index, index, field_type);
+            } else {
+                value = emit_default_initialized_value(field_type);
+            }
+            if(not value.valid()) {
+                return {};
+            }
+            aggregate = emit_insert_value(aggregate, value, type, index);
+        }
         auto positional_index = 0uz;
         for(auto const& initializer : node.initializers) {
             auto field = std::optional<std::uint64_t>{};
             auto value_id = expr_id{};
             if(auto const* named = std::get_if<named_field_initializer_syntax>(&initializer)) {
                 value_id = named->value;
-                auto const& item = module.structs[struct_index];
                 for(auto index = 0uz; index < item.fields.size(); ++index) {
                     if(item.fields[index].name == ast_source.slice(named->name)) {
                         field = index;
@@ -3060,7 +3301,7 @@ struct function_lowerer
 
     auto enum_case_of(expr_id id) const -> semantic_enum_case_access
     {
-        return semantics.enum_case_of(context_index, unit_index, id);
+        return semantics.enum_case_of(current_context_index(), unit_index, id);
     }
 
     auto substitute_type(semantic_type_id type, std::vector<semantic_type_id> const& arguments) -> semantic_type_id
@@ -3378,6 +3619,7 @@ struct function_lowerer
     ir_block_id current{};
     std::uint32_t next_value{};
     std::map<symbol_id, ir_value_id> addresses{};
+    std::map<semantic_type_id, bool> field_default_initialization_cache{};
     std::vector<loop_target> loop_targets{};
     std::vector<cleanup_entry> cleanups{};
     std::string error{};

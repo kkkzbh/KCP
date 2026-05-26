@@ -2274,7 +2274,7 @@ auto semantic_analyzer::check_struct_initializer(ast_arena const& ast, struct_in
             check_expression(ast, positional[index], field_types[index]);
         }
         for(auto index = count; index < item.fields.size(); ++index) {
-            if(not is_default_initializable(field_types[index])) {
+            if(not item.fields[index].default_value and not is_default_initializable(field_types[index])) {
                 report(
                     diagnostic_kind::default_initialization_failure,
                     item.fields[index].span,
@@ -2303,7 +2303,7 @@ auto semantic_analyzer::check_struct_initializer(ast_arena const& ast, struct_in
     }
     for(auto index = 0uz; index < item.fields.size(); ++index) {
         auto const& field = item.fields[index];
-        if(not seen.contains(field.name) and not is_default_initializable(field_types[index])) {
+        if(not seen.contains(field.name) and not field.default_value and not is_default_initializable(field_types[index])) {
             report(
                 diagnostic_kind::default_initialization_failure,
                 field.span,

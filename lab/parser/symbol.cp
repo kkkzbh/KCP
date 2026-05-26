@@ -110,7 +110,8 @@ export token_rank(kind: token_kind) -> i32
     if(kind == token_kind::greater) { return 31; }
     if(kind == token_kind::greater_equal) { return 32; }
     if(kind == token_kind::amp_amp) { return 33; }
-    return 34;
+    if(kind == token_kind::pipe_pipe) { return 34; }
+    return 35;
 }
 
 export nonterminal_rank(kind: nonterminal_kind) -> i32

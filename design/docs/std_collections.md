@@ -1,18 +1,20 @@
 # 标准库 collections
 
-本文档记录 `std.collections` 第一版公共容器接口。连续容器基于 `vector<T>`；有序关联容器基于 collections 专用的 size-augmented 红黑树内核，并维护子树大小以支持按序访问和 rank 查询。
+本文档记录 `std.collections` 第一版公共容器接口。连续容器基于 `vector<T>`；有序关联容器基于 collections 专用的 size-augmented B-tree 内核，并维护子树大小以支持按序访问和 rank 查询。
 
 ## 模块布局
 
 ```text
 std.collections                 聚合集合公共模块
 std.collections.vector          动态数组
+std.collections.detail.vector_storage  vector 内部连续存储壳
 std.collections.map             有序唯一键 map
 std.collections.set             有序唯一键 set
-std.collections.detail.rb_tree  collections 内部红黑树内核
+std.collections.detail.btree_storage
+std.collections.detail.btree    collections 内部 B-tree 内核
 ```
 
-`std.collections.detail.rb_tree` 是容器实现细节，不由 `std.collections` 重导出。公开容器通过组合持有内部树。
+`std.collections.detail.vector_storage`、`std.collections.detail.btree_storage` 和 `std.collections.detail.btree` 是容器实现细节，不由 `std.collections` 重导出。公开容器通过组合持有内部存储结构。
 
 ## map
 
@@ -47,6 +49,7 @@ rank(self const&, key: K const&) -> usize;
 - `at` 表达前置条件访问，调用者保证 key 存在；缺 key 时 panic。
 - `operator[]` 在 key 不存在时插入 `V{}`，并返回对应 value 引用。
 - `insert` 和 `insert_node` 不覆盖已有 key；重复 key 返回已有 node，`inserted == false`。
+- `find`、`at`、`nth` 和 `insert` 返回的引用在下一次容器修改后可能失效。
 - `nth` 使用 0-based 中序下标，越界 panic。
 - `rank(key)` 返回严格小于 `key` 的元素数量；如果 key 不存在，返回它的插入位置。
 
@@ -58,7 +61,7 @@ set_node<K>
 set_insert_result<K>
 ```
 
-`set` 与 `map` 使用同一棵内部红黑树，只保存唯一 key。
+`set` 与 `map` 使用同一个内部 B-tree 内核，只保存唯一 key。
 
 公开接口：
 
@@ -77,4 +80,4 @@ nth_node(self like&, index: usize) -> set_node<K> like&;
 rank(self const&, key: K const&) -> usize;
 ```
 
-`set.insert` 的重复 key 语义与 `map.insert` 一致：返回已有 node，`inserted == false`。
+`set.insert` 的重复 key 语义与 `map.insert` 一致：返回已有 node，`inserted == false`。`find`、`at`、`nth`、`nth_node` 和 `insert` 返回的引用在下一次容器修改后可能失效。

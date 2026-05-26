@@ -217,11 +217,11 @@ collect_symbols(grammar: grammar const&) -> set<grammar_symbol, grammar_symbol_l
 
     let production_index: usize = 0;
     while(production_index < grammar.productions.size()) {
-        let production = grammar.productions[production_index];
-        result.insert(symbol_nonterminal(production.lhs));
+        let production = &grammar.productions[production_index];
+        result.insert(symbol_nonterminal((*production).lhs));
         let symbol_index: usize = 0;
-        while(symbol_index < production.rhs.size()) {
-            result.insert(production.rhs[symbol_index]);
+        while(symbol_index < (*production).rhs.size()) {
+            result.insert((*production).rhs[symbol_index]);
             symbol_index += 1;
         }
         production_index += 1;
@@ -243,37 +243,6 @@ merge_symbol_set(target: set<grammar_symbol, grammar_symbol_less>&, source: set<
     return changed;
 }
 
-first_of_sequence(sequence: vector<grammar_symbol> const&, lookahead: token_kind, first_sets: map<grammar_symbol, set<grammar_symbol, grammar_symbol_less>, grammar_symbol_less> const&) -> set<grammar_symbol, grammar_symbol_less>
-{
-    let result = set<grammar_symbol, grammar_symbol_less>{};
-    let epsilon = symbol_epsilon();
-    let nullable = true;
-    let index: usize = 0;
-    while(index < sequence.size()) {
-        let current = sequence[index];
-        let current_first_ref = first_sets.find(current);
-        assert(current_first_ref.has_value(), "first set missing symbol");
-        let current_first = *current_first_ref;
-        let first_index: usize = 0;
-        while(first_index < current_first.size()) {
-            let item = current_first.nth(first_index);
-            if(not symbol_equal(item, epsilon)) {
-                result.insert(item);
-            }
-            first_index += 1;
-        }
-        if(not current_first.contains(epsilon)) {
-            nullable = false;
-            break;
-        }
-        index += 1;
-    }
-    if(nullable) {
-        result.insert(symbol_terminal(lookahead));
-    }
-    return result;
-}
-
 first_of_production_rhs(sequence: vector<grammar_symbol> const&, first_sets: map<grammar_symbol, set<grammar_symbol, grammar_symbol_less>, grammar_symbol_less> const&) -> set<grammar_symbol, grammar_symbol_less>
 {
     let result = set<grammar_symbol, grammar_symbol_less>{};
@@ -284,16 +253,16 @@ first_of_production_rhs(sequence: vector<grammar_symbol> const&, first_sets: map
         let current = sequence[index];
         let current_first_ref = first_sets.find(current);
         assert(current_first_ref.has_value(), "first set missing symbol");
-        let current_first = *current_first_ref;
+        let current_first = &*current_first_ref;
         let first_index: usize = 0;
-        while(first_index < current_first.size()) {
-            let item = current_first.nth(first_index);
+        while(first_index < (*current_first).size()) {
+            let item = (*current_first).nth(first_index);
             if(not symbol_equal(item, epsilon)) {
                 result.insert(item);
             }
             first_index += 1;
         }
-        if(not current_first.contains(epsilon)) {
+        if(not (*current_first).contains(epsilon)) {
             nullable = false;
             break;
         }
@@ -328,9 +297,9 @@ build_first_sets(grammar: grammar const&) -> map<grammar_symbol, set<grammar_sym
         changed = false;
         let production_index: usize = 0;
         while(production_index < grammar.productions.size()) {
-            let production = grammar.productions[production_index];
-            let sequence_first = first_of_production_rhs(production.rhs, first_sets);
-            let lhs = symbol_nonterminal(production.lhs);
+            let production = &grammar.productions[production_index];
+            let sequence_first = first_of_production_rhs((*production).rhs, first_sets);
+            let lhs = symbol_nonterminal((*production).lhs);
             let target = first_sets.find(lhs);
             assert(target.has_value(), "first set missing nonterminal");
             if(merge_symbol_set(ref *target, sequence_first)) {
@@ -344,11 +313,66 @@ build_first_sets(grammar: grammar const&) -> map<grammar_symbol, set<grammar_sym
 
 item_next_symbol(grammar: grammar const&, item: item) -> optional<grammar_symbol>
 {
-    let production = grammar.productions[item.production];
-    if(item.dot >= production.rhs.size()) {
+    let production = &grammar.productions[item.production];
+    if(item.dot >= (*production).rhs.size()) {
         return optional<grammar_symbol>::none;
     }
-    return optional<grammar_symbol>::some(production.rhs[item.dot]);
+    return optional<grammar_symbol>::some((*production).rhs[item.dot]);
+}
+
+insert_closure_items_for_terminal(grammar: grammar const&, result: set<item, item_less>&, lhs: nonterminal_kind, lookahead: token_kind) -> bool
+{
+    let changed = false;
+    let production_index: usize = 0;
+    while(production_index < grammar.productions.size()) {
+        let candidate = &grammar.productions[production_index];
+        if((*candidate).lhs == lhs) {
+            let inserted = result.insert(item{
+                .production = production_index,
+                .dot = 0 as usize,
+                .lookahead = lookahead
+            });
+            if(inserted.inserted) {
+                changed = true;
+            }
+        }
+        production_index += 1;
+    }
+    return changed;
+}
+
+insert_closure_items_for_first_suffix(grammar: grammar const&, result: set<item, item_less>&, lhs: nonterminal_kind, rhs: vector<grammar_symbol> const&, start: usize, lookahead: token_kind, first_sets: map<grammar_symbol, set<grammar_symbol, grammar_symbol_less>, grammar_symbol_less> const&) -> bool
+{
+    let changed = false;
+    let epsilon = symbol_epsilon();
+    let nullable = true;
+    let index = start;
+    while(index < rhs.size()) {
+        let current = rhs[index];
+        let current_first_ref = first_sets.find(current);
+        assert(current_first_ref.has_value(), "first set missing symbol");
+        let current_first = &*current_first_ref;
+        let first_index: usize = 0;
+        while(first_index < (*current_first).size()) {
+            let symbol = (*current_first).nth(first_index);
+            if(not symbol_equal(symbol, epsilon)) {
+                assert(symbol.kind == grammar_symbol_kind::terminal, "first set contains nonterminal symbol");
+                if(insert_closure_items_for_terminal(grammar, result, lhs, symbol.terminal)) {
+                    changed = true;
+                }
+            }
+            first_index += 1;
+        }
+        if(not (*current_first).contains(epsilon)) {
+            nullable = false;
+            break;
+        }
+        index += 1;
+    }
+    if(nullable and insert_closure_items_for_terminal(grammar, result, lhs, lookahead)) {
+        changed = true;
+    }
+    return changed;
 }
 
 closure_items(grammar: grammar const&, seed: set<item, item_less>, first_sets: map<grammar_symbol, set<grammar_symbol, grammar_symbol_less>, grammar_symbol_less> const&) -> set<item, item_less>
@@ -365,35 +389,9 @@ closure_items(grammar: grammar const&, seed: set<item, item_less>, first_sets: m
             let item = result.nth(index);
             let next = item_next_symbol(grammar, item);
             if(next.has_value() and (*next).kind == grammar_symbol_kind::nonterminal) {
-                let production = grammar.productions[item.production];
-                let suffix = vector<grammar_symbol>{};
-                let suffix_index = item.dot + 1;
-                while(suffix_index < production.rhs.size()) {
-                    suffix.push_back(production.rhs[suffix_index]);
-                    suffix_index += 1;
-                }
-                let lookaheads = first_of_sequence(suffix, item.lookahead, first_sets);
-                let production_index: usize = 0;
-                while(production_index < grammar.productions.size()) {
-                    let candidate = grammar.productions[production_index];
-                    if(candidate.lhs == (*next).nonterminal) {
-                        let lookahead_index: usize = 0;
-                        while(lookahead_index < lookaheads.size()) {
-                            let lookahead = lookaheads.nth(lookahead_index);
-                            if(lookahead.kind == grammar_symbol_kind::terminal) {
-                                let inserted = result.insert(item{
-                                    .production = production_index,
-                                    .dot = 0 as usize,
-                                    .lookahead = lookahead.terminal
-                                });
-                                if(inserted.inserted) {
-                                    changed = true;
-                                }
-                            }
-                            lookahead_index += 1;
-                        }
-                    }
-                    production_index += 1;
+                let production = &grammar.productions[item.production];
+                if(insert_closure_items_for_first_suffix(grammar, result, (*next).nonterminal, (*production).rhs, item.dot + 1, item.lookahead, first_sets)) {
+                    changed = true;
                 }
             }
             index += 1;
@@ -517,13 +515,13 @@ build_actions(table: parser_tables&) -> void
     // LR(1) 的关键就在这里：规约只发生在项目自己的 lookahead 上，不像 LR(0) 那样所有终结符都规约。
     let state_index: usize = 0;
     while(state_index < table.states.size()) {
-        let items = table.states[state_index].items;
+        let items = &table.states[state_index].items;
         let item_index: usize = 0;
-        while(item_index < items.size()) {
-            let item = items.nth(item_index);
-            let production = table.grammar.productions[item.production];
-            if(item.dot == production.rhs.size()) {
-                if(production.lhs == nonterminal_kind::augmented) {
+        while(item_index < (*items).size()) {
+            let item = (*items).nth(item_index);
+            let production = &table.grammar.productions[item.production];
+            if(item.dot == (*production).rhs.size()) {
+                if((*production).lhs == nonterminal_kind::augmented) {
                     set_action(
                         table,
                         action_key{ .state = state_index, .terminal = item.lookahead },
@@ -580,7 +578,7 @@ export build_parser_tables() -> parser_tables
                 if(existing.has_value()) {
                     target_index = *existing;
                 } else {
-                    states.push_back(target_items);
+                    states.push_back(move target_items);
                 }
                 transitions.insert(transition_key{ .state = state_index, .symbol = symbol }, target_index);
             }

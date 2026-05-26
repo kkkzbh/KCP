@@ -5,18 +5,8 @@ import lexer.token;
 export import parser.symbol;
 
 export struct production {
-    lhs: nonterminal_kind;
-    rhs: vector<grammar_symbol>;
-}
-
-impl production {
-    production()
-    {
-        return production{
-            .lhs = nonterminal_kind::augmented,
-            .rhs = vector<grammar_symbol>{}
-        };
-    }
+    lhs: nonterminal_kind = nonterminal_kind::augmented;
+    rhs: vector<grammar_symbol> = vector<grammar_symbol>{};
 }
 
 export struct grammar {

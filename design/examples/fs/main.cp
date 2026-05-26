@@ -18,7 +18,7 @@ main() -> i32
 
     match file::open(path, open_options{}.read()) {
         .value(input) => {
-            let storage = buffer<u8>{2};
+            let storage = raw_buffer<u8>{2};
             let read = input.read(span<u8>{storage.data(), 2});
             if(read.value_or(0 as usize) != (2 as usize)) {
                 return 3;

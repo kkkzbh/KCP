@@ -7,7 +7,7 @@ main() -> i32
     let value = expected<i32,str>::value(12);
     let error = expected<i32,str>::unexpected("bad");
     let indices = iota(0, 4);
-    let storage = buffer<i32>{2};
+    let storage = raw_buffer<i32>{2};
     let values = vector<i32>{};
     let ids = map<i32, i32>{};
     let keys = set<i32>{};
