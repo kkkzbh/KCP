@@ -58,6 +58,9 @@ struct llvm_type_lowerer
             [&](array_type const& type) -> llvm::Type* {
                 return llvm::ArrayType::get(lower(type.element), array_length_value(type.length));
             },
+            [&](storage_type const& type) -> llvm::Type* {
+                return llvm::ArrayType::get(lower(type.element), array_length_value(type.length));
+            },
             [&](tuple_type const& type) -> llvm::Type* {
                 auto elements = std::vector<llvm::Type*>{};
                 for(auto element : type.elements) {
@@ -132,6 +135,9 @@ struct llvm_type_lowerer
             },
             [&](associated_type_ref const&) -> llvm::Type* { return llvm::Type::getVoidTy(context); },
             [&](array_type const& type) -> llvm::Type* {
+                return llvm::ArrayType::get(lower_substituted(type.element, arguments), array_length_value(substitute_integer(type.length, arguments)));
+            },
+            [&](storage_type const& type) -> llvm::Type* {
                 return llvm::ArrayType::get(lower_substituted(type.element, arguments), array_length_value(substitute_integer(type.length, arguments)));
             },
             [&](tuple_type const& type) -> llvm::Type* {
@@ -215,6 +221,12 @@ struct llvm_type_lowerer
             },
             [&](array_type const& value) {
                 return types.intern(array_type {
+                    .element = substitute_type(value.element, arguments),
+                    .length = substitute_integer(value.length, arguments),
+                });
+            },
+            [&](storage_type const& value) {
+                return types.intern(storage_type {
                     .element = substitute_type(value.element, arguments),
                     .length = substitute_integer(value.length, arguments),
                 });
@@ -786,6 +798,7 @@ struct llvm_module_lowerer
                 [](never_type const&) -> std::uint64_t { return 0; },
                 [&](builtin_type const& type) { return builtin_size(type.kind); },
                 [&](array_type const& type) { return type_size(type.element) * types.array_length_value(type.length); },
+                [&](storage_type const& type) { return type_size(type.element) * types.array_length_value(type.length); },
                 [&](tuple_type const& type) -> std::uint64_t {
                     auto total = std::uint64_t{};
                     auto alignment = 1uz;
@@ -850,6 +863,9 @@ struct llvm_module_lowerer
         if(auto const* array = std::get_if<array_type>(&kind)) {
             return type_size_substituted(array->element, arguments) * types.array_length_value(types.substitute_integer(array->length, arguments));
         }
+        if(auto const* storage = std::get_if<storage_type>(&kind)) {
+            return type_size_substituted(storage->element, arguments) * types.array_length_value(types.substitute_integer(storage->length, arguments));
+        }
         return type_size(id);
     }
 
@@ -877,6 +893,7 @@ struct llvm_module_lowerer
                 [](never_type const&) -> std::uint64_t { return 1; },
                 [&](builtin_type const& type) { return builtin_align(type.kind); },
                 [&](array_type const& type) { return type_align(type.element); },
+                [&](storage_type const& type) { return type_align(type.element); },
                 [&](tuple_type const& type) -> std::uint64_t {
                     auto result = 1uz;
                     for(auto element : type.elements) {
@@ -929,6 +946,9 @@ struct llvm_module_lowerer
         }
         if(auto const* array = std::get_if<array_type>(&kind)) {
             return type_align_substituted(array->element, arguments);
+        }
+        if(auto const* storage = std::get_if<storage_type>(&kind)) {
+            return type_align_substituted(storage->element, arguments);
         }
         return type_align(id);
     }

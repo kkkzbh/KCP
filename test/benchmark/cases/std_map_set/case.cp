@@ -31,8 +31,9 @@ main() -> i32
     let probe = 0;
     while(probe < count) {
         let key = (probe * 53) % (count * 2 + 1);
-        if(values.contains(key)) {
-            total += values.at(key) as i64;
+        let value = values.find(key);
+        if(value.has_value()) {
+            total += *value as i64;
         }
         if(keys.contains(key)) {
             total += 3;

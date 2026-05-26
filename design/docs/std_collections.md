@@ -19,12 +19,12 @@ std.collections.detail.btree    collections 内部 B-tree 内核
 ## map
 
 ```cp
-map<K, V, Compare: strict_weak_order<K> = less<K>>
+map<K, V, Order: ordering<K> = asc<K>>
 map_node<K, V>
 map_insert_result<K, V>
 ```
 
-`map` 按 `Compare` 维护唯一 key。默认 `Compare` 是 `less<K>`。比较器返回 `bool`，表示左侧 key 是否应排在右侧 key 前。第一版有序容器仍要求 `strict_weak_order<K>`，不接受返回 `partial_ordering` 的默认比较器。
+`map` 按 `Order` 维护唯一 key。默认 `Order` 是 `asc<K>`。order object 返回 `weak_ordering`，等价结果表示同一个唯一 key。`partial_ordering` 不满足有序容器要求。
 
 公开接口：
 
@@ -56,7 +56,7 @@ rank(self const&, key: K const&) -> usize;
 ## set
 
 ```cp
-set<K, Compare: strict_weak_order<K> = less<K>>
+set<K, Order: ordering<K> = asc<K>>
 set_node<K>
 set_insert_result<K>
 ```

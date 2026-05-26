@@ -212,16 +212,16 @@ let mixed: pair<i32, bool> = pair<i32, bool>{ .first = 1, .second = true };
 函数参数也可以带默认值。默认值只能用于尾部参数，调用时只能省略尾部实参：
 
 ```cp
-sort<T: mutable_object, Compare: strict_weak_order<T> = less<T>>(values: span<T>, compare: Compare = Compare{}) -> void
+sort<T: mutable_object, Order: ordering<T> = asc<T>>(values: span<T>, order: Order = Order{}) -> void
 {
     // ...
 }
 
-sort(values);                 // compare 使用 Compare{}
-sort(values, greater<i32>{});  // 显式降序比较器
+sort(values);             // order 使用 Order{}
+sort(values, desc<i32>{}); // 显式降序 order
 ```
 
-函数默认表达式在泛型实参确定后检查，因此 `Compare{}` 会在 `Compare` 被推导或由默认泛型实参补齐后再按参数类型检查。默认表达式可以引用前面已经声明的泛型参数和值参数。
+函数默认表达式在泛型实参确定后检查，因此 `Order{}` 会在 `Order` 被推导或由默认泛型实参补齐后再按参数类型检查。默认表达式可以引用前面已经声明的泛型参数和值参数。
 
 `this` 可以出现在 concept 泛型参数默认值中，表示当前被检查或被实现的类型。因此：
 

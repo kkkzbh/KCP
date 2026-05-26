@@ -1,5 +1,6 @@
 import std.algorithm.sort;
 import std.collections.vector;
+import std.compare;
 import std.text.str;
 
 extern "C" getenv(name: char const*) -> char*;
@@ -84,12 +85,12 @@ main() -> i32
     while(round < repeats) {
         let values = original;
         if(stable) {
-            stable_sort(values, f(left: record const&, right: record const&) -> bool {
-                left.key < right.key
+            stable_sort(values, f(left: record const&, right: record const&) -> weak_ordering {
+                return left.key <=> right.key;
             });
         } else {
-            sort(values, f(left: record const&, right: record const&) -> bool {
-                left.key < right.key
+            sort(values, f(left: record const&, right: record const&) -> weak_ordering {
+                return left.key <=> right.key;
             });
         }
         let checksum = checked_checksum(values);

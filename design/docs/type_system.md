@@ -139,6 +139,15 @@ let data: [i32; 4] = [1, 2, 3, 4];
 - `[T; 0]` 允许存在，但不能读取任何元素。
 - 泛型函数可以声明 `N: usize` 或 `N: isize` 这样的整数 const 参数，并在数组类型中写 `[T; N]`。
 
+`storage T` 和 `storage [T; N]` 表示内联原始存储：
+
+```cp
+let one = storage i32{};
+let many = storage [i32; 4]{};
+```
+
+storage 类型只保证大小和对齐，不表示其中已经存在 `T` 对象。它默认初始化时不调用 `T{}`，析构时不调用 `T` 析构函数，也不支持普通数组索引。对象生命周期必须通过 `construct_at(storage.slot(...), value)` 和 `destroy_at(storage.slot(...))` 显式管理。const storage 只能取到 `T const*`，适合读取已经构造的 slot，不能用于构造或析构 slot。
+
 `(T1, T2)` 表示元组类型：
 
 ```cp

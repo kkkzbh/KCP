@@ -1,6 +1,7 @@
 export module std.collections.set;
 
 import std.collections.detail.btree;
+import std.collections.detail.btree_storage;
 import std.compare;
 import std.core.option;
 
@@ -8,26 +9,20 @@ export struct set_node<K> {
     key: K;
 }
 
+export struct set_node_ref<K> {
+    key: K&;
+}
+
 export struct set_insert_result<K> {
-    node: set_node<K>&;
+    node: set_node_ref<K>;
     inserted: bool;
 }
 
-struct set_traits<K> {
+export struct set<K, Order: ordering<K> = asc<K>> {
+    tree: btree<K, btree_empty, Order>;
 }
 
-export struct set<K, Compare: strict_weak_order<K> = less<K>> {
-    tree: btree<K, set_node<K>, set_traits<K>, Compare>;
-}
-
-impl set_traits<K> {
-    key(self const&, item: set_node<K> const&) -> K const&
-    {
-        return item.key;
-    }
-}
-
-impl set<K, Compare> {
+impl set<K, Order> {
     set() = default;
 
     size(self const&) -> usize
@@ -47,35 +42,41 @@ impl set<K, Compare> {
 
     contains(self const&, key: K const&) -> bool
     {
-        return tree.find_item(key) != nullptr;
+        return tree.find_key(key) != nullptr;
     }
 
     find(self like&, key: K const&) -> optional<K like&>
     {
-        let node = tree.find_item(key);
-        if(node == nullptr) {
+        let found = tree.find_key(key);
+        if(found == nullptr) {
             return optional<K like&>::none;
         }
-        return optional<K like&>::some(ref (*node).key);
+        return optional<K like&>::some(ref *found);
     }
 
     at(self like&, key: K const&) -> K like&
     {
-        let node = tree.find_item(key);
-        assert(node != nullptr, "set at missing key");
-        return ref (*node).key;
+        let found = tree.find_key(key);
+        assert(found != nullptr, "set at missing key");
+        return ref *found;
     }
 
     insert(self&, key: K) -> set_insert_result<K>
     {
-        let result = tree.insert_unique(set_node<K>{ .key = move key });
-        return set_insert_result<K>{ .node = ref *result.item, .inserted = result.inserted };
+        let result = tree.insert_unique(move key, btree_empty{});
+        return set_insert_result<K>{
+            .node = set_node_ref<K>{ .key = ref *result.item.key },
+            .inserted = result.inserted
+        };
     }
 
     insert_node(self&, node: set_node<K>) -> set_insert_result<K>
     {
-        let result = tree.insert_unique(move node);
-        return set_insert_result<K>{ .node = ref *result.item, .inserted = result.inserted };
+        let result = tree.insert_unique(move node.key, btree_empty{});
+        return set_insert_result<K>{
+            .node = set_node_ref<K>{ .key = ref *result.item.key },
+            .inserted = result.inserted
+        };
     }
 
     remove(self&, key: K const&) -> bool
@@ -86,15 +87,13 @@ impl set<K, Compare> {
     nth(self like&, index: usize) -> K like&
     {
         assert(index < tree.size(), "set nth index out of bounds");
-        let node = tree.nth_item(index);
-        return ref (*node).key;
+        return ref *tree.nth_key(index);
     }
 
-    nth_node(self like&, index: usize) -> set_node<K> like&
+    nth_node(self like&, index: usize) -> set_node<K>
     {
         assert(index < tree.size(), "set nth_node index out of bounds");
-        let node = tree.nth_item(index);
-        return ref *node;
+        return set_node<K>{ .key = *tree.nth_key(index) };
     }
 
     rank(self const&, key: K const&) -> usize

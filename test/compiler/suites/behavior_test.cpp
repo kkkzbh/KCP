@@ -937,6 +937,46 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "function pointer memory binary should return 42");
 }
 
+auto check_storage_memory_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("storage-memory");
+    auto source = dir / "storage_memory.cp";
+    auto app = dir / "storage_memory";
+    write_source(
+        source,
+        R"(struct guard {
+    total: i32*;
+    value: i32;
+}
+
+impl guard {
+    ~guard()
+    {
+        *total = *total + value;
+    }
+}
+
+main() -> i32
+{
+    let total = 0;
+    let single = storage guard{};
+    construct_at(single.slot(), guard{ .total = &total, .value = 10 });
+    destroy_at(single.slot());
+
+    let many = storage [guard; 2]{};
+    construct_at(many.slot(0), guard{ .total = &total, .value = 20 });
+    construct_at(many.data() + 1, guard{ .total = &total, .value = 12 });
+    destroy_at(many.slot(1));
+    destroy_at(many.data());
+    return total;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile storage memory binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "storage slots should work with construct_at and destroy_at");
+}
+
 auto check_pointer_difference_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("pointer-difference");
@@ -1544,8 +1584,8 @@ main() -> i32
     values.push_back(string{"c"});
     values.push_back(string{"a"});
     values.push_back(string{"b"});
-    sort(values, f(left: string const&, right: string const&) -> bool {
-        left.as_str() < right.as_str()
+    sort(values, f(left: string const&, right: string const&) -> weak_ordering {
+        return left.as_str() <=> right.as_str();
     });
     if(values[0 as usize].as_str() != "a" or values[1 as usize].as_str() != "b" or values[2 as usize].as_str() != "c") {
         return 7;
@@ -2009,12 +2049,12 @@ main() -> i32
     if(values[0 as usize] != 1 or values[1 as usize] != 2 or values[2 as usize] != 3) {
         return 1;
     }
-    values.sort(greater<i32>{});
+    values.sort(desc<i32>{});
     if(values[0 as usize] != 3 or values[1 as usize] != 2 or values[2 as usize] != 1) {
         return 2;
     }
-    sort(span<i32>{values.data(), values.size()}, f(left: i32 const&, right: i32 const&) -> bool {
-        left < right
+    sort(span<i32>{values.data(), values.size()}, f(left: i32 const&, right: i32 const&) -> weak_ordering {
+        return left <=> right;
     });
     if(values[0 as usize] != 1 or values[1 as usize] != 2 or values[2 as usize] != 3) {
         return 3;
@@ -2025,8 +2065,8 @@ main() -> i32
     if(fixed[0 as usize] != 1 or fixed[1 as usize] != 2 or fixed[2 as usize] != 3 or fixed[3 as usize] != 4) {
         return 4;
     }
-    fixed.sort(f(left: i32 const&, right: i32 const&) -> bool {
-        left > right
+    fixed.sort(f(left: i32 const&, right: i32 const&) -> weak_ordering {
+        return desc<i32>{}(left, right);
     });
     if(fixed[0 as usize] != 4 or fixed[1 as usize] != 3 or fixed[2 as usize] != 2 or fixed[3 as usize] != 1) {
         return 5;
@@ -2040,7 +2080,7 @@ main() -> i32
     if(*(text.data() + text.size()) != '\0') {
         return 7;
     }
-    text.sort(greater<char>{});
+    text.sort(desc<char>{});
     if(text.size() != 3 or text[0 as usize] != 'c' or text[1 as usize] != 'b' or text[2 as usize] != 'a') {
         return 8;
     }
@@ -2061,8 +2101,8 @@ main() -> i32
         index += 1;
     }
 
-    sort(records, f(left: record const&, right: record const&) -> bool {
-        left.key < right.key
+    sort(records, f(left: record const&, right: record const&) -> weak_ordering {
+        return left.key <=> right.key;
     });
 
     let last_seen: [i32; 7] = [-1, -1, -1, -1, -1, -1, -1];
@@ -2074,8 +2114,8 @@ main() -> i32
         record_index += 1;
     }
 
-    stable_sort(stable_records, f(left: record const&, right: record const&) -> bool {
-        left.key < right.key
+    stable_sort(stable_records, f(left: record const&, right: record const&) -> weak_ordering {
+        return left.key <=> right.key;
     });
 
     last_seen = [-1, -1, -1, -1, -1, -1, -1];
@@ -2253,6 +2293,10 @@ main() -> i32
     if(values.size() != 3 or values.at(3) != 30 or values.nth(1 as usize).value != 20) {
         return 2;
     }
+    values.nth(1 as usize).value = values.nth(1 as usize).value + 1;
+    if(values.at(2) != 21) {
+        return 6;
+    }
     if(values.rank(3) != 2 or values.remove(8) or not values.remove(1)) {
         return 3;
     }
@@ -2274,7 +2318,7 @@ main() -> i32
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status == 0, "cp should compile std map/set binary");
-    test_parser::assert_true(exit_code(run_status({ app.string() })) == 40, "std map/set binary should return ordered-container checksum");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 41, "std map/set binary should return ordered-container checksum");
 }
 
 auto check_std_map_set_btree_stress_binary(test_tools const& tools) -> void
@@ -2464,15 +2508,15 @@ impl token {
 }
 
 impl lr1_item {
-    operator <(self const&, rhs: lr1_item const&) -> bool
+    operator <=>(self const&, rhs: lr1_item const&) -> weak_ordering
     {
         if(rule != rhs.rule) {
-            return rule < rhs.rule;
+            return rule <=> rhs.rule;
         }
         if(dot != rhs.dot) {
-            return dot < rhs.dot;
+            return dot <=> rhs.dot;
         }
-        return lookahead < rhs.lookahead;
+        return lookahead <=> rhs.lookahead;
     }
 }
 
@@ -3258,21 +3302,21 @@ variant action {
 }
 
 impl table_key {
-    operator <(self const&, rhs: table_key const&) -> bool
+    operator <=>(self const&, rhs: table_key const&) -> weak_ordering
     {
         if(state != rhs.state) {
-            return state < rhs.state;
+            return state <=> rhs.state;
         }
-        return symbol < rhs.symbol;
+        return symbol <=> rhs.symbol;
     }
 }
 
 impl lr1_item {
-    operator <(self const&, rhs: lr1_item const&) -> bool
+    operator <=>(self const&, rhs: lr1_item const&) -> weak_ordering
     {
-        if(rule != rhs.rule) { return rule < rhs.rule; }
-        if(dot != rhs.dot) { return dot < rhs.dot; }
-        return lookahead < rhs.lookahead;
+        if(rule != rhs.rule) { return rule <=> rhs.rule; }
+        if(dot != rhs.dot) { return dot <=> rhs.dot; }
+        return lookahead <=> rhs.lookahead;
     }
 }
 
@@ -3495,6 +3539,7 @@ auto main(int argc, char** argv) -> int
     check_return_destructor_ir(tools);
     check_nrvo_return_skips_returned_local_destructor(tools);
     check_function_pointer_memory_binary(tools);
+    check_storage_memory_binary(tools);
     check_pointer_difference_binary(tools);
     check_update_expression_binary(tools);
     check_decltype_ref_destructure_binary(tools);

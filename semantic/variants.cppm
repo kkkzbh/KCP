@@ -154,6 +154,12 @@ auto semantic_analyzer::substitute_type(semantic_type_id type, std::vector<seman
                     .length = substitute_type(value.length, arguments),
                 });
             },
+            [&](storage_type const& value) {
+                return result.types.intern(storage_type {
+                    .element = substitute_type(value.element, arguments),
+                    .length = substitute_type(value.length, arguments),
+                });
+            },
             [&](tuple_type const& value) {
                 auto elements = (
                     value.elements

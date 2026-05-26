@@ -3,39 +3,41 @@ export module std.collections.detail.btree;
 import std.collections.detail.btree_storage;
 import std.compare;
 
-export struct btree_insert_result<Item> {
-    item: Item*;
+export struct btree_insert_result<K, V> {
+    item: btree_item_ref<K, V>;
     inserted: bool;
 }
 
-export struct btree<K, Item, Traits, Compare: strict_weak_order<K> = less<K>> {
-    root: u32;
-    len: usize;
-    pool: btree_node_pool<Item>;
-    compare: Compare;
-    traits: Traits;
+export struct btree_position {
+    node: u32;
+    index: usize;
 }
 
-impl btree<K, Item, Traits, Compare> {
+export struct btree<K, V, Order: ordering<K> = asc<K>> {
+    root: u32;
+    len: usize;
+    pool: btree_node_pool<K, V>;
+    order: Order;
+}
+
+impl btree<K, V, Order> {
     btree()
     {
-        return btree<K, Item, Traits, Compare>{
+        return btree<K, V, Order>{
             .root = btree_invalid_node_id(),
             .len = 0,
-            .pool = btree_node_pool<Item>{},
-            .compare = Compare{},
-            .traits = Traits{}
+            .pool = btree_node_pool<K, V>{},
+            .order = Order{}
         };
     }
 
     btree(other: this const&)
     {
-        let result = btree<K, Item, Traits, Compare>{
+        let result = btree<K, V, Order>{
             .root = btree_invalid_node_id(),
             .len = 0,
-            .pool = btree_node_pool<Item>{},
-            .compare = other.compare,
-            .traits = other.traits
+            .pool = btree_node_pool<K, V>{},
+            .order = other.order
         };
         result.clone_from(other);
         return result;
@@ -43,12 +45,11 @@ impl btree<K, Item, Traits, Compare> {
 
     btree(other: this move&)
     {
-        let result = btree<K, Item, Traits, Compare>{
+        let result = btree<K, V, Order>{
             .root = other.root,
             .len = other.len,
             .pool = move other.pool,
-            .compare = move other.compare,
-            .traits = move other.traits
+            .order = move other.order
         };
         other.root = btree_invalid_node_id();
         other.len = 0;
@@ -67,8 +68,7 @@ impl btree<K, Item, Traits, Compare> {
         }
 
         clear();
-        compare = rhs.compare;
-        traits = rhs.traits;
+        order = rhs.order;
         clone_from(rhs);
         return ref self;
     }
@@ -85,8 +85,7 @@ impl btree<K, Item, Traits, Compare> {
         pool.chunks = move rhs.pool.chunks;
         pool.allocated = rhs.pool.allocated;
         pool.free_head = rhs.pool.free_head;
-        compare = move rhs.compare;
-        traits = move rhs.traits;
+        order = move rhs.order;
         rhs.root = btree_invalid_node_id();
         rhs.len = 0;
         rhs.pool.allocated = 0;
@@ -111,24 +110,42 @@ impl btree<K, Item, Traits, Compare> {
         return len == 0;
     }
 
-    find_item(self like&, key: K const&) -> Item like*
+    find_position(self const&, key: K const&) -> btree_position
     {
         let current = root;
         while(current != btree_invalid_node_id()) {
             let index = lower_bound_in_node(current, key);
             let target = &pool.node(current);
-            if(index < (*target).len and keys_equal(key, traits.key(*((*target).items + index)))) {
-                return (*target).items + index;
+            if(index < (*target).len and keys_equal(key, pool.key(current, index))) {
+                return btree_position{ .node = current, .index = index };
             }
             if((*target).leaf) {
-                return nullptr;
+                return btree_position{ .node = btree_invalid_node_id(), .index = 0 as usize };
             }
             current = pool.child(current, index);
         }
-        return nullptr;
+        return btree_position{ .node = btree_invalid_node_id(), .index = 0 as usize };
     }
 
-    nth_item(self like&, index: usize) -> Item like*
+    find_key(self like&, key: K const&) -> K like*
+    {
+        let position = find_position(key);
+        if(position.node == btree_invalid_node_id()) {
+            return nullptr;
+        }
+        return pool.key_slot(position.node, position.index);
+    }
+
+    find_value(self like&, key: K const&) -> V like*
+    {
+        let position = find_position(key);
+        if(position.node == btree_invalid_node_id()) {
+            return nullptr;
+        }
+        return pool.value_slot(position.node, position.index);
+    }
+
+    nth_position(self const&, index: usize) -> btree_position
     {
         assert(index < len, "btree nth_item index out of bounds");
         let current = root;
@@ -147,7 +164,7 @@ impl btree<K, Item, Traits, Compare> {
                 }
                 remaining -= child_size;
                 if(remaining == 0) {
-                    return (*target).items + slot;
+                    return btree_position{ .node = current, .index = slot };
                 }
                 remaining -= 1;
                 slot += 1;
@@ -158,7 +175,32 @@ impl btree<K, Item, Traits, Compare> {
             assert(not (*target).leaf, "btree nth_item traversal exhausted leaf");
             current = pool.child(current, (*target).len);
         }
-        return nullptr;
+        return btree_position{ .node = btree_invalid_node_id(), .index = 0 as usize };
+    }
+
+    nth_item(self&, index: usize) -> btree_item_ref<K, V>
+    {
+        let position = nth_position(index);
+        assert(position.node != btree_invalid_node_id(), "btree nth_item missing positioned item");
+        return pool.item(position.node, position.index);
+    }
+
+    nth_key(self like&, index: usize) -> K like*
+    {
+        let position = nth_position(index);
+        if(position.node == btree_invalid_node_id()) {
+            return nullptr;
+        }
+        return pool.key_slot(position.node, position.index);
+    }
+
+    nth_value(self like&, index: usize) -> V like*
+    {
+        let position = nth_position(index);
+        if(position.node == btree_invalid_node_id()) {
+            return nullptr;
+        }
+        return pool.value_slot(position.node, position.index);
     }
 
     rank(self const&, key: K const&) -> usize
@@ -169,8 +211,9 @@ impl btree<K, Item, Traits, Compare> {
             let target = &pool.node(current);
             let index: usize = 0;
             while(index < (*target).len) {
-                let current_key = traits.key(*((*target).items + index));
-                if(compare(key, current_key)) {
+                let current_key = pool.key(current, index);
+                let relation = order(current_key, key);
+                if(is_greater(relation)) {
                     if((*target).leaf) {
                         return result;
                     }
@@ -180,7 +223,7 @@ impl btree<K, Item, Traits, Compare> {
                 if(not (*target).leaf) {
                     result += pool.node(*((*target).children + index)).subtree_size;
                 }
-                if(compare(current_key, key)) {
+                if(is_less(relation)) {
                     result += 1;
                     index += 1;
                 } else {
@@ -198,58 +241,71 @@ impl btree<K, Item, Traits, Compare> {
         return result;
     }
 
-    insert_unique(self&, value: Item) -> btree_insert_result<Item>
+    insert_unique(self&, key: K, value: V) -> btree_insert_result<K, V>
     {
         if(root == btree_invalid_node_id()) {
             root = pool.allocate(true);
-            pool.insert_item(root, 0, move value);
+            pool.insert_item(root, 0, move key, move value);
             len = 1;
-            recompute_node_size(root);
-            return btree_insert_result<Item>{ .item = &pool.item(root, 0), .inserted = true };
+            pool.node(root).subtree_size = 1;
+            return btree_insert_result<K, V>{ .item = pool.item(root, 0), .inserted = true };
         }
 
         if(pool.node(root).len == btree_node_capacity()) {
+            let index = lower_bound_in_node(root, key);
+            let target = &pool.node(root);
+            if(index < (*target).len and keys_equal(key, pool.key(root, index))) {
+                return btree_insert_result<K, V>{ .item = pool.item(root, index), .inserted = false };
+            }
+
             let old_root = root;
             root = pool.allocate(false);
             pool.set_child(root, 0, old_root);
-            split_child(root, 0);
+            split_child_for_insert(root, 0, index);
         }
 
-        return insert_non_full(root, move value);
+        return insert_non_full(root, move key, move value);
     }
 
-    insert_non_full(self&, id: u32, value: Item) -> btree_insert_result<Item>
+    insert_non_full(self&, id: u32, key: K, value: V) -> btree_insert_result<K, V>
     {
         let target = &pool.node(id);
-        let index = lower_bound_in_node(id, traits.key(value));
-        if(index < (*target).len and keys_equal(traits.key(value), traits.key(*((*target).items + index)))) {
-            return btree_insert_result<Item>{ .item = (*target).items + index, .inserted = false };
+        let index = lower_bound_in_node(id, key);
+        if(index < (*target).len and keys_equal(key, pool.key(id, index))) {
+            return btree_insert_result<K, V>{ .item = pool.item(id, index), .inserted = false };
         }
 
         if((*target).leaf) {
-            pool.insert_item(id, index, move value);
+            pool.insert_item(id, index, move key, move value);
             len += 1;
-            recompute_node_size(id);
-            return btree_insert_result<Item>{ .item = &pool.item(id, index), .inserted = true };
+            (*target).subtree_size += 1;
+            return btree_insert_result<K, V>{ .item = pool.item(id, index), .inserted = true };
         }
 
         let child_index = index;
         let child_id = pool.child(id, child_index);
         if(pool.node(child_id).len == btree_node_capacity()) {
-            split_child(id, child_index);
-            let promoted_key = traits.key(*((*target).items + child_index));
-            if(compare(traits.key(value), promoted_key)) {
+            let child_insert_index = lower_bound_in_node(child_id, key);
+            let child = &pool.node(child_id);
+            if(child_insert_index < (*child).len and keys_equal(key, pool.key(child_id, child_insert_index))) {
+                return btree_insert_result<K, V>{ .item = pool.item(child_id, child_insert_index), .inserted = false };
+            }
+
+            split_child_for_insert(id, child_index, child_insert_index);
+            let promoted_key = pool.key(id, child_index);
+            let relation = order(key, promoted_key);
+            if(is_less(relation)) {
                 child_id = pool.child(id, child_index);
-            } else if(compare(promoted_key, traits.key(value))) {
+            } else if(is_greater(relation)) {
                 child_id = pool.child(id, child_index + 1);
             } else {
-                return btree_insert_result<Item>{ .item = (*target).items + child_index, .inserted = false };
+                return btree_insert_result<K, V>{ .item = pool.item(id, child_index), .inserted = false };
             }
         }
 
-        let result = insert_non_full(child_id, move value);
+        let result = insert_non_full(child_id, move key, move value);
         if(result.inserted) {
-            recompute_node_size(id);
+            (*target).subtree_size += 1;
         }
         return result;
     }
@@ -297,7 +353,7 @@ impl btree<K, Item, Traits, Compare> {
             if(not (*target).leaf) {
                 clone_node_items(other, other.pool.child(id, index));
             }
-            insert_unique(other.pool.item(id, index));
+            insert_unique(other.pool.key(id, index), other.pool.value(id, index));
             index += 1;
         }
         if(not (*target).leaf) {
@@ -307,14 +363,14 @@ impl btree<K, Item, Traits, Compare> {
 
     keys_equal(self const&, left: K const&, right: K const&) -> bool
     {
-        return not compare(left, right) and not compare(right, left);
+        return is_equivalent(order(left, right));
     }
 
     lower_bound_in_node(self const&, id: u32, key: K const&) -> usize
     {
         let target = &pool.node(id);
         let index: usize = 0;
-        while(index < (*target).len and compare(traits.key(*((*target).items + index)), key)) {
+        while(index < (*target).len and is_less(order(pool.key(id, index), key))) {
             index += 1;
         }
         return index;
@@ -341,16 +397,37 @@ impl btree<K, Item, Traits, Compare> {
         (*target).subtree_size = total;
     }
 
-    split_child(self&, parent_id: u32, child_index: usize) -> void
+    split_index_for_insert(self const&, child_id: u32, insertion_index: usize) -> usize
+    {
+        let child = &pool.node(child_id);
+        let center = btree_min_items();
+        if(not (*child).leaf) {
+            return center;
+        }
+        if(insertion_index < center) {
+            return center - 1;
+        }
+        if(insertion_index <= center + 1) {
+            return center;
+        }
+        return center + 1;
+    }
+
+    split_child_for_insert(self&, parent_id: u32, child_index: usize, insertion_index: usize) -> void
+    {
+        let child_id = pool.child(parent_id, child_index);
+        split_child(parent_id, child_index, split_index_for_insert(child_id, insertion_index));
+    }
+
+    split_child(self&, parent_id: u32, child_index: usize, median: usize) -> void
     {
         let child_id = pool.child(parent_id, child_index);
         let child = &pool.node(child_id);
         assert((*child).len == btree_node_capacity(), "btree split_child requires a full child");
+        assert(median < btree_node_capacity(), "btree split_child median out of bounds");
 
         let sibling_id = pool.allocate((*child).leaf);
-        let sibling = &pool.node(sibling_id);
-        let median = btree_min_items();
-        let right_count = btree_min_items();
+        let right_count = btree_node_capacity() - median - 1;
 
         if(not (*child).leaf) {
             let index: usize = 0;
@@ -363,18 +440,14 @@ impl btree<K, Item, Traits, Compare> {
 
         let index: usize = 0;
         while(index < right_count) {
-            construct_at((*sibling).items + index, move *((*child).items + median + 1 + index));
-            destroy_at((*child).items + median + 1 + index);
+            let item = pool.remove_item(child_id, median + 1);
+            pool.append_item(sibling_id, move item.key, move item.value);
             index += 1;
         }
-        (*sibling).len = right_count;
 
-        let median_item = move *((*child).items + median);
-        destroy_at((*child).items + median);
-        (*child).len = median;
-
+        let median_item = pool.remove_item(child_id, median);
         pool.insert_child(parent_id, child_index + 1, sibling_id);
-        pool.insert_item(parent_id, child_index, move median_item);
+        pool.insert_item(parent_id, child_index, move median_item.key, move median_item.value);
 
         recompute_node_size(child_id);
         recompute_node_size(sibling_id);
@@ -385,7 +458,7 @@ impl btree<K, Item, Traits, Compare> {
     {
         let target = &pool.node(id);
         let index = lower_bound_in_node(id, key);
-        if(index < (*target).len and keys_equal(key, traits.key(pool.item(id, index)))) {
+        if(index < (*target).len and keys_equal(key, pool.key(id, index))) {
             if((*target).leaf) {
                 pool.remove_item(id, index);
                 recompute_node_size(id);
@@ -455,7 +528,7 @@ impl btree<K, Item, Traits, Compare> {
         return index - 1;
     }
 
-    remove_min(self&, id: u32) -> Item
+    remove_min(self&, id: u32) -> btree_removed_item<K, V>
     {
         let target = &pool.node(id);
         if((*target).leaf) {
@@ -470,7 +543,7 @@ impl btree<K, Item, Traits, Compare> {
         return move result;
     }
 
-    remove_max(self&, id: u32) -> Item
+    remove_max(self&, id: u32) -> btree_removed_item<K, V>
     {
         let target = &pool.node(id);
         if((*target).leaf) {
@@ -485,26 +558,47 @@ impl btree<K, Item, Traits, Compare> {
         return move result;
     }
 
+    steal_count(self const&, source_len: usize, target_len: usize) -> usize
+    {
+        let available = source_len - btree_min_items();
+        let balanced = (source_len - target_len) / 2;
+        if(balanced == 0) {
+            return 1;
+        }
+        if(balanced < available) {
+            return balanced;
+        }
+        return available;
+    }
+
     borrow_from_left(self&, parent_id: u32, index: usize) -> void
     {
         let child_id = pool.child(parent_id, index);
         let left_id = pool.child(parent_id, index - 1);
-        let parent = &pool.node(parent_id);
         let child = &pool.node(child_id);
         let left = &pool.node(left_id);
+        let count = steal_count((*left).len, (*child).len);
 
-        let parent_item = (*parent).items + index - 1;
-        let down = move *parent_item;
-        destroy_at(parent_item);
-
+        let down = pool.take_item(parent_id, index - 1);
         if(not (*child).leaf) {
             let moved_child = pool.remove_child(left_id, (*left).len);
             pool.insert_child(child_id, 0, moved_child);
         }
+        pool.insert_item(child_id, 0, move down.key, move down.value);
 
-        let up = pool.remove_item(left_id, (*left).len - 1);
-        pool.insert_item(child_id, 0, move down);
-        construct_at(parent_item, move up);
+        let moved: usize = 1;
+        while(moved < count) {
+            if(not (*child).leaf) {
+                let moved_child = pool.remove_child(left_id, pool.node(left_id).len);
+                pool.insert_child(child_id, 0, moved_child);
+            }
+            let item = pool.remove_item(left_id, pool.node(left_id).len - 1);
+            pool.insert_item(child_id, 0, move item.key, move item.value);
+            moved += 1;
+        }
+
+        let up = pool.remove_item(left_id, pool.node(left_id).len - 1);
+        pool.construct_item(parent_id, index - 1, move up.key, move up.value);
 
         recompute_node_size(left_id);
         recompute_node_size(child_id);
@@ -515,22 +609,30 @@ impl btree<K, Item, Traits, Compare> {
     {
         let child_id = pool.child(parent_id, index);
         let right_id = pool.child(parent_id, index + 1);
-        let parent = &pool.node(parent_id);
         let child = &pool.node(child_id);
         let right = &pool.node(right_id);
+        let count = steal_count((*right).len, (*child).len);
 
-        let parent_item = (*parent).items + index;
-        let down = move *parent_item;
-        destroy_at(parent_item);
-
+        let down = pool.take_item(parent_id, index);
         if(not (*child).leaf) {
             let moved_child = pool.remove_child(right_id, 0);
             pool.set_child(child_id, (*child).len + 1, moved_child);
         }
+        pool.append_item(child_id, move down.key, move down.value);
+
+        let moved: usize = 1;
+        while(moved < count) {
+            if(not (*child).leaf) {
+                let moved_child = pool.remove_child(right_id, 0);
+                pool.set_child(child_id, pool.node(child_id).len + 1, moved_child);
+            }
+            let item = pool.remove_item(right_id, 0);
+            pool.append_item(child_id, move item.key, move item.value);
+            moved += 1;
+        }
 
         let up = pool.remove_item(right_id, 0);
-        pool.append_item(child_id, move down);
-        construct_at(parent_item, move up);
+        pool.construct_item(parent_id, index, move up.key, move up.value);
 
         recompute_node_size(right_id);
         recompute_node_size(child_id);
@@ -556,11 +658,11 @@ impl btree<K, Item, Traits, Compare> {
 
         pool.remove_child(parent_id, index + 1);
         let separator = pool.remove_item(parent_id, index);
-        pool.append_item(left_id, move separator);
+        pool.append_item(left_id, move separator.key, move separator.value);
 
         while(pool.node(right_id).len > 0) {
             let item = pool.remove_item(right_id, 0);
-            pool.append_item(left_id, move item);
+            pool.append_item(left_id, move item.key, move item.value);
         }
 
         pool.release(right_id);

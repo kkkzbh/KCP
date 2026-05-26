@@ -17,6 +17,8 @@
 
 `construct_at` 和 `destroy_at` 只处理对象生命周期，不负责申请和释放底层存储。
 
+固定大小的内联原始存储使用 `storage T` / `storage [T; N]`。它和 `alloc<T>(count)` 一样只提供存储，不自动构造或析构 `T`。
+
 这样释放内存时不需要区分单个对象和数组，也不会出现 C++ 风格的 `delete` / `delete[]` 二选一问题。
 
 `new` 和 `delete` 只面向“一个对象指针”。`[T; N]` 自身就是一个对象类型，因此 `new [T; N]{...}` 返回的是指向数组对象的指针，`delete` 也只是删除这个数组对象，不需要另一套数组 delete 规则。
@@ -176,6 +178,24 @@ free(p);
 ```
 
 数组长度和哪些元素已经构造由调用者保存。裸指针只表示地址，不携带长度、初始化状态或所有权信息。
+
+内联固定存储：
+
+```cp
+let one = storage node{};
+construct_at(one.slot(), node{});
+destroy_at(one.slot());
+
+let many = storage [node; 16]{};
+construct_at(many.slot(0), node{});
+construct_at(many.data() + 1, node{});
+destroy_at(many.slot(1));
+destroy_at(many.data());
+```
+
+`storage T{}` 创建一个能容纳一个 `T` 的原始存储对象；`storage [T; N]{}` 创建 `N` 个连续 `T` slot 的原始存储对象。`{}` 初始化的是 storage 对象本身，不调用 `T{}`。storage 析构时也不自动析构任何 slot。
+
+`data()` 返回第一个 slot 的指针，`slot(i)` 返回第 `i` 个 slot 的指针；单 slot 的 `storage T` 也可以写 `slot()`。非 const storage 返回 `T*`，const storage 返回 `T const*`。storage 不支持普通 `[]` 索引，读取 slot 前必须由调用者保证该位置已经 `construct_at`。
 
 数组对象：
 

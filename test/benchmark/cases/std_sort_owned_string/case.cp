@@ -1,5 +1,6 @@
 import std.algorithm.sort;
 import std.collections.vector;
+import std.compare;
 import std.text.str;
 import std.text.string;
 
@@ -148,12 +149,12 @@ main() -> i32
     while(round < repeats) {
         let values = original;
         if(stable) {
-            stable_sort(values, f(left: string const&, right: string const&) -> bool {
-                left.as_str() < right.as_str()
+            stable_sort(values, f(left: string const&, right: string const&) -> weak_ordering {
+                return left.as_str() <=> right.as_str();
             });
         } else {
-            sort(values, f(left: string const&, right: string const&) -> bool {
-                left.as_str() < right.as_str()
+            sort(values, f(left: string const&, right: string const&) -> weak_ordering {
+                return left.as_str() <=> right.as_str();
             });
         }
         let checksum = checked_checksum(values);

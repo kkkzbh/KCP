@@ -44,6 +44,14 @@ export struct array_type
     semantic_type_id length{};
 };
 
+export struct storage_type
+{
+    auto constexpr operator==(storage_type const&) const -> bool = default;
+
+    semantic_type_id element{};
+    semantic_type_id length{};
+};
+
 export struct tuple_type
 {
     tuple_type() = default;
@@ -172,6 +180,7 @@ export using semantic_type_kind = std::variant <
     never_type,
     builtin_type,
     array_type,
+    storage_type,
     tuple_type,
     reference_type,
     pointer_type,

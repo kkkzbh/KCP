@@ -172,6 +172,7 @@ export enum class semantic_builtin_call_kind : std::uint8_t
     destroy_at,
     new_object,
     delete_object,
+    storage_slot,
     panic,
     assert_,
     unreachable,

@@ -484,6 +484,10 @@ auto parser::parse_primary() -> std::optional<expr_id>
         return parse_associated_name_expression();
     }
 
+    if(looks_like_storage_initializer()) {
+        return parse_type_initializer();
+    }
+
     if(looks_like_type_initializer()) {
         return parse_type_initializer();
     }
@@ -941,6 +945,38 @@ auto parser::looks_like_type_initializer() const -> bool
         ++lookahead;
     }
     return peek(lookahead).kind == token_kind::l_brace;
+}
+
+auto parser::looks_like_storage_initializer() const -> bool
+{
+    if(not check_contextual("storage") or not starts_type(peek(1uz).kind)) {
+        return false;
+    }
+
+    auto lookahead = 1uz;
+    auto bracket_depth = 0;
+    auto paren_depth = 0;
+    while(true) {
+        auto kind = peek(lookahead).kind;
+        if(kind == token_kind::eof or (kind == token_kind::semicolon and bracket_depth == 0 and paren_depth == 0)) {
+            return false;
+        }
+        if(kind == token_kind::l_bracket) {
+            ++bracket_depth;
+        } else if(kind == token_kind::r_bracket) {
+            --bracket_depth;
+        } else if(kind == token_kind::l_paren) {
+            ++paren_depth;
+        } else if(kind == token_kind::r_paren) {
+            --paren_depth;
+        } else if(kind == token_kind::l_brace and bracket_depth == 0 and paren_depth == 0) {
+            return true;
+        }
+        if(bracket_depth < 0 or paren_depth < 0) {
+            return false;
+        }
+        ++lookahead;
+    }
 }
 
 auto parser::parse_type_initializer() -> std::optional<expr_id>

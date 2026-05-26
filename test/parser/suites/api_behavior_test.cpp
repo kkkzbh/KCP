@@ -974,14 +974,14 @@ operator --(value: i32) -> i32
 
     auto const default_parameter_source = sources.add_source (
         "api_default_parameter.cp",
-        R"(sort<T: mutable_object, Compare: strict_weak_order<T> = less<T>>(values: span<T>, compare: Compare = Compare{})
+        R"(sort<T: mutable_object, Order: ordering<T> = asc<T>>(values: span<T>, order: Order = Order{})
 {
     sort(values);
-    sort(values, greater<i32>{});
+    sort(values, desc<i32>{});
 }
 
-concept strict_weak_order<T> {
-    operator ()(self const&, left: T const&, right: T const&) -> bool;
+concept ordering<T> {
+    operator ()(self const&, left: T const&, right: T const&) -> weak_ordering;
     operator prefix ++(self&) -> this&;
     operator postfix ++(self&) -> this;
     operator prefix --(self&) -> this&;
@@ -1087,6 +1087,30 @@ impl broken {
     test_parser::assert_true(
         memory_syntax.ast.node(array_new_expr.type).is_array_type,
         "new [T; N] should preserve the array object type");
+
+    auto const storage_syntax_source = sources.add_source (
+        "api_storage.cp",
+        R"(struct node<T, N: usize> {
+    items: storage [T; N];
+}
+
+main()
+{
+    let one = storage i32{};
+    let many = storage [i32; 4]{};
+})");
+    auto storage_syntax = parse_source(sources, storage_syntax_source);
+    test_parser::assert_true(storage_syntax.accepted, "storage syntax source should parse");
+    auto const& storage_struct = storage_syntax.ast.node(storage_syntax.root->structs.front());
+    auto const& storage_field_type = storage_syntax.ast.node(storage_struct.fields.front().type);
+    test_parser::assert_true(storage_field_type.is_storage_type, "storage field should record storage type syntax");
+    test_parser::assert_true(is<type_argument_name_syntax>(*storage_field_type.storage_length), "storage [T; N] should preserve generic length");
+    auto const& storage_body = function_body(storage_syntax, first_function(storage_syntax));
+    auto const& single_storage = declaration(storage_syntax, storage_body.statements[0]);
+    auto const& single_initializer = as<struct_init_expr_syntax>(storage_syntax.ast.node(single_storage.initializer));
+    test_parser::assert_true(
+        storage_syntax.ast.node(single_initializer.type).is_storage_type,
+        "storage T{} should parse as a storage typed initializer");
 
     return 0;
 }

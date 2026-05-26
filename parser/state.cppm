@@ -65,6 +65,7 @@ struct parser
     auto starts_type(token_kind kind) const -> bool;
     auto expect_type_start() -> bool;
     auto parse_type(bool allow_associated_names = true) -> std::optional<type_id>;
+    auto parse_storage_type() -> std::optional<type_syntax>;
     auto parse_array_type() -> std::optional<type_syntax>;
     auto parse_tuple_or_grouped_type() -> std::optional<type_syntax>;
     auto parse_named_type(bool allow_associated_names) -> std::optional<type_syntax>;
@@ -99,6 +100,7 @@ struct parser
     auto parse_lambda_expression() -> std::optional<expr_id>;
     auto parse_lambda_body(source_span start) -> std::optional<stmt_id>;
     auto looks_like_type_initializer() const -> bool;
+    auto looks_like_storage_initializer() const -> bool;
     auto parse_type_initializer() -> std::optional<expr_id>;
     auto parse_new_expression() -> std::optional<expr_id>;
     auto parse_struct_initializer_list(type_id type, source_span start) -> std::optional<expr_id>;

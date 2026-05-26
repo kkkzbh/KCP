@@ -1177,7 +1177,7 @@ auto semantic_analyzer::check_call_expression(ast_arena const& ast, call_expr_sy
     }
 
     if(auto const* member = std::get_if<member_expr_syntax>(&callee_node)) {
-        return check_member_call(ast, node, *member);
+        return check_member_call(ast, node, *member, id);
     }
     if(auto const* associated = std::get_if<associated_name_expr_syntax>(&callee_node)) {
         return check_associated_call(ast, node, *associated);
@@ -1463,6 +1463,60 @@ auto semantic_analyzer::check_implicit_self_call(ast_arena const& ast, call_expr
     return expression_for_return_type(materialize_like_type(callable.returns, object.is_const));
 }
 
+auto semantic_analyzer::check_storage_member_call(ast_arena const& ast, call_expr_syntax const& node, member_expr_syntax const& callee, expr_id id, expression_info const& object, storage_type const& storage)
+    -> expression_info
+{
+    auto name = std::string{ ast_source.identifier(callee.name) };
+    if(not node.type_arguments.empty()) {
+        report(diagnostic_kind::invalid_type_argument, node.full_span, "storage member does not take type arguments");
+    }
+    if(not object.is_lvalue) {
+        report(diagnostic_kind::invalid_assignment_target, callee.full_span, "storage member requires an lvalue receiver");
+    }
+
+    if(name == "data") {
+        if(not node.arguments.empty()) {
+            report(diagnostic_kind::argument_count_mismatch, node.full_span, "storage data() does not take arguments");
+            for(auto argument : node.arguments) {
+                check_expression(ast, argument, std::nullopt);
+            }
+        }
+    } else if(name == "slot") {
+        auto length = array_length_value(storage.length);
+        if(node.arguments.empty()) {
+            if(not length or *length != 1uz) {
+                report(diagnostic_kind::argument_count_mismatch, node.full_span, "storage slot() without an index requires single-slot storage");
+            }
+        } else if(node.arguments.size() == 1uz) {
+            auto index = check_expression(ast, node.arguments.front(), std::nullopt);
+            auto builtin = as_builtin(read_type(index.type));
+            if(not builtin or not is_integer(*builtin)) {
+                report(diagnostic_kind::type_mismatch, ast.span(node.arguments.front()), "storage slot index must be an integer");
+            }
+            if(length) {
+                if(auto value = constant_integer_index(ast, node.arguments.front())) {
+                    if(*value < 0 or static_cast<std::uint64_t>(*value) >= *length) {
+                        report(diagnostic_kind::invalid_operator, ast.span(node.arguments.front()), "constant storage slot index is out of bounds");
+                    }
+                }
+            }
+        } else {
+            report(diagnostic_kind::argument_count_mismatch, node.full_span, "storage slot() expects zero or one index argument");
+            for(auto argument : node.arguments) {
+                check_expression(ast, argument, std::nullopt);
+            }
+        }
+    }
+
+    result.builtin_calls[node_key(id)] = semantic_builtin_call {
+        .kind = semantic_builtin_call_kind::storage_slot,
+        .type = storage.element,
+    };
+    return expression_info {
+        .type = result.types.intern(pointer_type{ storage.element, object.is_const }),
+    };
+}
+
 auto semantic_analyzer::check_new_expression(ast_arena const& ast, new_expr_syntax const& node, expr_id id) -> expression_info
 {
     auto element = lower_type(ast, node.type);
@@ -1476,10 +1530,15 @@ auto semantic_analyzer::check_new_expression(ast_arena const& ast, new_expr_synt
     };
 }
 
-auto semantic_analyzer::check_member_call(ast_arena const& ast, call_expr_syntax const& node, member_expr_syntax const& callee) -> expression_info
+auto semantic_analyzer::check_member_call(ast_arena const& ast, call_expr_syntax const& node, member_expr_syntax const& callee, expr_id id) -> expression_info
 {
     auto object = check_expression(ast, callee.object, std::nullopt);
     auto name = std::string{ ast_source.identifier(callee.name) };
+    if(auto const* storage = std::get_if<storage_type>(&result.types.get(read_type(object.type)))) {
+        if(name == "data" or name == "slot") {
+            return check_storage_member_call(ast, node, callee, id, object, *storage);
+        }
+    }
     auto method = method_symbol(object.type, name);
     if(not method) {
         auto function = active_unit == nullptr ? std::optional<symbol_id>{} : [&]() -> std::optional<symbol_id> {
@@ -1843,10 +1902,12 @@ auto semantic_analyzer::check_member_expression(ast_arena const& ast, member_exp
             .field_index = static_cast<std::uint32_t>(value),
             .owner_type = object_type,
         };
+        auto field_type = tuple->elements[static_cast<std::size_t>(value)];
+        auto const* reference = std::get_if<reference_type>(&result.types.get(field_type));
         return expression_info {
-            .type = tuple->elements[static_cast<std::size_t>(value)],
-            .is_lvalue = object.is_lvalue,
-            .is_const = object.is_const,
+            .type = field_type,
+            .is_lvalue = object.is_lvalue or reference != nullptr,
+            .is_const = reference == nullptr ? object.is_const : terminal_pointee_const(reference->pointee, reference->is_const),
         };
     }
     auto name = std::string{ name_text };
@@ -1881,10 +1942,12 @@ auto semantic_analyzer::check_member_expression(ast_arena const& ast, member_exp
     };
     auto const* instance = std::get_if<struct_type>(&result.types.get(read_type(object.type)));
     auto const& value = result.structs[*struct_index].fields[*field];
+    auto field_type = instance == nullptr ? value.type : substitute_type(value.type, instance->arguments);
+    auto const* reference = std::get_if<reference_type>(&result.types.get(field_type));
     return expression_info {
-        .type = instance == nullptr ? value.type : substitute_type(value.type, instance->arguments),
-        .is_lvalue = object.is_lvalue,
-        .is_const = object.is_const,
+        .type = field_type,
+        .is_lvalue = object.is_lvalue or reference != nullptr,
+        .is_const = reference == nullptr ? object.is_const : terminal_pointee_const(reference->pointee, reference->is_const),
     };
 }
 
@@ -2218,6 +2281,16 @@ auto semantic_analyzer::check_struct_initializer(ast_arena const& ast, struct_in
     }
     if(auto const* array = std::get_if<array_type>(&result.types.get(read_type(type)))) {
         return check_array_initializer(ast, node, type, *array);
+    }
+    if(std::holds_alternative<storage_type>(result.types.get(read_type(type)))) {
+        if(not node.initializers.empty()) {
+            report(diagnostic_kind::type_mismatch, node.full_span, "storage initializer must be empty");
+            for(auto const& initializer : node.initializers) {
+                auto value = std::visit([](auto const& item) { return item.value; }, initializer);
+                check_expression(ast, value, std::nullopt);
+            }
+        }
+        return expression_info{ .type = type };
     }
     auto struct_index = struct_index_of(type);
 

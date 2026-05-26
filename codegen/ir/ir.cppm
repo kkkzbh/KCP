@@ -2058,6 +2058,9 @@ struct function_lowerer
 
     auto emit_default_value(semantic_type_id type) -> ir_value_id
     {
+        if(std::holds_alternative<storage_type>(module.types.get(read_type(type)))) {
+            return emit_aggregate_undef(type);
+        }
         auto instruction = emit_value_instruction(ir_opcode::literal, type);
         instruction.literal = semantic_literal_value{};
         return emit(std::move(instruction));
@@ -2882,6 +2885,28 @@ struct function_lowerer
                 emit_destroy_object(pointer, builtin.type);
                 return emit_default_value(semantic_type_ids::unit);
             }
+            case storage_slot: {
+                auto const& callee = parsed->ast.node(node.callee);
+                auto const* member = std::get_if<member_expr_syntax>(&callee);
+                if(member == nullptr) {
+                    return unsupported_expression("storage builtin requires member call syntax");
+                }
+                auto object_address = emit_address(member->object);
+                if(not object_address.valid()) {
+                    return {};
+                }
+                auto index = ir_value_id{};
+                if(node.arguments.empty()) {
+                    index = emit_integer_literal(semantic_type_ids::builtin(builtin_type_kind::usize), 0uz);
+                } else {
+                    auto raw_index = emit_expression(node.arguments.front());
+                    if(not raw_index.valid()) {
+                        return {};
+                    }
+                    index = cast_to(raw_index, info_of(node.arguments.front()).read_type, semantic_type_ids::builtin(builtin_type_kind::usize));
+                }
+                return emit_element_address(object_address, index, info_of(member->object).read_type, builtin.type);
+            }
             case new_object:
             case delete_object:
                 return unsupported_expression("new/delete builtin cannot be emitted as a call");
@@ -3007,11 +3032,22 @@ struct function_lowerer
             if(not field.valid()) {
                 return unsupported_expression("member expression is missing field access metadata");
             }
-            auto base = emit_address(member->object);
+            auto object_info = info_of(member->object);
+            auto object_type = object_info.read_type;
+            auto base = ir_value_id{};
+            if(object_info.is_lvalue) {
+                base = emit_address(member->object);
+            } else {
+                auto value = emit_expression(member->object);
+                if(not value.valid()) {
+                    return {};
+                }
+                base = emit_alloca(object_type, "member.tmp");
+                emit_store(base, value, object_type);
+            }
             if(not base.valid()) {
                 return {};
             }
-            auto object_type = info_of(member->object).read_type;
             return emit_field_value_address(base, object_type, field);
         }
         if(auto const* unary = std::get_if<unary_expr_syntax>(&expression); unary and unary->operator_kind == token_kind::star and not selected_operator(id).valid()) {
@@ -3330,6 +3366,12 @@ struct function_lowerer
                 },
                 [&](array_type const& value) {
                     return module.types.intern(array_type {
+                        .element = substitute_type(value.element, arguments),
+                        .length = substitute_type(value.length, arguments),
+                    });
+                },
+                [&](storage_type const& value) {
+                    return module.types.intern(storage_type {
                         .element = substitute_type(value.element, arguments),
                         .length = substitute_type(value.length, arguments),
                     });

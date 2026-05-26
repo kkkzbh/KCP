@@ -56,6 +56,9 @@ export struct type_syntax
     bool is_array_type{};
     type_id array_element{};
     type_argument_syntax array_length{};
+    bool is_storage_type{};
+    type_id storage_element{};
+    std::optional<type_argument_syntax> storage_length{};
     bool is_tuple_type{};
     bool is_grouped_type{};
     type_id grouped_type{};

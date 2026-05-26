@@ -1893,11 +1893,11 @@ auto semantic_analyzer::target_implements_builtin_concept(std::string_view conce
     if(concept_name == "mutable_object") {
         return is_mutable_object_type(target_type);
     }
-    if(concept_name == "strict_weak_order") {
+    if(concept_name == "ordering") {
         if(concept_arguments.size() != 1uz) {
             return false;
         }
-        return is_strict_weak_order_type(target_type, concept_arguments.front(), source_span{});
+        return is_ordering_type(target_type, concept_arguments.front(), source_span{});
     }
     if(concept_name == "equality_comparable") {
         if(concept_arguments.size() != 1uz) {
@@ -1936,6 +1936,7 @@ auto semantic_analyzer::is_mutable_object_type(semantic_type_id type) const -> b
             [](never_type const&) { return false; },
             [](builtin_type const&) { return true; },
             [](array_type const&) { return true; },
+            [](storage_type const&) { return true; },
             [](tuple_type const&) { return true; },
             [](reference_type const&) { return false; },
             [](pointer_type const&) { return true; },
@@ -1953,9 +1954,23 @@ auto semantic_analyzer::is_mutable_object_type(semantic_type_id type) const -> b
     );
 }
 
-auto semantic_analyzer::is_strict_weak_order_type(semantic_type_id type, semantic_type_id value_type, source_span span) -> bool
+auto semantic_analyzer::weak_ordering_type() const -> std::optional<semantic_type_id>
+{
+    for(auto const& variant : result.variants) {
+        if(variant.name == "weak_ordering") {
+            return variant.type;
+        }
+    }
+    return std::nullopt;
+}
+
+auto semantic_analyzer::is_ordering_type(semantic_type_id type, semantic_type_id value_type, source_span span) -> bool
 {
     auto argument_type = result.types.intern(reference_type{ read_type(value_type), true });
+    auto result_type = weak_ordering_type();
+    if(not result_type) {
+        return false;
+    }
     auto arguments = std::vector<expression_info> {
         expression_info {
             .type = result.types.intern(reference_type{ read_type(type), true }),
@@ -1980,7 +1995,7 @@ auto semantic_analyzer::is_strict_weak_order_type(semantic_type_id type, semanti
             callable.parameters.size() == 2uz
             and can_implicitly_convert(arguments[1uz], callable.parameters[0uz])
             and can_implicitly_convert(arguments[2uz], callable.parameters[1uz])
-            and can_implicitly_convert(callable.returns, semantic_type_ids::bool_)
+            and can_implicitly_convert(callable.returns, *result_type)
         );
     }
 
@@ -1989,7 +2004,7 @@ auto semantic_analyzer::is_strict_weak_order_type(semantic_type_id type, semanti
             callable->parameters.size() == 2uz
             and can_implicitly_convert(arguments[1uz], callable->parameters[0uz])
             and can_implicitly_convert(arguments[2uz], callable->parameters[1uz])
-            and can_implicitly_convert(callable->returns, semantic_type_ids::bool_)
+            and can_implicitly_convert(callable->returns, *result_type)
         );
     }
 
@@ -2001,7 +2016,7 @@ auto semantic_analyzer::is_strict_weak_order_type(semantic_type_id type, semanti
                 return false;
             }
             auto const* callable = std::get_if<function_type>(&result.types.get(result.symbols[symbol->value].type));
-            return callable != nullptr and can_implicitly_convert(callable->returns, semantic_type_ids::bool_);
+            return callable != nullptr and can_implicitly_convert(callable->returns, *result_type);
         }
     }
     if(auto variant_index = variant_index_of(read_type(type))) {
@@ -2012,7 +2027,7 @@ auto semantic_analyzer::is_strict_weak_order_type(semantic_type_id type, semanti
                 return false;
             }
             auto const* callable = std::get_if<function_type>(&result.types.get(result.symbols[symbol->value].type));
-            return callable != nullptr and can_implicitly_convert(callable->returns, semantic_type_ids::bool_);
+            return callable != nullptr and can_implicitly_convert(callable->returns, *result_type);
         }
     }
     return false;

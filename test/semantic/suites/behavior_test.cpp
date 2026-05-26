@@ -335,23 +335,40 @@ main() -> i32
     values.push_back(1);
     values.push_back(2);
     sort(values);
-    values.sort(greater<i32>{});
-    sort(span<i32>{values.data(), values.size()}, f(left: i32 const&, right: i32 const&) -> bool {
-        left < right
+    values.sort(desc<i32>{});
+    sort(span<i32>{values.data(), values.size()}, f(left: i32 const&, right: i32 const&) -> weak_ordering {
+        return left <=> right;
     });
 
     let fixed: [i32; 3] = [3, 1, 2];
     sort(fixed);
-    fixed.sort(greater<i32>{});
+    fixed.sort(desc<i32>{});
 
     let text = string{"cba"};
     sort(text);
-    text.sort(greater<char>{});
+    text.sort(desc<char>{});
     return values[0];
 })"
     );
     test_parser::assert_true(checked.accepted(), "std sort should accept contiguous mutable ranges and comparators");
     test_parser::assert_true(not checked.expression_operators.empty(), "call operator expressions should record selected overloads");
+
+    auto bool_order = analyze_with_std_io(
+        "sort_bool_order_rejected.cp",
+        R"(import std;
+
+main()
+{
+    let values = vector<i32>{};
+    sort(values, f(left: i32 const&, right: i32 const&) -> bool {
+        return left < right;
+    });
+})"
+    );
+    test_parser::assert_true(
+        has_diagnostic(bool_order, diagnostic_kind::missing_concept_item),
+        "std sort should reject bool comparators"
+    );
 
     auto readonly_str = analyze_with_std_io(
         "sort_str_rejected.cp",
@@ -546,6 +563,8 @@ main() -> i32
     let a = keys.insert(4);
     let b = keys.insert(2);
     let c = keys.insert(4);
+
+    values.nth(1 as usize).value = values.nth(1 as usize).value + 1;
 
     if(first.inserted and second.inserted and not duplicate.inserted and a.inserted and b.inserted and not c.inserted) {
         return values.nth(0 as usize).key + values.nth(1 as usize).value + values.at(3) + keys.nth(0 as usize) + keys.rank(4) as i32;
@@ -1894,6 +1913,54 @@ main() -> i32
     auto null_checked = analyze_single(sources, null_parsed);
     test_parser::assert_true(null_checked.accepted(), "nullptr should convert to contextual pointer types");
 
+    auto storage_parsed = parse_source(
+        sources,
+        "storage.cp",
+        R"(struct no_default {
+    value: i32&;
+}
+
+struct holder<T, N: usize> {
+    items: storage [T; N];
+    single: storage T;
+}
+
+main() -> i32
+{
+    let one = storage no_default{};
+    let many = storage [i32; 4]{};
+    let p = one.slot();
+    let q = many.data();
+    let r = many.slot(2);
+    const fixed = storage [i32; 2]{};
+    let readonly = fixed.data();
+    return 0;
+})");
+    auto storage_checked = analyze_single(sources, storage_parsed);
+    test_parser::assert_true(storage_checked.accepted(), "storage source should pass semantic analysis");
+    auto const& storage_body = as<block_statement_syntax>(storage_parsed.ast.node(storage_parsed.ast.node(storage_parsed.root->functions.front()).body));
+    auto const& one_decl = as<declaration_statement_syntax>(storage_parsed.ast.node(storage_body.statements[0]));
+    auto one_type = storage_checked.type_of(0uz, one_decl.initializer);
+    test_parser::assert_true(
+        std::holds_alternative<storage_type>(storage_checked.types.get(one_type)),
+        "storage T{} should lower to storage_type");
+    auto const& slot_decl = as<declaration_statement_syntax>(storage_parsed.ast.node(storage_body.statements[2]));
+    auto slot_builtin = storage_checked.builtin_call_of(0uz, slot_decl.initializer);
+    test_parser::assert_true(
+        slot_builtin.kind == semantic_builtin_call_kind::storage_slot,
+        "storage slot() should record builtin metadata");
+    auto const& data_decl = as<declaration_statement_syntax>(storage_parsed.ast.node(storage_body.statements[3]));
+    auto data_builtin = storage_checked.builtin_call_of(0uz, data_decl.initializer);
+    test_parser::assert_true(
+        data_builtin.kind == semantic_builtin_call_kind::storage_slot and data_builtin.type == semantic_type_ids::i32,
+        "storage data() should expose the storage element pointer");
+    auto const& readonly_decl = as<declaration_statement_syntax>(storage_parsed.ast.node(storage_body.statements[6]));
+    auto readonly_type = storage_checked.type_of(0uz, readonly_decl.initializer);
+    auto const* readonly_pointer = std::get_if<pointer_type>(&storage_checked.types.get(readonly_type));
+    test_parser::assert_true(
+        readonly_pointer != nullptr and readonly_pointer->is_const,
+        "const storage data() should expose a const element pointer");
+
     expect_diagnostic("bad_delete_value.cp", "main() { let value = 1; delete value; }", diagnostic_kind::type_mismatch);
     expect_diagnostic("bad_delete_const_pointer.cp", "main() { let value = 1; let pointer: i32 const* = &value; delete pointer; }", diagnostic_kind::type_mismatch);
 }
@@ -2768,6 +2835,9 @@ auto check_negative_cases() -> void
     expect_diagnostic("bad_builtin_arg.cp", "main() { let value: i32<u8> = 1; }", invalid_type_argument);
     expect_diagnostic("bad_alloc_count.cp", "main() { let pointer = alloc<i32>(true); }", type_mismatch);
     expect_diagnostic("bad_construct_value.cp", "main() { let pointer = alloc<i32>(1); construct_at(pointer, true); }", type_mismatch);
+    expect_diagnostic("storage_direct_index.cp", "main() { let item = storage i32{}; let value = item[0]; }", invalid_operator);
+    expect_diagnostic("storage_bad_initializer.cp", "main() { let item = storage i32{1}; }", type_mismatch);
+    expect_diagnostic("storage_temp_slot.cp", "main() { let pointer = (storage i32{}).slot(); }", invalid_assignment_target);
     expect_diagnostic("bad_nullptr_inference.cp", "main() { let pointer = nullptr; }", type_mismatch);
     expect_diagnostic("bad_ref_initializer.cp", "main() { let ref value = 1 + 2; }", invalid_assignment_target);
     expect_diagnostic("bad_destructure_initializer.cp", "main() { let (a, b) = 1; }", type_mismatch);

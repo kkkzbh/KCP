@@ -235,7 +235,8 @@ private:
     auto target_implements(symbol_id concept_symbol, std::vector<semantic_type_id> const& concept_arguments, semantic_type_id target_type) -> bool;
     auto target_implements_builtin_concept(std::string_view concept_name, std::vector<semantic_type_id> const& concept_arguments, semantic_type_id target_type) -> std::optional<bool>;
     auto is_mutable_object_type(semantic_type_id type) const -> bool;
-    auto is_strict_weak_order_type(semantic_type_id type, semantic_type_id value_type, source_span span) -> bool;
+    auto weak_ordering_type() const -> std::optional<semantic_type_id>;
+    auto is_ordering_type(semantic_type_id type, semantic_type_id value_type, source_span span) -> bool;
     auto is_equality_comparable_type(semantic_type_id type, semantic_type_id rhs_type, source_span span) -> bool;
     auto is_three_way_comparable_type(semantic_type_id type, semantic_type_id rhs_type, semantic_type_id category_type, source_span span) -> bool;
     auto is_incrementable_type(semantic_type_id type, source_span span) -> bool;
@@ -330,6 +331,7 @@ private:
         -> semantic_type_id;
     auto terminal_pointee_const(semantic_type_id pointee, bool target_const) -> bool;
     auto lower_array_type(ast_arena const& ast, type_syntax const& syntax) -> semantic_type_id;
+    auto lower_storage_type(ast_arena const& ast, type_syntax const& syntax) -> semantic_type_id;
     auto lower_tuple_type(ast_arena const& ast, type_syntax const& syntax) -> semantic_type_id;
     auto lower_generic_type_argument(ast_arena const& ast, type_argument_syntax const& argument, generic_parameter_syntax::kind parameter_kind, source_span span) -> semantic_type_id;
     auto lower_array_length(type_argument_syntax const& syntax) -> semantic_type_id;
@@ -437,7 +439,9 @@ private:
     auto check_call_expression(ast_arena const& ast, call_expr_syntax const& node, expr_id id) -> expression_info;
     auto check_implicit_self_call(ast_arena const& ast, call_expr_syntax const& node, name_expr_syntax const& callee)
         -> std::optional<expression_info>;
-    auto check_member_call(ast_arena const& ast, call_expr_syntax const& node, member_expr_syntax const& callee)
+    auto check_member_call(ast_arena const& ast, call_expr_syntax const& node, member_expr_syntax const& callee, expr_id id)
+        -> expression_info;
+    auto check_storage_member_call(ast_arena const& ast, call_expr_syntax const& node, member_expr_syntax const& callee, expr_id id, expression_info const& object, storage_type const& storage)
         -> expression_info;
     auto check_associated_call(ast_arena const& ast, call_expr_syntax const& node, associated_name_expr_syntax const& callee)
         -> expression_info;

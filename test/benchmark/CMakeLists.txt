@@ -23,6 +23,8 @@ set_target_properties(cp_benchmark_runner PROPERTIES
 add_dependencies(cp_benchmark_runner cp)
 
 set(CP_BENCHMARK_SMOKE_CASES
+    std_vector_string
+    std_map_set
     std_sort_int_small
     std_sort_record_small
     std_sort_string_view_small

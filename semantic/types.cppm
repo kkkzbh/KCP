@@ -63,6 +63,25 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
         return lowered;
     }
 
+    if(syntax.is_storage_type) {
+        auto lowered = lower_storage_type(ast, syntax);
+        for(auto suffix : syntax.suffix_operators) {
+            if(suffix == token_kind::star) {
+                lowered = result.types.intern(pointer_type{ lowered, syntax.is_const, syntax.is_like });
+            } else if(suffix == token_kind::amp) {
+                auto kind = syntax.is_like
+                    ? reference_type::kind::like
+                    : (syntax.is_forward ? reference_type::kind::forward : reference_type::kind::regular);
+                lowered = result.types.intern(reference_type{ lowered, syntax.is_const, kind });
+            } else if(suffix == token_kind::kw_move) {
+                lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::move });
+            } else if(suffix == token_kind::kw_forward) {
+                lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::forward });
+            }
+        }
+        return lowered;
+    }
+
     if(syntax.is_tuple_type) {
         auto lowered = lower_tuple_type(ast, syntax);
         for(auto suffix : syntax.suffix_operators) {
@@ -409,6 +428,7 @@ auto semantic_analyzer::lower_return_type(ast_arena const& ast, type_id id) -> s
         and not syntax.is_decltype
         and not syntax.is_never_type
         and not syntax.is_array_type
+        and not syntax.is_storage_type
         and not syntax.is_tuple_type
         and not syntax.is_grouped_type
     );
@@ -739,6 +759,7 @@ auto semantic_analyzer::is_default_initializable(semantic_type_id type) -> bool
             [](never_type const&) { return false; },
             [](builtin_type const&) { return true; },
             [&](array_type const& value) { return is_default_initializable(value.element); },
+            [](storage_type const&) { return true; },
             [&](tuple_type const& value) {
                 return std::ranges::all_of(value.elements, [&](auto element) {
                     return is_default_initializable(element);
@@ -777,6 +798,7 @@ auto semantic_analyzer::is_dependent_type(semantic_type_id type) const -> bool
             [](never_type const&) { return false; },
             [](builtin_type const&) { return false; },
             [&](array_type const& value) { return is_dependent_type(value.element) or is_dependent_type(value.length); },
+            [&](storage_type const& value) { return is_dependent_type(value.element) or is_dependent_type(value.length); },
             [&](tuple_type const& value) {
                 return std::ranges::any_of(value.elements, [&](auto element) {
                     return is_dependent_type(element);
@@ -1343,6 +1365,22 @@ auto semantic_analyzer::lower_array_type(ast_arena const& ast, type_syntax const
     });
 }
 
+auto semantic_analyzer::lower_storage_type(ast_arena const& ast, type_syntax const& syntax) -> semantic_type_id
+{
+    auto length = (
+        syntax.storage_length
+        ? lower_array_length(*syntax.storage_length)
+        : result.types.intern(integer_constant_type {
+            .value = 1,
+            .type = builtin_type_kind::usize,
+        })
+    );
+    return result.types.intern(storage_type {
+        .element = lower_type(ast, syntax.storage_element),
+        .length = length,
+    });
+}
+
 auto semantic_analyzer::lower_tuple_type(ast_arena const& ast, type_syntax const& syntax) -> semantic_type_id
 {
     if(syntax.is_tuple_type) {
@@ -1415,6 +1453,7 @@ auto semantic_analyzer::lower_generic_type_argument(ast_arena const& ast, type_a
             and not syntax.is_function_type
             and not syntax.is_decltype
             and not syntax.is_array_type
+            and not syntax.is_storage_type
             and not syntax.is_tuple_type
             and not syntax.is_grouped_type
         );

@@ -73,12 +73,13 @@ let value = p[0];
 
 - `== != < <= > >=` 结果为 `bool`。
 - `<=>` 是普通可重载二元运算；标准库约定返回 `partial_ordering`、`weak_ordering` 或 `strong_ordering` 这类比较分类值。
+- 标准库 `ordering<T>`、`asc<T>`、`desc<T>` 使用 `<=>` 构造 map/set/sort 所需的三路 order object；`partial_ordering` 不作为默认有序容器或排序协议。
 - 数值类型按共同数值类型比较。
 - 相同目标类型的指针支持 `==` / `!=`。
 - 相同目标类型的指针支持 `< <= > >=`，有定义边界与 C++ 指针有序比较一致。
 - 非数值类型不提供通用内建比较。特定类型若需要比较能力，应通过 `operator` 重载或标准库协议提供。
 
-显式声明的 `operator ==`、`operator !=`、`operator <`、`operator <=`、`operator >`、`operator >=` 优先于任何基于 `<=>` 的派生策略。第一版标准库对 `str` 直接提供这些比较 operator，并以 `operator <=>` 作为三路比较入口；后续若在编译器层接入派生比较，应保持同样的显式 operator 优先规则。
+显式声明的 `operator ==`、`operator !=`、`operator <`、`operator <=`、`operator >`、`operator >=` 优先于任何基于 `<=>` 的派生策略。标准库对 `str` 直接提供这些比较 operator，并以 `operator <=>` 作为三路比较入口；后续若在编译器层接入派生比较，应保持同样的显式 operator 优先规则。
 
 ## 位运算
 
@@ -387,5 +388,5 @@ value as type
 - 后置 `value++` / `value--` 属于后缀表达式，优先级高于一元前缀运算。
 - 前置 `++value` / `--value` 属于一元前缀运算，和 `not`、一元 `+`、一元 `-`、`~` 同级。
 - 一元 `&value` 和 `*ptr` 属于一元前缀运算。
-- 不支持 `<=>`。
+- `<=>` 使用标准库比较分类值表达三路比较，`asc<T>` / `desc<T>` 是排序和有序容器的默认比较入口。
 - 不引入 C++ 式多种命名 cast 运算符。

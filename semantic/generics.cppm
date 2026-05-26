@@ -26,6 +26,18 @@ auto semantic_analyzer::collect_type_pattern_parameters(ast_arena const& ast, ty
         }
         return;
     }
+    if(syntax.is_storage_type) {
+        collect_type_pattern_parameters(ast, ast.node(syntax.storage_element), names);
+        if(syntax.storage_length) {
+            if(auto const* length = std::get_if<type_argument_name_syntax>(&*syntax.storage_length)) {
+                auto name = std::string{ ast_source.identifier(length->name) };
+                if(not std::ranges::contains(names, name)) {
+                    names.emplace_back(std::move(name));
+                }
+            }
+        }
+        return;
+    }
     if(syntax.is_tuple_type) {
         for(auto element : syntax.tuple_elements) {
             collect_type_pattern_parameters(ast, ast.node(element), names);
@@ -51,6 +63,7 @@ auto semantic_analyzer::collect_type_pattern_parameters(ast_arena const& ast, ty
             and not type.is_const
             and not type.is_function_type
             and not type.is_decltype
+            and not type.is_storage_type
             and name != "this"
             and name != "array"
             and name != "tuple"
@@ -339,6 +352,12 @@ auto semantic_analyzer::infer_type_argument(semantic_type_id pattern, semantic_t
                and infer_type_argument(pattern_array->length, argument_array->length, inferred)
                and infer_type_argument(pattern_array->element, argument_array->element, inferred);
     }
+    if(auto const* pattern_storage = std::get_if<storage_type>(&pattern_kind)) {
+        auto const* argument_storage = std::get_if<storage_type>(&argument_kind);
+        return argument_storage != nullptr
+               and infer_type_argument(pattern_storage->length, argument_storage->length, inferred)
+               and infer_type_argument(pattern_storage->element, argument_storage->element, inferred);
+    }
     if(auto const* pattern_tuple = std::get_if<tuple_type>(&pattern_kind)) {
         auto const* argument_tuple = std::get_if<tuple_type>(&argument_kind);
         if(argument_tuple == nullptr or pattern_tuple->elements.size() != argument_tuple->elements.size()) {
@@ -432,6 +451,12 @@ auto semantic_analyzer::infer_type_argument_with_pack(semantic_type_id pattern, 
         return argument_array != nullptr
                and infer_type_argument(pattern_array->length, argument_array->length, inferred)
                and infer_type_argument_with_pack(pattern_array->element, argument_array->element, pack_index, inferred, pack_element);
+    }
+    if(auto const* pattern_storage = std::get_if<storage_type>(&pattern_kind)) {
+        auto const* argument_storage = std::get_if<storage_type>(&argument_kind);
+        return argument_storage != nullptr
+               and infer_type_argument(pattern_storage->length, argument_storage->length, inferred)
+               and infer_type_argument_with_pack(pattern_storage->element, argument_storage->element, pack_index, inferred, pack_element);
     }
     if(auto const* pattern_tuple = std::get_if<tuple_type>(&pattern_kind)) {
         auto const* argument_tuple = std::get_if<tuple_type>(&argument_kind);
@@ -883,6 +908,12 @@ auto semantic_analyzer::substitute_type_for_instance(semantic_type_id type, std:
             },
             [&](array_type const& value) {
                 return result.types.intern(array_type {
+                    .element = substitute_type_for_instance(value.element, pack_index, type_arguments, pack_element, span),
+                    .length = substitute_type_for_instance(value.length, pack_index, type_arguments, pack_element, span),
+                });
+            },
+            [&](storage_type const& value) {
+                return result.types.intern(storage_type {
                     .element = substitute_type_for_instance(value.element, pack_index, type_arguments, pack_element, span),
                     .length = substitute_type_for_instance(value.length, pack_index, type_arguments, pack_element, span),
                 });

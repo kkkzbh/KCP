@@ -45,6 +45,8 @@ auto parser::parse_type(bool allow_associated_names) -> std::optional<type_id>
             .name = token.span,
             .is_never_type = true,
         };
+    } else if(check_contextual("storage") and starts_type(peek(1uz).kind)) {
+        type = parse_storage_type();
     } else if(check(token_kind::l_bracket)) {
         type = parse_array_type();
     } else if(check(token_kind::l_paren)) {
@@ -56,6 +58,39 @@ auto parser::parse_type(bool allow_associated_names) -> std::optional<type_id>
         return std::nullopt;
     }
     return finish_type_suffix(std::move(*type));
+}
+
+auto parser::parse_storage_type() -> std::optional<type_syntax>
+{
+    auto marker = expect_identifier("storage");
+    if(not marker) {
+        return std::nullopt;
+    }
+
+    if(check(token_kind::l_bracket)) {
+        auto array = parse_array_type();
+        if(not array) {
+            return std::nullopt;
+        }
+        return type_syntax {
+            .full_span = combine_spans(marker->span, array->full_span),
+            .name = marker->span,
+            .is_storage_type = true,
+            .storage_element = array->array_element,
+            .storage_length = array->array_length,
+        };
+    }
+
+    auto element = parse_expected_type();
+    if(not element) {
+        return std::nullopt;
+    }
+    return type_syntax {
+        .full_span = combine_spans(marker->span, arena.span(*element)),
+        .name = marker->span,
+        .is_storage_type = true,
+        .storage_element = *element,
+    };
 }
 
 auto parser::parse_named_type(bool allow_associated_names) -> std::optional<type_syntax>

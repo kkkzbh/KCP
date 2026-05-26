@@ -196,23 +196,23 @@ export symbol_equal(left: grammar_symbol const&, right: grammar_symbol const&) -
     return left.kind == right.kind and left.terminal == right.terminal and left.nonterminal == right.nonterminal;
 }
 
-export symbol_less_than(left: grammar_symbol const&, right: grammar_symbol const&) -> bool
+export symbol_order(left: grammar_symbol const&, right: grammar_symbol const&) -> weak_ordering
 {
     if(left.kind != right.kind) {
-        return symbol_kind_rank(left.kind) < symbol_kind_rank(right.kind);
+        return symbol_kind_rank(left.kind) <=> symbol_kind_rank(right.kind);
     }
     if(left.terminal != right.terminal) {
-        return token_rank(left.terminal) < token_rank(right.terminal);
+        return token_rank(left.terminal) <=> token_rank(right.terminal);
     }
-    return nonterminal_rank(left.nonterminal) < nonterminal_rank(right.nonterminal);
+    return nonterminal_rank(left.nonterminal) <=> nonterminal_rank(right.nonterminal);
 }
 
-export struct grammar_symbol_less {
+export struct grammar_symbol_order {
 }
 
-impl grammar_symbol_less {
-    operator ()(self const&, left: grammar_symbol const&, right: grammar_symbol const&) -> bool
+impl grammar_symbol_order {
+    operator ()(self const&, left: grammar_symbol const&, right: grammar_symbol const&) -> weak_ordering
     {
-        return symbol_less_than(left, right);
+        return symbol_order(left, right);
     }
 }
