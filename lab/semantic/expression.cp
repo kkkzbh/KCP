@@ -52,6 +52,11 @@ error_info() -> semantic_expr_info
     return semantic_expr_info{ .type = semantic_type_kind::error, .constant = optional<i32>::none };
 }
 
+is_int_value(info: semantic_expr_info) -> bool
+{
+    return info.type == semantic_type_kind::int_type;
+}
+
 constant_binary(analyzer: semantic_analyzer&, kind: token_kind, left: optional<i32>, right: optional<i32>, span: source_span) -> optional<i32>
 {
     if(not left.has_value() or not right.has_value()) {
@@ -91,9 +96,11 @@ constant_binary(analyzer: semantic_analyzer&, kind: token_kind, left: optional<i
 impl semantic_analyzer {
     check_call_expression(self&, callee: source_span, arguments: vector<expr_id> const&, full_span: source_span, value_required: bool) -> semantic_expr_info
     {
+        let argument_types = vector<semantic_parameter_type>{};
         let index: usize = 0;
         while(index < arguments.size()) {
-            check_expression(arguments[index]);
+            let argument = check_expression(arguments[index]);
+            argument_types.push_back(semantic_parameter_type{ .type = argument.type });
             index += 1;
         }
 
@@ -107,6 +114,15 @@ impl semantic_analyzer {
         if(symbol.parameter_count != arguments.size()) {
             report(diagnostic_kind::argument_count_mismatch, full_span);
             return error_info();
+        }
+        let parameter_index: usize = 0;
+        while(parameter_index < symbol.parameter_types.size()) {
+            let argument_type = argument_types[parameter_index].type;
+            if(argument_type != semantic_type_kind::error and argument_type != symbol.parameter_types[parameter_index].type) {
+                report(diagnostic_kind::argument_type_mismatch, full_span);
+                return error_info();
+            }
+            parameter_index += 1;
         }
         if(value_required and symbol.type == semantic_type_kind::void_type) {
             report(diagnostic_kind::void_value, full_span);
@@ -133,13 +149,20 @@ impl semantic_analyzer {
                     record_expression(id, info);
                     return info;
                 }
-                let info = int_info(optional<i32>::none);
+                let binding = result.symbols[symbol.index()];
+                let info = semantic_expr_info{ .type = binding.type, .constant = optional<i32>::none };
                 record_expression(id, info);
                 return info;
             },
             .unary(value) => {
                 let operand = check_expression(value.operand);
                 if(operand.type == semantic_type_kind::error) {
+                    let info = error_info();
+                    record_expression(id, info);
+                    return info;
+                }
+                if(not is_int_value(operand)) {
+                    report(diagnostic_kind::array_value_required, value.full_span);
                     let info = error_info();
                     record_expression(id, info);
                     return info;
@@ -164,6 +187,12 @@ impl semantic_analyzer {
                     record_expression(id, info);
                     return info;
                 }
+                if(not is_int_value(left) or not is_int_value(right)) {
+                    report(diagnostic_kind::array_value_required, value.full_span);
+                    let info = error_info();
+                    record_expression(id, info);
+                    return info;
+                }
                 let constant = constant_binary(ref self, value.operator_kind, left.constant, right.constant, value.full_span);
                 let info = int_info(constant);
                 record_expression(id, info);
@@ -171,6 +200,34 @@ impl semantic_analyzer {
             },
             .call(value) => {
                 let info = check_call_expression(value.callee, value.arguments, value.full_span, true);
+                record_expression(id, info);
+                return info;
+            },
+            .index(value) => {
+                let symbol = find_visible_variable(source_text(value.array));
+                if(not symbol.valid()) {
+                    report(diagnostic_kind::undeclared_variable, value.array);
+                    check_expression(value.index);
+                    let info = error_info();
+                    record_expression(id, info);
+                    return info;
+                }
+                let binding = result.symbols[symbol.index()];
+                if(binding.type != semantic_type_kind::int_array_type) {
+                    report(diagnostic_kind::non_array_index, value.array);
+                    check_expression(value.index);
+                    let info = error_info();
+                    record_expression(id, info);
+                    return info;
+                }
+                let index_info = check_expression(value.index);
+                if(index_info.type == semantic_type_kind::int_array_type) {
+                    report(diagnostic_kind::array_value_required, (*parsed).ast.expr_span(value.index));
+                    let info = error_info();
+                    record_expression(id, info);
+                    return info;
+                }
+                let info = int_info(optional<i32>::none);
                 record_expression(id, info);
                 return info;
             },

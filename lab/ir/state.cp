@@ -9,6 +9,18 @@ import semantic.result;
 export import ir.result;
 import ir.quad;
 
+export struct loop_labels {
+    break_label: string;
+    continue_label: string;
+}
+
+impl loop_labels {
+    loop_labels()
+    {
+        return loop_labels{ .break_label = string{}, .continue_label = string{} };
+    }
+}
+
 export struct quad_lowerer {
     file: source_file const*;
     parsed: parse_result const*;
@@ -16,6 +28,7 @@ export struct quad_lowerer {
     output: quad_emit_result;
     temp_counter: usize;
     label_counter: usize;
+    loops: vector<loop_labels>;
 }
 
 append_usize(text: string&, value: usize) -> void
@@ -71,7 +84,8 @@ impl quad_lowerer {
             .semantics = &semantics_value,
             .output = quad_emit_result{},
             .temp_counter = 0 as usize,
-            .label_counter = 0 as usize
+            .label_counter = 0 as usize,
+            .loops = vector<loop_labels>{}
         };
     }
 
@@ -104,5 +118,21 @@ impl quad_lowerer {
         let name = string{"L"};
         append_usize(ref name, label_counter);
         return name;
+    }
+
+    push_loop(self&, break_label: string, continue_label: string) -> void
+    {
+        loops.push_back(loop_labels{ .break_label = move break_label, .continue_label = move continue_label });
+    }
+
+    pop_loop(self&) -> void
+    {
+        loops.pop_back();
+    }
+
+    current_loop(self const&) -> loop_labels
+    {
+        assert(loops.size() != 0 as usize, "loop jump requires active loop");
+        return loops[loops.size() - 1];
     }
 }

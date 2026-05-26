@@ -33,6 +33,12 @@ export struct call_expr {
     arguments: vector<expr_id>;
 }
 
+export struct index_expr {
+    full_span: source_span;
+    array: source_span;
+    index: expr_id;
+}
+
 export struct grouped_expr {
     full_span: source_span;
     expression: expr_id;
@@ -44,6 +50,7 @@ export variant expr_syntax {
     unary(unary_expr);
     binary(binary_expr);
     call(call_expr);
+    index(index_expr);
     grouped(grouped_expr);
 }
 
@@ -55,6 +62,7 @@ export expr_syntax_span(value: expr_syntax const&) -> source_span
         .unary(item) => item.full_span,
         .binary(item) => item.full_span,
         .call(item) => item.full_span,
+        .index(item) => item.full_span,
         .grouped(item) => item.full_span,
     };
 }

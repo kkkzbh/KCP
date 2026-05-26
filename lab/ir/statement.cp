@@ -22,6 +22,9 @@ impl quad_lowerer {
             .call(value) => {},
             .if_stmt(value) => {},
             .while_stmt(value) => {},
+            .for_stmt(value) => {},
+            .break_stmt(value) => {},
+            .continue_stmt(value) => {},
             .return_stmt(value) => {},
         };
     }
@@ -31,6 +34,18 @@ impl quad_lowerer {
         let index: usize = 0;
         while(index < value.declarations.size()) {
             let item = value.declarations[index];
+            if(item.array_size.has_value()) {
+                emit("array_decl", source_text(*item.array_size), "_", source_text(item.name));
+                let init_index: usize = 0;
+                while(init_index < item.array_initializers.size()) {
+                    let init = lower_expression(item.array_initializers[init_index]);
+                    let index_text = usize_string(init_index);
+                    emit("array_store", source_text(item.name), index_text.as_str(), init.as_str());
+                    init_index += 1;
+                }
+                index += 1;
+                continue;
+            }
             if(item.initializer.has_value()) {
                 let init = lower_expression(*item.initializer);
                 emit("assign", init.as_str(), "_", source_text(item.name));
@@ -61,12 +76,36 @@ impl quad_lowerer {
     {
         let begin_label = next_label();
         let end_label = next_label();
+        push_loop(string{end_label.as_str()}, string{begin_label.as_str()});
         emit("label", "_", "_", begin_label.as_str());
         let condition = lower_expression(value.condition);
         emit("jz", condition.as_str(), "_", end_label.as_str());
         lower_statement(value.body);
         emit("jmp", "_", "_", begin_label.as_str());
         emit("label", "_", "_", end_label.as_str());
+        pop_loop();
+    }
+
+    lower_for(self&, value: for_statement) -> void
+    {
+        if(value.initializer.has_value()) {
+            lower_statement(*value.initializer);
+        }
+        let begin_label = next_label();
+        let step_label = next_label();
+        let end_label = next_label();
+        push_loop(string{end_label.as_str()}, string{step_label.as_str()});
+        emit("label", "_", "_", begin_label.as_str());
+        let condition = lower_expression(value.condition);
+        emit("jz", condition.as_str(), "_", end_label.as_str());
+        lower_statement(value.body);
+        emit("label", "_", "_", step_label.as_str());
+        if(value.step.has_value()) {
+            lower_statement(*value.step);
+        }
+        emit("jmp", "_", "_", begin_label.as_str());
+        emit("label", "_", "_", end_label.as_str());
+        pop_loop();
     }
 
     lower_statement(self&, id: stmt_id) -> void
@@ -81,7 +120,12 @@ impl quad_lowerer {
             },
             .assign(value) => {
                 let rhs = lower_expression(value.value);
-                emit("assign", rhs.as_str(), "_", source_text(value.name));
+                if(value.index.has_value()) {
+                    let index = lower_expression(*value.index);
+                    emit("array_store", source_text(value.name), index.as_str(), rhs.as_str());
+                } else {
+                    emit("assign", rhs.as_str(), "_", source_text(value.name));
+                }
             },
             .call(value) => {
                 lower_call(value.callee, value.arguments, false);
@@ -91,6 +135,17 @@ impl quad_lowerer {
             },
             .while_stmt(value) => {
                 lower_while(value);
+            },
+            .for_stmt(value) => {
+                lower_for(value);
+            },
+            .break_stmt(value) => {
+                let labels = current_loop();
+                emit("jmp", "_", "_", labels.break_label.as_str());
+            },
+            .continue_stmt(value) => {
+                let labels = current_loop();
+                emit("jmp", "_", "_", labels.continue_label.as_str());
             },
             .return_stmt(value) => {
                 if(value.value.has_value()) {

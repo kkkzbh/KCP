@@ -159,6 +159,62 @@ export spec(kind: diagnostic_kind) -> diagnostic_spec
             .message = "constant expression divides by zero"
         };
     }
+    if(kind == diagnostic_kind::argument_type_mismatch) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::semantic,
+            .severity = diagnostic_severity::error,
+            .name = "argument_type_mismatch",
+            .message = "function argument type does not match parameter type"
+        };
+    }
+    if(kind == diagnostic_kind::array_value_required) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::semantic,
+            .severity = diagnostic_severity::error,
+            .name = "array_value_required",
+            .message = "array cannot be used as an int value"
+        };
+    }
+    if(kind == diagnostic_kind::non_array_index) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::semantic,
+            .severity = diagnostic_severity::error,
+            .name = "non_array_index",
+            .message = "only arrays can be indexed"
+        };
+    }
+    if(kind == diagnostic_kind::invalid_array_size) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::semantic,
+            .severity = diagnostic_severity::error,
+            .name = "invalid_array_size",
+            .message = "array size must be positive"
+        };
+    }
+    if(kind == diagnostic_kind::array_initializer_too_many) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::semantic,
+            .severity = diagnostic_severity::error,
+            .name = "array_initializer_too_many",
+            .message = "array initializer has too many values"
+        };
+    }
+    if(kind == diagnostic_kind::break_outside_loop) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::semantic,
+            .severity = diagnostic_severity::error,
+            .name = "break_outside_loop",
+            .message = "break can only be used inside a loop"
+        };
+    }
+    if(kind == diagnostic_kind::continue_outside_loop) {
+        return diagnostic_spec{
+            .stage = diagnostic_stage::semantic,
+            .severity = diagnostic_severity::error,
+            .name = "continue_outside_loop",
+            .message = "continue can only be used inside a loop"
+        };
+    }
     return diagnostic_spec{
         .stage = diagnostic_stage::parser,
         .severity = diagnostic_severity::error,

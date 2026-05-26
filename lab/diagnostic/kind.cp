@@ -21,4 +21,11 @@ export enum diagnostic_kind : u8 {
     int_return_value_missing = 17;
     void_return_value = 18;
     constant_divide_by_zero = 19;
+    argument_type_mismatch = 20;
+    array_value_required = 21;
+    non_array_index = 22;
+    invalid_array_size = 23;
+    array_initializer_too_many = 24;
+    break_outside_loop = 25;
+    continue_outside_loop = 26;
 }

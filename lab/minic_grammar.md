@@ -1,6 +1,6 @@
 # miniC 超轻量级文法
 
-目标：保留 miniC 的函数、变量、分支、循环、返回和整数表达式，去掉数组、指针、结构体、全局变量、函数声明和复杂类型，使用规范 LR(1) 语法分析作为后续 AST、语义分析和四元式生成的主入口。
+目标：保留 miniC 的函数、标量变量、固定长度 `int` 数组、分支、循环、返回和整数表达式，去掉指针、结构体、全局变量、函数声明和复杂类型，使用规范 LR(1) 语法分析作为后续 AST、语义分析和四元式生成的主入口。
 
 ## 实验路线
 
@@ -22,44 +22,49 @@
 
 ## 实现语法概览
 
-当前实现的 miniC 语法围绕函数和块内语句展开。一个程序由若干函数定义组成，函数返回类型支持 `int` 和 `void`，参数只支持 `int` 形参，函数体使用 `{ ... }` 块包围。
+当前实现的 miniC 语法围绕函数和块内语句展开。一个程序由若干函数定义组成，函数返回类型支持 `int` 和 `void`，参数支持 `int` 标量形参和按引用传递的 `int name[]` 数组形参，函数体使用 `{ ... }` 块包围。
 
-语句支持局部 `int` 变量声明、带初始化的变量声明、逗号分隔的变量声明列表、赋值语句、函数调用语句、`if` / `else` 分支、`while` 循环、`return` 语句和嵌套块。`if` 与 `while` 的主体都要求写成块，方便语法分析阶段直接处理结构边界。
+语句支持局部 `int` 变量声明、固定长度 `int` 数组声明、数组初始化列表、逗号分隔的变量声明列表、标量赋值、数组元素赋值、函数调用语句、`if` / `else` 分支、`while` 循环、C 风格 `for` 循环、`break`、`continue`、`return` 语句和嵌套块。`if`、`while` 与 `for` 的主体都要求写成块，方便语法分析阶段直接处理结构边界。
 
-表达式支持整数、变量引用、函数调用、括号表达式、一元 `+` / `-`、算术运算、关系运算和逻辑运算。赋值不作为普通表达式的一部分，而是单独作为语句处理。
+表达式支持整数、变量引用、数组下标读取、函数调用、括号表达式、一元 `+` / `-`、算术运算、关系运算和逻辑运算。赋值不作为普通表达式的一部分，而是单独作为语句处理。
 
 ## 示例程序：lab/test.c
 
-`lab/test.c` 是当前 miniC 子集的基础示例，覆盖函数定义、参数、函数调用、局部变量初始化、分支、循环、赋值、返回和复合表达式：
+`lab/test.c` 是当前 miniC 子集的综合示例，完成一个常见的“成绩排序与统计”小任务，覆盖函数定义、数组形参、数组初始化、数组下标读写、函数调用、分支、`for` 循环、`break`、`continue`、返回和复合表达式：
 
 ```c
-/* miniC lexer sample */
-int add(int a, int b) {
-    return a + b;
+/* miniC score sorting and statistics sample */
+void selection_sort(int values[], int n) {
+    for (int i = 0; i < n; i = i + 1) {
+        int min = i;
+        for (int j = i + 1; j < n; j = j + 1) {
+            if (values[j] < values[min]) {
+                min = j;
+            }
+        }
+        if (min != i) {
+            int temp = values[i];
+            values[i] = values[min];
+            values[min] = temp;
+        }
+    }
 }
 
 int main() {
-    int value = add(1, 2);
-    if (value >= 3 && value != 0) {
-        value = value - 1;
-    } else {
-        value = 0;
-    }
-    while (value > 0) {
-        value = value - 1;
-    }
-    return value;
+    int scores[7] = {72, 55, 88, 91, 66, 79, -1};
+    selection_sort(scores, 6);
+    return scores[3];
 }
 ```
 
-这个示例先定义 `add` 函数，再在 `main` 中调用它得到 `value`。随后通过 `if` 判断关系表达式和逻辑表达式，通过 `while` 不断修改变量，最后返回计算结果。
+实际文件还包含 `count_passing` 和 `checksum` 两个函数：先排序前 6 个有效成绩，再用第 7 个负数哨兵演示 `break`，用低于 60 分的分支演示 `continue`，最后返回一个由排序结果、及格人数和校验值组合出的可验证整数。
 
 ## 词法单元：lexer 模块
 
 关键字：
 
 ```text
-int void if else while return
+int void if else while for break continue return
 ```
 
 标识符：
@@ -77,7 +82,7 @@ integer = 0 | [1-9][0-9]*
 界符和运算符：
 
 ```text
-( ) { } , ; + - * / % = == != < <= > >= && ||
+( ) { } [ ] , ; + - * / % = == != < <= > >= && ||
 ```
 
 空白和注释：
@@ -96,10 +101,10 @@ integer = 0 | [1-9][0-9]*
 
 | 类别 | 正则描述 | token 类型 |
 |---|---|---|
-| 关键字 | `int|void|if|else|while|return` | 对应关键字 token |
+| 关键字 | `int|void|if|else|while|for|break|continue|return` | 对应关键字 token |
 | 标识符 | `[A-Za-z_][A-Za-z0-9_]*` | `identifier` |
 | 整数 | `0|[1-9][0-9]*` | `integer` |
-| 单字符界符 | `[(){},;]` | 对应界符 token |
+| 单字符界符 | `[(){}\[\],;]` | 对应界符 token |
 | 单字符运算符 | `[+\-*/%=<>]` | 对应运算符 token |
 | 双字符运算符 | `==|!=|<=|>=|&&|\|\|` | 对应运算符 token |
 | 行注释 | `//[^\n]*` | 跳过 |
@@ -119,8 +124,8 @@ parser 模块处理的对象不是源程序字符，而是 lexer 已经输出的
 从当前实现的 miniC 语法出发，目标语言的核心结构可以分成三层：
 
 - 程序层：一个程序由零个或多个函数定义组成，函数由返回类型、函数名、形参列表和函数体构成。
-- 语句层：函数体和块内部包含变量声明、赋值、函数调用、分支、循环、返回和嵌套块。
-- 表达式层：表达式包含整数、标识符、函数调用、括号表达式、一元运算、算术运算、关系运算和逻辑运算。
+- 语句层：函数体和块内部包含变量声明、数组声明、赋值、数组元素赋值、函数调用、分支、循环、跳转、返回和嵌套块。
+- 表达式层：表达式包含整数、标识符、数组下标读取、函数调用、括号表达式、一元运算、算术运算、关系运算和逻辑运算。
 
 语法分析阶段只判断 token 序列的结构是否符合文法。例如变量是否已经声明、函数调用参数数量是否正确、`return` 是否匹配函数返回类型，这些属于语义分析阶段。
 
@@ -167,6 +172,7 @@ ParamListOpt    -> ParamList | ε
 ParamList       -> Param ParamListTail
 ParamListTail   -> "," Param ParamListTail | ε
 Param           -> "int" identifier
+                 | "int" identifier "[" "]"
 ```
 
 约束：
@@ -185,25 +191,48 @@ Stmt            -> VarDecl
                  | IdentifierStmt
                  | IfStmt
                  | WhileStmt
+                 | ForStmt
+                 | BreakStmt
+                 | ContinueStmt
                  | ReturnStmt
                  | Block
 
 VarDecl         -> "int" VarDeclarator VarDeclaratorTail ";"
 VarDeclarator  -> identifier VarInitOpt
+                 | identifier "[" integer "]"
+                 | identifier "[" integer "]" "=" InitializerList
 VarDeclaratorTail
                 -> "," VarDeclarator VarDeclaratorTail
                  | ε
 VarInitOpt      -> "=" Expr | ε
+InitializerList -> "{" InitializerValuesOpt "}"
+InitializerValuesOpt
+                -> InitializerValues | ε
+InitializerValues
+                -> InitializerValues "," Expr
+                 | Expr
 
 IdentifierStmt  -> identifier IdentifierStmtTail
 IdentifierStmtTail
                 -> "=" Expr ";"
+                 | "[" Expr "]" "=" Expr ";"
                  | "(" ArgListOpt ")" ";"
 
 IfStmt          -> "if" "(" Expr ")" Block ElseOpt
 ElseOpt         -> "else" Block | ε
 
 WhileStmt       -> "while" "(" Expr ")" Block
+ForStmt         -> "for" "(" ForInitOpt ";" Expr ";" ForStepOpt ")" Block
+ForInitOpt      -> "int" VarDeclarator VarDeclaratorTail
+                 | identifier "=" Expr
+                 | identifier "[" Expr "]" "=" Expr
+                 | ε
+ForStepOpt      -> identifier "=" Expr
+                 | identifier "[" Expr "]" "=" Expr
+                 | ε
+
+BreakStmt       -> "break" ";"
+ContinueStmt    -> "continue" ";"
 
 ReturnStmt      -> "return" ReturnValueOpt ";"
 ReturnValueOpt  -> Expr | ε
@@ -211,9 +240,12 @@ ReturnValueOpt  -> Expr | ε
 
 约束：
 
-- `if` 和 `while` 的主体强制使用 `{ ... }`，避免悬挂 `else`。
+- `if`、`while` 和 `for` 的主体强制使用 `{ ... }`，避免悬挂 `else` 并统一循环边界。
 - 同一条 `int` 变量声明语句可以包含多个声明项，例如 `int a = 2, c = 0;`，每个声明项独立决定是否带初始化表达式。
+- 固定长度数组只支持 `int name[N]`，`N` 必须是正整数字面量；数组形参写作 `int name[]`，按引用传递。
 - 赋值语句只允许 `identifier = Expr;`，不把赋值放进普通表达式。
+- 数组元素赋值只允许 `identifier[Expr] = Expr;`；数组名本身不能作为 `int` 值使用，只能作为数组实参传递。
+- `break` 和 `continue` 只能出现在 `while` 或 `for` 内部。
 - 普通表达式不能单独作为语句；表达式语句第一版只保留函数调用 `f(...);`。
 - 空语句暂不支持；如果需要，可以后续加入 `Stmt -> ";"`。
 
@@ -258,6 +290,7 @@ Unary           -> "+" Unary
 
 Primary         -> integer
                  | identifier PrimarySuffix
+                 | identifier "[" Expr "]"
                  | "(" Expr ")"
 
 PrimarySuffix   -> CallSuffix | ε
@@ -272,7 +305,7 @@ ArgListTail     -> "," Expr ArgListTail | ε
 
 | 优先级 | 运算符 | 结合性 |
 |---|---|---|
-| 1 | 函数调用 `f(...)` | 左结合 |
+| 1 | 函数调用 `f(...)`、数组下标 `a[i]` | 左结合 |
 | 2 | 一元 `+` `-` | 右结合 |
 | 3 | `*` `/` `%` | 左结合 |
 | 4 | `+` `-` | 左结合 |
@@ -283,9 +316,10 @@ ArgListTail     -> "," Expr ArgListTail | ε
 
 约束：
 
-- 所有表达式类型第一版都按 `int` 处理。
+- 普通表达式类型为 `int`；数组名是单独的 `int[]` 引用类型，不能直接参与算术、关系或逻辑运算。
 - 关系运算和逻辑运算结果也是 `int`，`0` 表示 false，非 `0` 表示 true。
-- 函数调用只支持普通标识符调用，不支持函数指针和成员访问。
+- 函数调用只支持普通标识符调用，不支持函数指针和成员访问；数组实参按引用传递，不复制数组。
+- 四元式生成新增 `array_decl`、`array_load`、`array_store`，用于描述数组声明、下标读取和下标写入。
 
 ## LR(1) 主线构造说明
 

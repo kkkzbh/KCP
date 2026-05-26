@@ -14,26 +14,31 @@ export enum token_kind : u8 {
     kw_else = 7;
     kw_while = 8;
     kw_return = 9;
-    l_paren = 10;
-    r_paren = 11;
-    l_brace = 12;
-    r_brace = 13;
-    comma = 14;
-    semicolon = 15;
-    plus = 16;
-    minus = 17;
-    star = 18;
-    slash = 19;
-    percent = 20;
-    equal = 21;
-    equal_equal = 22;
-    bang_equal = 23;
-    less = 24;
-    less_equal = 25;
-    greater = 26;
-    greater_equal = 27;
-    amp_amp = 28;
-    pipe_pipe = 29;
+    kw_for = 10;
+    kw_break = 11;
+    kw_continue = 12;
+    l_paren = 13;
+    r_paren = 14;
+    l_brace = 15;
+    r_brace = 16;
+    l_bracket = 17;
+    r_bracket = 18;
+    comma = 19;
+    semicolon = 20;
+    plus = 21;
+    minus = 22;
+    star = 23;
+    slash = 24;
+    percent = 25;
+    equal = 26;
+    equal_equal = 27;
+    bang_equal = 28;
+    less = 29;
+    less_equal = 30;
+    greater = 31;
+    greater_equal = 32;
+    amp_amp = 33;
+    pipe_pipe = 34;
 }
 
 export struct token {
@@ -65,10 +70,15 @@ export token_kind_name(kind: token_kind) -> str
     if(kind == token_kind::kw_else) { return "kw_else"; }
     if(kind == token_kind::kw_while) { return "kw_while"; }
     if(kind == token_kind::kw_return) { return "kw_return"; }
+    if(kind == token_kind::kw_for) { return "kw_for"; }
+    if(kind == token_kind::kw_break) { return "kw_break"; }
+    if(kind == token_kind::kw_continue) { return "kw_continue"; }
     if(kind == token_kind::l_paren) { return "l_paren"; }
     if(kind == token_kind::r_paren) { return "r_paren"; }
     if(kind == token_kind::l_brace) { return "l_brace"; }
     if(kind == token_kind::r_brace) { return "r_brace"; }
+    if(kind == token_kind::l_bracket) { return "l_bracket"; }
+    if(kind == token_kind::r_bracket) { return "r_bracket"; }
     if(kind == token_kind::comma) { return "comma"; }
     if(kind == token_kind::semicolon) { return "semicolon"; }
     if(kind == token_kind::plus) { return "plus"; }

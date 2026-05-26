@@ -126,7 +126,7 @@ auto check_harness(test_tools const& tools) -> void
 	    if(program.tokens[6].kind != token_kind::integer_literal) { return 5; }
 	    if(program.tokens[9].kind != token_kind::eof) { return 6; }
 
-	    let words = lex(preprocess_text("int integer void if else while return"));
+	    let words = lex(preprocess_text("int integer void if else while return for break continue"));
 	    if(words.diagnostics.size() != 0) { return 7; }
 	    if(words.tokens[0].kind != token_kind::kw_int) { return 8; }
 	    if(words.tokens[1].kind != token_kind::identifier) { return 9; }
@@ -135,29 +135,34 @@ auto check_harness(test_tools const& tools) -> void
     if(words.tokens[4].kind != token_kind::kw_else) { return 12; }
 	    if(words.tokens[5].kind != token_kind::kw_while) { return 13; }
 	    if(words.tokens[6].kind != token_kind::kw_return) { return 14; }
+	    if(words.tokens[7].kind != token_kind::kw_for) { return 58; }
+	    if(words.tokens[8].kind != token_kind::kw_break) { return 59; }
+	    if(words.tokens[9].kind != token_kind::kw_continue) { return 60; }
 
-	    let symbols = lex(preprocess_text("( ) { } , ; + - * / % = == != < <= > >= && ||"));
+	    let symbols = lex(preprocess_text("( ) { } [ ] , ; + - * / % = == != < <= > >= && ||"));
 	    if(symbols.diagnostics.size() != 0) { return 15; }
 	    if(symbols.tokens[0].kind != token_kind::l_paren) { return 16; }
 	    if(symbols.tokens[1].kind != token_kind::r_paren) { return 17; }
     if(symbols.tokens[2].kind != token_kind::l_brace) { return 18; }
     if(symbols.tokens[3].kind != token_kind::r_brace) { return 19; }
-    if(symbols.tokens[4].kind != token_kind::comma) { return 20; }
-    if(symbols.tokens[5].kind != token_kind::semicolon) { return 21; }
-    if(symbols.tokens[6].kind != token_kind::plus) { return 22; }
-    if(symbols.tokens[7].kind != token_kind::minus) { return 23; }
-    if(symbols.tokens[8].kind != token_kind::star) { return 24; }
-    if(symbols.tokens[9].kind != token_kind::slash) { return 25; }
-    if(symbols.tokens[10].kind != token_kind::percent) { return 26; }
-    if(symbols.tokens[11].kind != token_kind::equal) { return 27; }
-    if(symbols.tokens[12].kind != token_kind::equal_equal) { return 28; }
-    if(symbols.tokens[13].kind != token_kind::bang_equal) { return 29; }
-    if(symbols.tokens[14].kind != token_kind::less) { return 30; }
-    if(symbols.tokens[15].kind != token_kind::less_equal) { return 31; }
-    if(symbols.tokens[16].kind != token_kind::greater) { return 32; }
-    if(symbols.tokens[17].kind != token_kind::greater_equal) { return 33; }
-	    if(symbols.tokens[18].kind != token_kind::amp_amp) { return 34; }
-	    if(symbols.tokens[19].kind != token_kind::pipe_pipe) { return 35; }
+    if(symbols.tokens[4].kind != token_kind::l_bracket) { return 61; }
+    if(symbols.tokens[5].kind != token_kind::r_bracket) { return 62; }
+    if(symbols.tokens[6].kind != token_kind::comma) { return 20; }
+    if(symbols.tokens[7].kind != token_kind::semicolon) { return 21; }
+    if(symbols.tokens[8].kind != token_kind::plus) { return 22; }
+    if(symbols.tokens[9].kind != token_kind::minus) { return 23; }
+    if(symbols.tokens[10].kind != token_kind::star) { return 24; }
+    if(symbols.tokens[11].kind != token_kind::slash) { return 25; }
+    if(symbols.tokens[12].kind != token_kind::percent) { return 26; }
+    if(symbols.tokens[13].kind != token_kind::equal) { return 27; }
+    if(symbols.tokens[14].kind != token_kind::equal_equal) { return 28; }
+    if(symbols.tokens[15].kind != token_kind::bang_equal) { return 29; }
+    if(symbols.tokens[16].kind != token_kind::less) { return 30; }
+    if(symbols.tokens[17].kind != token_kind::less_equal) { return 31; }
+    if(symbols.tokens[18].kind != token_kind::greater) { return 32; }
+    if(symbols.tokens[19].kind != token_kind::greater_equal) { return 33; }
+	    if(symbols.tokens[20].kind != token_kind::amp_amp) { return 34; }
+	    if(symbols.tokens[21].kind != token_kind::pipe_pipe) { return 35; }
 
 	    let comments = lex(preprocess_text("int/* block */void// line\nreturn"));
 	    if(comments.diagnostics.size() != 0) { return 36; }

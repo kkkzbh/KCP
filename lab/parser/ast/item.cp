@@ -12,6 +12,7 @@ export enum return_type_kind : u8 {
 export struct parameter_syntax {
     full_span: source_span;
     name: source_span;
+    is_array: bool;
 }
 
 export struct function_syntax {

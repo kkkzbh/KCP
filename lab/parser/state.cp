@@ -19,6 +19,7 @@ export struct parser_value {
     parameter: parameter_syntax;
     statements: vector<stmt_id>;
     statement: stmt_id;
+    optional_statement: optional<stmt_id>;
     declarations: vector<var_decl_item>;
     declaration: var_decl_item;
     expression: expr_id;
@@ -41,6 +42,7 @@ impl parser_value {
             .parameter = parameter_syntax{},
             .statements = vector<stmt_id>{},
             .statement = stmt_id{},
+            .optional_statement = optional<stmt_id>::none,
             .declarations = vector<var_decl_item>{},
             .declaration = var_decl_item{},
             .expression = expr_id{},
@@ -122,6 +124,12 @@ rhs_statement(values: vector<parser_value> const&, index: usize) -> stmt_id
 {
     let value = rhs_value(values, index);
     return value.statement;
+}
+
+rhs_optional_statement(values: vector<parser_value> const&, index: usize) -> optional<stmt_id>
+{
+    let value = rhs_value(values, index);
+    return value.optional_statement;
 }
 
 rhs_declarations(values: vector<parser_value> const&, index: usize) -> vector<var_decl_item>
@@ -229,6 +237,14 @@ value_with_statement(span: source_span, id: stmt_id) -> parser_value
     return result;
 }
 
+value_with_optional_statement(span: source_span, id: optional<stmt_id>) -> parser_value
+{
+    let result = parser_value{};
+    result.span = span;
+    result.optional_statement = id;
+    return result;
+}
+
 value_with_declarations(declarations: vector<var_decl_item>) -> parser_value
 {
     let result = parser_value{};
@@ -255,6 +271,14 @@ value_with_expression(span: source_span, id: expr_id) -> parser_value
 value_with_arguments(arguments: vector<expr_id>) -> parser_value
 {
     let result = parser_value{};
+    result.arguments = arguments;
+    return result;
+}
+
+value_with_arguments_span(span: source_span, arguments: vector<expr_id>) -> parser_value
+{
+    let result = parser_value{};
+    result.span = span;
     result.arguments = arguments;
     return result;
 }
@@ -392,6 +416,17 @@ impl parser_state {
         return arena.add_expr(expr_syntax::binary(syntax));
     }
 
+    add_assign_statement(self&, name: source_span, index: optional<expr_id>, value: expr_id, end: source_span) -> stmt_id
+    {
+        let syntax = assign_statement{
+            .full_span = combine(name, end),
+            .name = name,
+            .index = index,
+            .value = value
+        };
+        return arena.add_stmt(stmt_syntax::assign(syntax));
+    }
+
     reduce_program(self&, functions: vector<function_id>) -> parser_value
     {
         let full_span = program_span(functions);
@@ -463,7 +498,8 @@ impl parser_state {
             let name = rhs_token(rhs, 1 as usize);
             let parameter = parameter_syntax{
                 .full_span = combine(first.span, name.span),
-                .name = name.span
+                .name = name.span,
+                .is_array = false
             };
             return value_with_parameter(parameter.full_span, parameter);
         }
@@ -479,8 +515,8 @@ impl parser_state {
             return value_with_statement(syntax.full_span, id);
         }
         if(production == 13 as usize) {
-            let statements = rhs_statements(rhs, 0 as usize);
-            statements.push_back(rhs_statement(rhs, 1 as usize));
+            let statements = rhs_statements(rhs, 1 as usize);
+            statements.insert(0 as usize, rhs_statement(rhs, 0 as usize));
             return value_with_statements(statements);
         }
         if(production == 14 as usize) {
@@ -522,7 +558,9 @@ impl parser_state {
             let item = var_decl_item{
                 .full_span = name.span,
                 .name = name.span,
-                .initializer = optional<expr_id>::none
+                .initializer = optional<expr_id>::none,
+                .array_size = optional<source_span>::none,
+                .array_initializers = vector<expr_id>{}
             };
             return value_with_declaration(item.full_span, item);
         }
@@ -532,7 +570,9 @@ impl parser_state {
             let item = var_decl_item{
                 .full_span = combine(name.span, arena.expr_span(expression)),
                 .name = name.span,
-                .initializer = optional<expr_id>::some(expression)
+                .initializer = optional<expr_id>::some(expression),
+                .array_size = optional<source_span>::none,
+                .array_initializers = vector<expr_id>{}
             };
             return value_with_declaration(item.full_span, item);
         }
@@ -540,13 +580,8 @@ impl parser_state {
             let name = rhs_token(rhs, 0 as usize);
             let value = rhs_expression(rhs, 2 as usize);
             let semicolon = rhs_token(rhs, 3 as usize);
-            let syntax = assign_statement{
-                .full_span = combine(name.span, semicolon.span),
-                .name = name.span,
-                .value = value
-            };
-            let id = arena.add_stmt(stmt_syntax::assign(syntax));
-            return value_with_statement(syntax.full_span, id);
+            let id = add_assign_statement(name.span, optional<expr_id>::none, value, semicolon.span);
+            return value_with_statement(arena.stmt_span(id), id);
         }
         if(production == 27 as usize) {
             let name = rhs_token(rhs, 0 as usize);
@@ -705,6 +740,159 @@ impl parser_state {
             let arguments = vector<expr_id>{};
             arguments.push_back(rhs_expression(rhs, 0 as usize));
             return value_with_arguments(arguments);
+        }
+        if(production == 66 as usize) {
+            let first = rhs_token(rhs, 0 as usize);
+            let name = rhs_token(rhs, 1 as usize);
+            let close = rhs_token(rhs, 3 as usize);
+            let parameter = parameter_syntax{
+                .full_span = combine(first.span, close.span),
+                .name = name.span,
+                .is_array = true
+            };
+            return value_with_parameter(parameter.full_span, parameter);
+        }
+        if(production == 67 as usize or production == 68 as usize or production == 69 as usize) {
+            return rhs_value(rhs, 0 as usize);
+        }
+        if(production == 70 as usize) {
+            let name = rhs_token(rhs, 0 as usize);
+            let size = rhs_token(rhs, 2 as usize);
+            let close = rhs_token(rhs, 3 as usize);
+            let item = var_decl_item{
+                .full_span = combine(name.span, close.span),
+                .name = name.span,
+                .initializer = optional<expr_id>::none,
+                .array_size = optional<source_span>::some(size.span),
+                .array_initializers = vector<expr_id>{}
+            };
+            return value_with_declaration(item.full_span, item);
+        }
+        if(production == 71 as usize) {
+            let name = rhs_token(rhs, 0 as usize);
+            let size = rhs_token(rhs, 2 as usize);
+            let initializers = rhs_arguments(rhs, 5 as usize);
+            let list = rhs_value(rhs, 5 as usize);
+            let item = var_decl_item{
+                .full_span = combine(name.span, list.span),
+                .name = name.span,
+                .initializer = optional<expr_id>::none,
+                .array_size = optional<source_span>::some(size.span),
+                .array_initializers = initializers
+            };
+            return value_with_declaration(item.full_span, item);
+        }
+        if(production == 72 as usize) {
+            let name = rhs_token(rhs, 0 as usize);
+            let index = rhs_expression(rhs, 2 as usize);
+            let value = rhs_expression(rhs, 5 as usize);
+            let semicolon = rhs_token(rhs, 6 as usize);
+            let id = add_assign_statement(name.span, optional<expr_id>::some(index), value, semicolon.span);
+            return value_with_statement(arena.stmt_span(id), id);
+        }
+        if(production == 73 as usize) {
+            let name = rhs_token(rhs, 0 as usize);
+            let index = rhs_expression(rhs, 2 as usize);
+            let close = rhs_token(rhs, 3 as usize);
+            let syntax = index_expr{
+                .full_span = combine(name.span, close.span),
+                .array = name.span,
+                .index = index
+            };
+            let id = arena.add_expr(expr_syntax::index(syntax));
+            return value_with_expression(syntax.full_span, id);
+        }
+        if(production == 74 as usize) {
+            let start = rhs_token(rhs, 0 as usize);
+            let initializer = rhs_optional_statement(rhs, 2 as usize);
+            let condition = rhs_expression(rhs, 4 as usize);
+            let step = rhs_optional_statement(rhs, 6 as usize);
+            let body = rhs_statement(rhs, 8 as usize);
+            let syntax = for_statement{
+                .full_span = combine(start.span, arena.stmt_span(body)),
+                .initializer = initializer,
+                .condition = condition,
+                .step = step,
+                .body = body
+            };
+            let id = arena.add_stmt(stmt_syntax::for_stmt(syntax));
+            return value_with_statement(syntax.full_span, id);
+        }
+        if(production == 75 as usize) {
+            let start = rhs_token(rhs, 0 as usize);
+            let declarations = rhs_declarations(rhs, 1 as usize);
+            let last_index = declarations.size() - 1;
+            let syntax = var_decl_statement{
+                .full_span = combine(start.span, declarations[last_index].full_span),
+                .declarations = declarations
+            };
+            let id = arena.add_stmt(stmt_syntax::var_decl(syntax));
+            return value_with_optional_statement(syntax.full_span, optional<stmt_id>::some(id));
+        }
+        if(production == 76 as usize) {
+            let name = rhs_token(rhs, 0 as usize);
+            let value = rhs_expression(rhs, 2 as usize);
+            let id = add_assign_statement(name.span, optional<expr_id>::none, value, arena.expr_span(value));
+            return value_with_optional_statement(arena.stmt_span(id), optional<stmt_id>::some(id));
+        }
+        if(production == 77 as usize) {
+            let name = rhs_token(rhs, 0 as usize);
+            let index = rhs_expression(rhs, 2 as usize);
+            let value = rhs_expression(rhs, 5 as usize);
+            let id = add_assign_statement(name.span, optional<expr_id>::some(index), value, arena.expr_span(value));
+            return value_with_optional_statement(arena.stmt_span(id), optional<stmt_id>::some(id));
+        }
+        if(production == 78 as usize or production == 81 as usize) {
+            return value_with_optional_statement(source_span{}, optional<stmt_id>::none);
+        }
+        if(production == 79 as usize) {
+            let name = rhs_token(rhs, 0 as usize);
+            let value = rhs_expression(rhs, 2 as usize);
+            let id = add_assign_statement(name.span, optional<expr_id>::none, value, arena.expr_span(value));
+            return value_with_optional_statement(arena.stmt_span(id), optional<stmt_id>::some(id));
+        }
+        if(production == 80 as usize) {
+            let name = rhs_token(rhs, 0 as usize);
+            let index = rhs_expression(rhs, 2 as usize);
+            let value = rhs_expression(rhs, 5 as usize);
+            let id = add_assign_statement(name.span, optional<expr_id>::some(index), value, arena.expr_span(value));
+            return value_with_optional_statement(arena.stmt_span(id), optional<stmt_id>::some(id));
+        }
+        if(production == 82 as usize) {
+            let start = rhs_token(rhs, 0 as usize);
+            let semicolon = rhs_token(rhs, 1 as usize);
+            let syntax = break_statement{ .full_span = combine(start.span, semicolon.span) };
+            let id = arena.add_stmt(stmt_syntax::break_stmt(syntax));
+            return value_with_statement(syntax.full_span, id);
+        }
+        if(production == 83 as usize) {
+            let start = rhs_token(rhs, 0 as usize);
+            let semicolon = rhs_token(rhs, 1 as usize);
+            let syntax = continue_statement{ .full_span = combine(start.span, semicolon.span) };
+            let id = arena.add_stmt(stmt_syntax::continue_stmt(syntax));
+            return value_with_statement(syntax.full_span, id);
+        }
+        if(production == 84 as usize) {
+            let open = rhs_token(rhs, 0 as usize);
+            let values = rhs_arguments(rhs, 1 as usize);
+            let close = rhs_token(rhs, 2 as usize);
+            return value_with_arguments_span(combine(open.span, close.span), values);
+        }
+        if(production == 85 as usize) {
+            return rhs_value(rhs, 0 as usize);
+        }
+        if(production == 86 as usize) {
+            return value_with_arguments(vector<expr_id>{});
+        }
+        if(production == 87 as usize) {
+            let values = rhs_arguments(rhs, 0 as usize);
+            values.push_back(rhs_expression(rhs, 2 as usize));
+            return value_with_arguments(values);
+        }
+        if(production == 88 as usize) {
+            let values = vector<expr_id>{};
+            values.push_back(rhs_expression(rhs, 0 as usize));
+            return value_with_arguments(values);
         }
 
         return parser_value{};

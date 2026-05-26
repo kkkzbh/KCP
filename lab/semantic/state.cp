@@ -23,6 +23,7 @@ export struct semantic_analyzer {
     current_return_type: semantic_type_kind;
     current_function_span: source_span;
     current_saw_value_return: bool;
+    loop_depth: usize;
 }
 
 impl semantic_analyzer {
@@ -37,7 +38,8 @@ impl semantic_analyzer {
             .current_function = function_id{},
             .current_return_type = semantic_type_kind::error,
             .current_function_span = source_span{},
-            .current_saw_value_return = false
+            .current_saw_value_return = false,
+            .loop_depth = 0 as usize
         };
     }
 

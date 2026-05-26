@@ -14,6 +14,8 @@ single_punctuation_kind(ch: char) -> token_kind
     if(ch == ')') { return token_kind::r_paren; }
     if(ch == '{') { return token_kind::l_brace; }
     if(ch == '}') { return token_kind::r_brace; }
+    if(ch == '[') { return token_kind::l_bracket; }
+    if(ch == ']') { return token_kind::r_bracket; }
     if(ch == ',') { return token_kind::comma; }
     if(ch == ';') { return token_kind::semicolon; }
     if(ch == '+') { return token_kind::plus; }

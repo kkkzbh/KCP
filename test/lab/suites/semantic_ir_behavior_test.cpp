@@ -138,6 +138,7 @@ import preprocessor;
 import lexer;
 import parser;
 import diagnostic;
+import semantic.type;
 import semantic.result;
 import semantic.program;
 import ir.quad;
@@ -234,24 +235,28 @@ has_constant(result: semantic_result const&, value: i32) -> bool
 
 main() -> i32
 {
-    let valid_text: str = "int add(int a, int b) { return a + b; } int main() { int value = add(1, 2); if (value >= 3 && value != 0) { value = value - 1; } else { value = 0; } while (value > 0) { value = value - 1; } return value; }";
+    let valid_text: str = "void selection_sort(int values[], int n) { for (int i = 0; i < n; i = i + 1) { int min = i; for (int j = i + 1; j < n; j = j + 1) { if (values[j] < values[min]) { min = j; } } if (min != i) { int temp = values[i]; values[i] = values[min]; values[min] = temp; } } } int count_passing(int values[], int n) { int count = 0; for (int i = 0; i < n; i = i + 1) { if (values[i] < 0) { break; } if (values[i] < 60) { continue; } count = count + 1; } return count; } int checksum(int values[], int n) { int total = 0; for (int i = 0; i < n; i = i + 1) { total = total + values[i] * (i + 1); } return total; } int main() { int scores[7] = {72, 55, 88, 91, 66, 79, -1}; selection_sort(scores, 6); int passing = count_passing(scores, 7); int total = checksum(scores, 6); return total + passing * 100 + scores[3]; }";
     let valid_file = source_file{"valid.c", valid_text};
     let valid_parsed = parse_file(valid_file);
     let valid_semantics = analyze_semantics(valid_file, valid_parsed);
     if(not valid_semantics.accepted()) { return 1; }
-    if(valid_semantics.functions.size() != 2 as usize) { return 2; }
-    let add_symbol = semantic_find_function(valid_semantics, "add");
-    if(not add_symbol.valid()) { return 3; }
-    if(valid_semantics.symbols[add_symbol.index()].parameter_count != 2 as usize) { return 4; }
+    if(valid_semantics.functions.size() != 4 as usize) { return 2; }
+    let sort_symbol = semantic_find_function(valid_semantics, "selection_sort");
+    if(not sort_symbol.valid()) { return 3; }
+    if(valid_semantics.symbols[sort_symbol.index()].parameter_count != 2 as usize) { return 4; }
+    if(valid_semantics.symbols[sort_symbol.index()].parameter_types[0 as usize].type != semantic_type_kind::int_array_type) { return 28; }
 
     let valid_quads = emit_quads(valid_file, valid_parsed, valid_semantics);
     if(not valid_quads.accepted) { return 5; }
     if(not has_quad_op(valid_quads.quads, "func")) { return 6; }
-    if(not has_call_to(valid_quads.quads, "add")) { return 7; }
+    if(not has_call_to(valid_quads.quads, "selection_sort")) { return 7; }
     if(not has_quad_op(valid_quads.quads, "ret")) { return 8; }
     if(not has_quad_op(valid_quads.quads, "jnz")) { return 9; }
     if(not has_quad_op(valid_quads.quads, "jz")) { return 10; }
     if(not has_quad_op(valid_quads.quads, "label")) { return 11; }
+    if(not has_quad_op(valid_quads.quads, "array_decl")) { return 29; }
+    if(not has_quad_op(valid_quads.quads, "array_load")) { return 30; }
+    if(not has_quad_op(valid_quads.quads, "array_store")) { return 31; }
 
     let expr_text: str = "int main() { return 1 + 2 * 3; }";
     let expr_file = source_file{"expr.c", expr_text};
@@ -292,6 +297,22 @@ main() -> i32
     code = expect_diag("int main() { return 1 / 0; }", diagnostic_kind::constant_divide_by_zero, 26);
     if(code != 0) { return code; }
     code = expect_diag("int helper() { return 0; }", diagnostic_kind::missing_main, 27);
+    if(code != 0) { return code; }
+    code = expect_diag("int main() { int a[0]; return 0; }", diagnostic_kind::invalid_array_size, 32);
+    if(code != 0) { return code; }
+    code = expect_diag("int main() { int a[2] = {1, 2, 3}; return 0; }", diagnostic_kind::array_initializer_too_many, 33);
+    if(code != 0) { return code; }
+    code = expect_diag("int main() { int a[2]; return a; }", diagnostic_kind::array_value_required, 34);
+    if(code != 0) { return code; }
+    code = expect_diag("void take(int a[]) { return; } int main() { int value = 1; take(value); return 0; }", diagnostic_kind::argument_type_mismatch, 35);
+    if(code != 0) { return code; }
+    code = expect_diag("int take(int value) { return value; } int main() { int a[1]; return take(a); }", diagnostic_kind::argument_type_mismatch, 36);
+    if(code != 0) { return code; }
+    code = expect_diag("int main() { int value = 1; return value[0]; }", diagnostic_kind::non_array_index, 37);
+    if(code != 0) { return code; }
+    code = expect_diag("int main() { break; return 0; }", diagnostic_kind::break_outside_loop, 38);
+    if(code != 0) { return code; }
+    code = expect_diag("int main() { continue; return 0; }", diagnostic_kind::continue_outside_loop, 39);
     if(code != 0) { return code; }
 
     return 0;

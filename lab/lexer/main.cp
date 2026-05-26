@@ -35,12 +35,12 @@ main() -> i32
         println("mini c lexer failed: diagnostics were produced");
         return 1;
     }
-    if(result.tokens.size() < 70) {
+    if(result.tokens.size() < 180) {
         println("mini c lexer failed: token count is too small");
         return 2;
     }
-    if(result.tokens[0 as usize].kind != token_kind::kw_int) {
-        println("mini c lexer failed: first token is not int");
+    if(result.tokens[0 as usize].kind != token_kind::kw_void) {
+        println("mini c lexer failed: first token is not void");
         return 3;
     }
     if(result.tokens[result.tokens.size() - 1].kind != token_kind::eof) {
@@ -48,24 +48,34 @@ main() -> i32
         return 4;
     }
     let saw_if = false;
-    let saw_while = false;
+    let saw_for = false;
+    let saw_break = false;
+    let saw_continue = false;
     let saw_return = false;
     for(let token : result.tokens) {
         let kind = token.kind;
         if(kind == token_kind::kw_if) {
             saw_if = true;
         }
-        if(kind == token_kind::kw_while) {
-            saw_while = true;
+        if(kind == token_kind::kw_for) {
+            saw_for = true;
+        }
+        if(kind == token_kind::kw_break) {
+            saw_break = true;
+        }
+        if(kind == token_kind::kw_continue) {
+            saw_continue = true;
         }
         if(kind == token_kind::kw_return) {
             saw_return = true;
         }
     }
     println("mini c lexer saw if: {}", saw_if);
-    println("mini c lexer saw while: {}", saw_while);
+    println("mini c lexer saw for: {}", saw_for);
+    println("mini c lexer saw break: {}", saw_break);
+    println("mini c lexer saw continue: {}", saw_continue);
     println("mini c lexer saw return: {}", saw_return);
-    if(not saw_if or not saw_while or not saw_return) {
+    if(not saw_if or not saw_for or not saw_break or not saw_continue or not saw_return) {
         println("mini c lexer failed: required control-flow keyword is missing");
         return 5;
     }

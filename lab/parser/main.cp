@@ -162,26 +162,36 @@ main() -> i32
         println("mini c parser failed: parser diagnostics were produced");
         return 4;
     }
-    if(program.functions.size() != 2) {
-        println("mini c parser failed: expected add and main functions");
+    if(program.functions.size() != 4) {
+        println("mini c parser failed: expected selection_sort, count_passing, checksum and main functions");
         return 5;
     }
 
-    let add_function = result.ast.functions[program.functions[0 as usize].value];
-    let main_function = result.ast.functions[program.functions[1 as usize].value];
-    if(file.slice(add_function.name) != "add") {
-        println("mini c parser failed: first function is not add");
+    let sort_function = result.ast.functions[program.functions[0 as usize].value];
+    let count_function = result.ast.functions[program.functions[1 as usize].value];
+    let checksum_function = result.ast.functions[program.functions[2 as usize].value];
+    let main_function = result.ast.functions[program.functions[3 as usize].value];
+    if(file.slice(sort_function.name) != "selection_sort") {
+        println("mini c parser failed: first function is not selection_sort");
         return 6;
     }
+    if(file.slice(count_function.name) != "count_passing") {
+        println("mini c parser failed: second function is not count_passing");
+        return 10;
+    }
+    if(file.slice(checksum_function.name) != "checksum") {
+        println("mini c parser failed: third function is not checksum");
+        return 11;
+    }
     if(file.slice(main_function.name) != "main") {
-        println("mini c parser failed: second function is not main");
+        println("mini c parser failed: fourth function is not main");
         return 7;
     }
-    if(result.ast.statements.size() < 10) {
+    if(result.ast.statements.size() < 30) {
         println("mini c parser failed: statement tree is too small");
         return 8;
     }
-    if(result.ast.expressions.size() < 12) {
+    if(result.ast.expressions.size() < 45) {
         println("mini c parser failed: expression tree is too small");
         return 9;
     }

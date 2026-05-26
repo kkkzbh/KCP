@@ -274,6 +274,37 @@ first_of_sequence(sequence: vector<grammar_symbol> const&, lookahead: token_kind
     return result;
 }
 
+first_of_production_rhs(sequence: vector<grammar_symbol> const&, first_sets: map<grammar_symbol, set<grammar_symbol, grammar_symbol_less>, grammar_symbol_less> const&) -> set<grammar_symbol, grammar_symbol_less>
+{
+    let result = set<grammar_symbol, grammar_symbol_less>{};
+    let epsilon = symbol_epsilon();
+    let nullable = true;
+    let index: usize = 0;
+    while(index < sequence.size()) {
+        let current = sequence[index];
+        let current_first_ref = first_sets.find(current);
+        assert(current_first_ref.has_value(), "first set missing symbol");
+        let current_first = *current_first_ref;
+        let first_index: usize = 0;
+        while(first_index < current_first.size()) {
+            let item = current_first.nth(first_index);
+            if(not symbol_equal(item, epsilon)) {
+                result.insert(item);
+            }
+            first_index += 1;
+        }
+        if(not current_first.contains(epsilon)) {
+            nullable = false;
+            break;
+        }
+        index += 1;
+    }
+    if(nullable) {
+        result.insert(epsilon);
+    }
+    return result;
+}
+
 build_first_sets(grammar: grammar const&) -> map<grammar_symbol, set<grammar_symbol, grammar_symbol_less>, grammar_symbol_less>
 {
     // FIRST(X) 表示从符号 X 开始最终可能先看到哪些终结符。
@@ -298,7 +329,7 @@ build_first_sets(grammar: grammar const&) -> map<grammar_symbol, set<grammar_sym
         let production_index: usize = 0;
         while(production_index < grammar.productions.size()) {
             let production = grammar.productions[production_index];
-            let sequence_first = first_of_sequence(production.rhs, token_kind::eof, first_sets);
+            let sequence_first = first_of_production_rhs(production.rhs, first_sets);
             let lhs = symbol_nonterminal(production.lhs);
             let target = first_sets.find(lhs);
             assert(target.has_value(), "first set missing nonterminal");

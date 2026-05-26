@@ -13,6 +13,8 @@ export struct var_decl_item {
     full_span: source_span;
     name: source_span;
     initializer: optional<expr_id>;
+    array_size: optional<source_span>;
+    array_initializers: vector<expr_id>;
 }
 
 impl var_decl_item {
@@ -21,7 +23,9 @@ impl var_decl_item {
         return var_decl_item{
             .full_span = source_span{},
             .name = source_span{},
-            .initializer = optional<expr_id>::none
+            .initializer = optional<expr_id>::none,
+            .array_size = optional<source_span>::none,
+            .array_initializers = vector<expr_id>{}
         };
     }
 }
@@ -34,6 +38,7 @@ export struct var_decl_statement {
 export struct assign_statement {
     full_span: source_span;
     name: source_span;
+    index: optional<expr_id>;
     value: expr_id;
 }
 
@@ -56,6 +61,22 @@ export struct while_statement {
     body: stmt_id;
 }
 
+export struct for_statement {
+    full_span: source_span;
+    initializer: optional<stmt_id>;
+    condition: expr_id;
+    step: optional<stmt_id>;
+    body: stmt_id;
+}
+
+export struct break_statement {
+    full_span: source_span;
+}
+
+export struct continue_statement {
+    full_span: source_span;
+}
+
 export struct return_statement {
     full_span: source_span;
     value: optional<expr_id>;
@@ -68,6 +89,9 @@ export variant stmt_syntax {
     call(call_statement);
     if_stmt(if_statement);
     while_stmt(while_statement);
+    for_stmt(for_statement);
+    break_stmt(break_statement);
+    continue_stmt(continue_statement);
     return_stmt(return_statement);
 }
 
@@ -80,6 +104,9 @@ export stmt_syntax_span(value: stmt_syntax const&) -> source_span
         .call(item) => item.full_span,
         .if_stmt(item) => item.full_span,
         .while_stmt(item) => item.full_span,
+        .for_stmt(item) => item.full_span,
+        .break_stmt(item) => item.full_span,
+        .continue_stmt(item) => item.full_span,
         .return_stmt(item) => item.full_span,
     };
 }

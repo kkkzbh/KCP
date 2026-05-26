@@ -17,6 +17,25 @@ return_type_from_syntax(kind: return_type_kind) -> semantic_type_kind
     return semantic_type_kind::int_type;
 }
 
+parameter_type_from_syntax(parameter: parameter_syntax) -> semantic_type_kind
+{
+    if(parameter.is_array) {
+        return semantic_type_kind::int_array_type;
+    }
+    return semantic_type_kind::int_type;
+}
+
+parameter_types_from_syntax(parameters: vector<parameter_syntax> const&) -> vector<semantic_parameter_type>
+{
+    let result = vector<semantic_parameter_type>{};
+    let index: usize = 0;
+    while(index < parameters.size()) {
+        result.push_back(semantic_parameter_type{ .type = parameter_type_from_syntax(parameters[index]) });
+        index += 1;
+    }
+    return result;
+}
+
 impl semantic_analyzer {
     collect_function(self&, id: function_id) -> void
     {
@@ -33,7 +52,8 @@ impl semantic_analyzer {
             .span = function.name,
             .type = return_type_from_syntax(function.return_type),
             .function = id,
-            .parameter_count = function.parameters.size()
+            .parameter_count = function.parameters.size(),
+            .parameter_types = parameter_types_from_syntax(function.parameters)
         });
         result.functions.push_back(symbol);
     }

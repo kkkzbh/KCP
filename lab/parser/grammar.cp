@@ -85,6 +85,34 @@ symbols6(first: grammar_symbol, second: grammar_symbol, third: grammar_symbol, f
     return result;
 }
 
+symbols7(first: grammar_symbol, second: grammar_symbol, third: grammar_symbol, fourth: grammar_symbol, fifth: grammar_symbol, sixth: grammar_symbol, seventh: grammar_symbol) -> vector<grammar_symbol>
+{
+    let result = vector<grammar_symbol>{};
+    result.push_back(first);
+    result.push_back(second);
+    result.push_back(third);
+    result.push_back(fourth);
+    result.push_back(fifth);
+    result.push_back(sixth);
+    result.push_back(seventh);
+    return result;
+}
+
+symbols9(first: grammar_symbol, second: grammar_symbol, third: grammar_symbol, fourth: grammar_symbol, fifth: grammar_symbol, sixth: grammar_symbol, seventh: grammar_symbol, eighth: grammar_symbol, ninth: grammar_symbol) -> vector<grammar_symbol>
+{
+    let result = vector<grammar_symbol>{};
+    result.push_back(first);
+    result.push_back(second);
+    result.push_back(third);
+    result.push_back(fourth);
+    result.push_back(fifth);
+    result.push_back(sixth);
+    result.push_back(seventh);
+    result.push_back(eighth);
+    result.push_back(ninth);
+    return result;
+}
+
 add_production(grammar: grammar&, lhs: nonterminal_kind, rhs: vector<grammar_symbol>) -> void
 {
     grammar.productions.push_back(production{ .lhs = lhs, .rhs = move rhs });
@@ -110,7 +138,7 @@ export make_minic_grammar() -> grammar
     add_production(grammar, nonterminal_kind::parameter_list, symbols1(symbol_nonterminal(nonterminal_kind::parameter_item)));
     add_production(grammar, nonterminal_kind::parameter_item, symbols2(symbol_terminal(token_kind::kw_int), symbol_terminal(token_kind::identifier)));
     add_production(grammar, nonterminal_kind::block, symbols3(symbol_terminal(token_kind::l_brace), symbol_nonterminal(nonterminal_kind::statement_list), symbol_terminal(token_kind::r_brace)));
-    add_production(grammar, nonterminal_kind::statement_list, symbols2(symbol_nonterminal(nonterminal_kind::statement_list), symbol_nonterminal(nonterminal_kind::statement)));
+    add_production(grammar, nonterminal_kind::statement_list, symbols2(symbol_nonterminal(nonterminal_kind::statement), symbol_nonterminal(nonterminal_kind::statement_list)));
     add_production(grammar, nonterminal_kind::statement_list, symbols0());
     add_production(grammar, nonterminal_kind::statement, symbols1(symbol_nonterminal(nonterminal_kind::var_decl)));
     add_production(grammar, nonterminal_kind::statement, symbols1(symbol_nonterminal(nonterminal_kind::identifier_statement)));
@@ -163,5 +191,28 @@ export make_minic_grammar() -> grammar
     add_production(grammar, nonterminal_kind::argument_list_opt, symbols0());
     add_production(grammar, nonterminal_kind::argument_list, symbols3(symbol_nonterminal(nonterminal_kind::argument_list), symbol_terminal(token_kind::comma), symbol_nonterminal(nonterminal_kind::expression)));
     add_production(grammar, nonterminal_kind::argument_list, symbols1(symbol_nonterminal(nonterminal_kind::expression)));
+    add_production(grammar, nonterminal_kind::parameter_item, symbols4(symbol_terminal(token_kind::kw_int), symbol_terminal(token_kind::identifier), symbol_terminal(token_kind::l_bracket), symbol_terminal(token_kind::r_bracket)));
+    add_production(grammar, nonterminal_kind::statement, symbols1(symbol_nonterminal(nonterminal_kind::for_statement_nt)));
+    add_production(grammar, nonterminal_kind::statement, symbols1(symbol_nonterminal(nonterminal_kind::break_statement_nt)));
+    add_production(grammar, nonterminal_kind::statement, symbols1(symbol_nonterminal(nonterminal_kind::continue_statement_nt)));
+    add_production(grammar, nonterminal_kind::var_decl_item_nt, symbols4(symbol_terminal(token_kind::identifier), symbol_terminal(token_kind::l_bracket), symbol_terminal(token_kind::integer_literal), symbol_terminal(token_kind::r_bracket)));
+    add_production(grammar, nonterminal_kind::var_decl_item_nt, symbols6(symbol_terminal(token_kind::identifier), symbol_terminal(token_kind::l_bracket), symbol_terminal(token_kind::integer_literal), symbol_terminal(token_kind::r_bracket), symbol_terminal(token_kind::equal), symbol_nonterminal(nonterminal_kind::initializer_list)));
+    add_production(grammar, nonterminal_kind::identifier_statement, symbols7(symbol_terminal(token_kind::identifier), symbol_terminal(token_kind::l_bracket), symbol_nonterminal(nonterminal_kind::expression), symbol_terminal(token_kind::r_bracket), symbol_terminal(token_kind::equal), symbol_nonterminal(nonterminal_kind::expression), symbol_terminal(token_kind::semicolon)));
+    add_production(grammar, nonterminal_kind::primary, symbols4(symbol_terminal(token_kind::identifier), symbol_terminal(token_kind::l_bracket), symbol_nonterminal(nonterminal_kind::expression), symbol_terminal(token_kind::r_bracket)));
+    add_production(grammar, nonterminal_kind::for_statement_nt, symbols9(symbol_terminal(token_kind::kw_for), symbol_terminal(token_kind::l_paren), symbol_nonterminal(nonterminal_kind::for_init_opt), symbol_terminal(token_kind::semicolon), symbol_nonterminal(nonterminal_kind::expression), symbol_terminal(token_kind::semicolon), symbol_nonterminal(nonterminal_kind::for_step_opt), symbol_terminal(token_kind::r_paren), symbol_nonterminal(nonterminal_kind::block)));
+    add_production(grammar, nonterminal_kind::for_init_opt, symbols2(symbol_terminal(token_kind::kw_int), symbol_nonterminal(nonterminal_kind::var_decl_list)));
+    add_production(grammar, nonterminal_kind::for_init_opt, symbols3(symbol_terminal(token_kind::identifier), symbol_terminal(token_kind::equal), symbol_nonterminal(nonterminal_kind::expression)));
+    add_production(grammar, nonterminal_kind::for_init_opt, symbols6(symbol_terminal(token_kind::identifier), symbol_terminal(token_kind::l_bracket), symbol_nonterminal(nonterminal_kind::expression), symbol_terminal(token_kind::r_bracket), symbol_terminal(token_kind::equal), symbol_nonterminal(nonterminal_kind::expression)));
+    add_production(grammar, nonterminal_kind::for_init_opt, symbols0());
+    add_production(grammar, nonterminal_kind::for_step_opt, symbols3(symbol_terminal(token_kind::identifier), symbol_terminal(token_kind::equal), symbol_nonterminal(nonterminal_kind::expression)));
+    add_production(grammar, nonterminal_kind::for_step_opt, symbols6(symbol_terminal(token_kind::identifier), symbol_terminal(token_kind::l_bracket), symbol_nonterminal(nonterminal_kind::expression), symbol_terminal(token_kind::r_bracket), symbol_terminal(token_kind::equal), symbol_nonterminal(nonterminal_kind::expression)));
+    add_production(grammar, nonterminal_kind::for_step_opt, symbols0());
+    add_production(grammar, nonterminal_kind::break_statement_nt, symbols2(symbol_terminal(token_kind::kw_break), symbol_terminal(token_kind::semicolon)));
+    add_production(grammar, nonterminal_kind::continue_statement_nt, symbols2(symbol_terminal(token_kind::kw_continue), symbol_terminal(token_kind::semicolon)));
+    add_production(grammar, nonterminal_kind::initializer_list, symbols3(symbol_terminal(token_kind::l_brace), symbol_nonterminal(nonterminal_kind::initializer_values_opt), symbol_terminal(token_kind::r_brace)));
+    add_production(grammar, nonterminal_kind::initializer_values_opt, symbols1(symbol_nonterminal(nonterminal_kind::initializer_values)));
+    add_production(grammar, nonterminal_kind::initializer_values_opt, symbols0());
+    add_production(grammar, nonterminal_kind::initializer_values, symbols3(symbol_nonterminal(nonterminal_kind::initializer_values), symbol_terminal(token_kind::comma), symbol_nonterminal(nonterminal_kind::expression)));
+    add_production(grammar, nonterminal_kind::initializer_values, symbols1(symbol_nonterminal(nonterminal_kind::expression)));
     return grammar;
 }

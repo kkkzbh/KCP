@@ -47,6 +47,14 @@ export enum nonterminal_kind : u8 {
     primary = 28;
     argument_list_opt = 29;
     argument_list = 30;
+    for_statement_nt = 31;
+    for_init_opt = 32;
+    for_step_opt = 33;
+    break_statement_nt = 34;
+    continue_statement_nt = 35;
+    initializer_list = 36;
+    initializer_values_opt = 37;
+    initializer_values = 38;
 }
 
 export struct grammar_symbol {
@@ -78,26 +86,31 @@ export token_rank(kind: token_kind) -> i32
     if(kind == token_kind::kw_else) { return 7; }
     if(kind == token_kind::kw_while) { return 8; }
     if(kind == token_kind::kw_return) { return 9; }
-    if(kind == token_kind::l_paren) { return 10; }
-    if(kind == token_kind::r_paren) { return 11; }
-    if(kind == token_kind::l_brace) { return 12; }
-    if(kind == token_kind::r_brace) { return 13; }
-    if(kind == token_kind::comma) { return 14; }
-    if(kind == token_kind::semicolon) { return 15; }
-    if(kind == token_kind::plus) { return 16; }
-    if(kind == token_kind::minus) { return 17; }
-    if(kind == token_kind::star) { return 18; }
-    if(kind == token_kind::slash) { return 19; }
-    if(kind == token_kind::percent) { return 20; }
-    if(kind == token_kind::equal) { return 21; }
-    if(kind == token_kind::equal_equal) { return 22; }
-    if(kind == token_kind::bang_equal) { return 23; }
-    if(kind == token_kind::less) { return 24; }
-    if(kind == token_kind::less_equal) { return 25; }
-    if(kind == token_kind::greater) { return 26; }
-    if(kind == token_kind::greater_equal) { return 27; }
-    if(kind == token_kind::amp_amp) { return 28; }
-    return 29;
+    if(kind == token_kind::kw_for) { return 10; }
+    if(kind == token_kind::kw_break) { return 11; }
+    if(kind == token_kind::kw_continue) { return 12; }
+    if(kind == token_kind::l_paren) { return 13; }
+    if(kind == token_kind::r_paren) { return 14; }
+    if(kind == token_kind::l_brace) { return 15; }
+    if(kind == token_kind::r_brace) { return 16; }
+    if(kind == token_kind::l_bracket) { return 17; }
+    if(kind == token_kind::r_bracket) { return 18; }
+    if(kind == token_kind::comma) { return 19; }
+    if(kind == token_kind::semicolon) { return 20; }
+    if(kind == token_kind::plus) { return 21; }
+    if(kind == token_kind::minus) { return 22; }
+    if(kind == token_kind::star) { return 23; }
+    if(kind == token_kind::slash) { return 24; }
+    if(kind == token_kind::percent) { return 25; }
+    if(kind == token_kind::equal) { return 26; }
+    if(kind == token_kind::equal_equal) { return 27; }
+    if(kind == token_kind::bang_equal) { return 28; }
+    if(kind == token_kind::less) { return 29; }
+    if(kind == token_kind::less_equal) { return 30; }
+    if(kind == token_kind::greater) { return 31; }
+    if(kind == token_kind::greater_equal) { return 32; }
+    if(kind == token_kind::amp_amp) { return 33; }
+    return 34;
 }
 
 export nonterminal_rank(kind: nonterminal_kind) -> i32
@@ -132,7 +145,15 @@ export nonterminal_rank(kind: nonterminal_kind) -> i32
     if(kind == nonterminal_kind::unary) { return 27; }
     if(kind == nonterminal_kind::primary) { return 28; }
     if(kind == nonterminal_kind::argument_list_opt) { return 29; }
-    return 30;
+    if(kind == nonterminal_kind::argument_list) { return 30; }
+    if(kind == nonterminal_kind::for_statement_nt) { return 31; }
+    if(kind == nonterminal_kind::for_init_opt) { return 32; }
+    if(kind == nonterminal_kind::for_step_opt) { return 33; }
+    if(kind == nonterminal_kind::break_statement_nt) { return 34; }
+    if(kind == nonterminal_kind::continue_statement_nt) { return 35; }
+    if(kind == nonterminal_kind::initializer_list) { return 36; }
+    if(kind == nonterminal_kind::initializer_values_opt) { return 37; }
+    return 38;
 }
 
 export symbol_kind_rank(kind: grammar_symbol_kind) -> i32

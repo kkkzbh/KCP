@@ -191,6 +191,9 @@ first_body_statement(parsed: parse_result const&) -> optional<stmt_id>
         .call(value) => {},
         .if_stmt(value) => {},
         .while_stmt(value) => {},
+        .for_stmt(value) => {},
+        .break_stmt(value) => {},
+        .continue_stmt(value) => {},
         .return_stmt(value) => {},
     };
     return optional<stmt_id>::none;
@@ -210,6 +213,9 @@ first_return_value(parsed: parse_result const&) -> optional<expr_id>
         .call(value) => {},
         .if_stmt(value) => {},
         .while_stmt(value) => {},
+        .for_stmt(value) => {},
+        .break_stmt(value) => {},
+        .continue_stmt(value) => {},
         .return_stmt(value) => {
             return value.value;
         },
@@ -225,6 +231,7 @@ is_binary(ast: ast_arena const&, id: expr_id, kind: token_kind) -> bool
         .unary(value) => false,
         .binary(value) => value.operator_kind == kind,
         .call(value) => false,
+        .index(value) => false,
         .grouped(value) => false,
     };
 }
@@ -237,6 +244,7 @@ binary_right(ast: ast_arena const&, id: expr_id) -> optional<expr_id>
         .unary(value) => optional<expr_id>::none,
         .binary(value) => optional<expr_id>::some(value.right),
         .call(value) => optional<expr_id>::none,
+        .index(value) => optional<expr_id>::none,
         .grouped(value) => optional<expr_id>::none,
     };
 }
@@ -254,6 +262,9 @@ first_var_decl_count(parsed: parse_result const&) -> usize
         .call(value) => 0 as usize,
         .if_stmt(value) => 0 as usize,
         .while_stmt(value) => 0 as usize,
+        .for_stmt(value) => 0 as usize,
+        .break_stmt(value) => 0 as usize,
+        .continue_stmt(value) => 0 as usize,
         .return_stmt(value) => 0 as usize,
     };
 }
@@ -281,7 +292,7 @@ main() -> i32
     let sample_source = read_source("lab/test.c");
     let sample = parse_text(sample_source.as_str());
     if(not sample.accepted) { return 6; }
-    if(sample.ast.programs[sample.root.value].functions.size() != 2) { return 7; }
+    if(sample.ast.programs[sample.root.value].functions.size() != 4) { return 7; }
 
     let features = parse_text("int add(int a, int b) { return a + b; } int main() { int x = add(1, 2); int y; y = x; add(y, 3); if (y >= 3) { y = y - 1; } else { y = 0; } while (y > 0) { y = y - 1; } return y; }");
     if(not features.accepted) { return 8; }
@@ -290,6 +301,10 @@ main() -> i32
     let declaration_list = parse_text("int main() { int a = 2, c = 0; return a + c; }");
     if(not declaration_list.accepted) { return 23; }
     if(first_var_decl_count(declaration_list) != 2 as usize) { return 24; }
+
+    let arrays = parse_text("void sort(int values[]) { for (int i = 0; i < 3; i = i + 1) { values[i] = values[i] + 1; if (values[i] < 0) { continue; } if (values[i] > 9) { break; } } } int main() { int scores[3] = {3, 1, 2}; sort(scores); return scores[0]; }");
+    if(not arrays.accepted) { return 32; }
+    if(arrays.ast.programs[arrays.root.value].functions.size() != 2) { return 33; }
 
     let precedence = parse_text("int main() { return 1 + 2 * 3; }");
     if(not precedence.accepted) { return 10; }

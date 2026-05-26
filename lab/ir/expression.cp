@@ -56,6 +56,12 @@ impl quad_lowerer {
             .call(value) => {
                 return lower_call(value.callee, value.arguments, true);
             },
+            .index(value) => {
+                let index = lower_expression(value.index);
+                let temp = next_temp();
+                emit("array_load", source_text(value.array), index.as_str(), temp.as_str());
+                return temp;
+            },
             .grouped(value) => {
                 return lower_expression(value.expression);
             },

@@ -11,6 +11,17 @@ export enum semantic_symbol_kind : u8 {
     local = 2;
 }
 
+export struct semantic_parameter_type {
+    type: semantic_type_kind;
+}
+
+impl semantic_parameter_type {
+    semantic_parameter_type()
+    {
+        return semantic_parameter_type{ .type = semantic_type_kind::error };
+    }
+}
+
 export struct symbol_id {
     value: usize;
 }
@@ -40,6 +51,7 @@ export struct semantic_symbol {
     type: semantic_type_kind;
     function: function_id;
     parameter_count: usize;
+    parameter_types: vector<semantic_parameter_type>;
 }
 
 impl semantic_symbol {
@@ -51,7 +63,8 @@ impl semantic_symbol {
             .span = source_span{},
             .type = semantic_type_kind::error,
             .function = function_id{},
-            .parameter_count = 0 as usize
+            .parameter_count = 0 as usize,
+            .parameter_types = vector<semantic_parameter_type>{}
         };
     }
 }
