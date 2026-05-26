@@ -1,3 +1,10 @@
+#include <cerrno>
+#include <cstdlib>
+#include <fcntl.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
 import std;
 
 namespace {
@@ -5,17 +12,24 @@ namespace {
 struct benchmark_case
 {
     std::string name{};
+    std::string source_name{};
     std::string input{};
     int expected_exit{};
     std::size_t iterations{};
+    bool stable_sort{};
 };
 
 struct language
 {
     std::string name{};
     std::filesystem::path compiler{};
-    std::filesystem::path runtime{};
     std::string extension{};
+};
+
+struct command_result
+{
+    int exit_code{};
+    long max_rss_kib{};
 };
 
 struct run_measurement
@@ -23,68 +37,71 @@ struct run_measurement
     std::string case_name{};
     std::string language{};
     double compile_ms{};
+    long compile_max_rss_kib{};
     double median_ms{};
     double min_ms{};
     double max_ms{};
+    long run_max_rss_kib{};
     std::filesystem::path binary{};
 };
 
-auto shell_quote(std::string_view value) -> std::string
+auto status_exit_code(int status) -> int
 {
-    auto output = std::string{ "'" };
-    for(auto character : value) {
-        if(character == '\'') {
-            output += "'\\''";
+    if(WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    if(WIFSIGNALED(status)) {
+        return 128 + WTERMSIG(status);
+    }
+    return 125;
+}
+
+auto run_process(std::vector<std::string> const& arguments, std::optional<std::string_view> input = std::nullopt, bool stable_sort = false) -> command_result
+{
+    auto argv = std::vector<char*>{};
+    argv.reserve(arguments.size() + 1uz);
+    for(auto const& argument : arguments) {
+        argv.push_back(const_cast<char*>(argument.c_str()));
+    }
+    argv.push_back(nullptr);
+
+    auto const pid = ::fork();
+    if(pid < 0) {
+        return { .exit_code = 125, .max_rss_kib = 0 };
+    }
+
+    if(pid == 0) {
+        if(auto const null_fd = ::open("/dev/null", O_WRONLY); null_fd >= 0) {
+            static_cast<void>(::dup2(null_fd, STDOUT_FILENO));
+            static_cast<void>(::dup2(null_fd, STDERR_FILENO));
+            if(null_fd > STDERR_FILENO) {
+                static_cast<void>(::close(null_fd));
+            }
+        }
+
+        if(input) {
+            auto input_text = std::string{ *input };
+            static_cast<void>(::setenv("CP_BENCH_INPUT", input_text.c_str(), 1));
+        }
+        if(stable_sort) {
+            static_cast<void>(::setenv("CP_BENCH_STABLE", "1", 1));
         } else {
-            output += character;
+            static_cast<void>(::unsetenv("CP_BENCH_STABLE"));
+        }
+
+        ::execvp(arguments.front().c_str(), argv.data());
+        ::_exit(errno == ENOENT ? 127 : 126);
+    }
+
+    auto usage = rusage{};
+    auto status = 0;
+    while(::wait4(pid, &status, 0, &usage) < 0) {
+        if(errno != EINTR) {
+            return { .exit_code = 125, .max_rss_kib = usage.ru_maxrss };
         }
     }
-    output += '\'';
-    return output;
-}
 
-auto shell_join(std::vector<std::string> const& arguments) -> std::string
-{
-    return (
-        arguments
-        | std::views::transform([](std::string const& value) { return shell_quote(value); })
-        | std::views::join_with(' ')
-        | std::ranges::to<std::string>()
-    );
-}
-
-auto exit_code(int status) -> int
-{
-    if(status < 0) {
-        return status;
-    }
-    return status / 256;
-}
-
-auto run_status(std::vector<std::string> const& arguments, std::optional<std::string_view> input = std::nullopt) -> int
-{
-    auto command = std::string{};
-    if(input) {
-        command += "CP_BENCH_INPUT=";
-        command += shell_quote(*input);
-        command += ' ';
-    }
-    command += shell_join(arguments);
-    command += " >/dev/null 2>&1";
-    return std::system(command.c_str());
-}
-
-auto java_runtime_command(std::filesystem::path const& runtime, std::filesystem::path const& classes) -> std::vector<std::string>
-{
-    return {
-        runtime.string(),
-        "-Xms256m",
-        "-Xmx256m",
-        "-XX:+UseSerialGC",
-        "-cp",
-        classes.string(),
-        "Main",
-    };
+    return { .exit_code = status_exit_code(status), .max_rss_kib = usage.ru_maxrss };
 }
 
 auto duration_ms(std::chrono::steady_clock::time_point start, std::chrono::steady_clock::time_point end) -> double
@@ -123,20 +140,6 @@ auto compile_command(language const& value, std::filesystem::path const& source,
             output.string(),
         };
     }
-    if(value.name == "java") {
-        std::filesystem::create_directories(output);
-        return {
-            value.compiler.string(),
-            "--release",
-            "21",
-            "-g:none",
-            "-encoding",
-            "UTF-8",
-            "-d",
-            output.string(),
-            source.string(),
-        };
-    }
     return {
         value.compiler.string(),
         "-C",
@@ -151,9 +154,7 @@ auto compile_command(language const& value, std::filesystem::path const& source,
 
 auto run_command(language const& value, std::filesystem::path const& binary) -> std::vector<std::string>
 {
-    if(value.name == "java") {
-        return java_runtime_command(value.runtime, binary);
-    }
+    static_cast<void>(value);
     return { binary.string() };
 }
 
@@ -181,22 +182,29 @@ auto artifact_size(std::filesystem::path const& path) -> std::uintmax_t
 
 auto measure_case(benchmark_case const& bench, language const& value, std::filesystem::path const& cases_dir, std::filesystem::path const& output_dir) -> std::optional<run_measurement>
 {
-    auto source = cases_dir / bench.name / ("case." + value.extension);
+    auto source_name = bench.source_name.empty() ? bench.name : bench.source_name;
+    auto source = cases_dir / source_name / ("case." + value.extension);
     auto binary = output_dir / (bench.name + "-" + value.name);
     auto compile = compile_command(value, source, binary);
 
     auto compile_start = std::chrono::steady_clock::now();
-    auto compile_status = run_status(compile);
+    auto compile_result = run_process(compile);
     auto compile_end = std::chrono::steady_clock::now();
-    if(compile_status != 0) {
-        std::cerr << "failed to compile " << bench.name << " for " << value.name << '\n';
+    if(compile_result.exit_code != 0) {
+        std::cerr << "failed to compile " << bench.name << " for " << value.name
+                  << " with exit " << compile_result.exit_code
+                  << " and max_rss_kib " << compile_result.max_rss_kib << '\n';
         return std::nullopt;
     }
 
+    auto run_peak_rss_kib = 0L;
     for(auto warmup = 0; warmup < 2; ++warmup) {
-        auto status = exit_code(run_status(run_command(value, binary), bench.input));
-        if(status != bench.expected_exit) {
-            std::cerr << bench.name << '/' << value.name << " returned " << status << ", expected " << bench.expected_exit << '\n';
+        auto result = run_process(run_command(value, binary), bench.input, bench.stable_sort);
+        run_peak_rss_kib = std::max(run_peak_rss_kib, result.max_rss_kib);
+        if(result.exit_code != bench.expected_exit) {
+            std::cerr << bench.name << '/' << value.name << " returned " << result.exit_code
+                      << ", expected " << bench.expected_exit
+                      << ", max_rss_kib " << result.max_rss_kib << '\n';
             return std::nullopt;
         }
     }
@@ -205,10 +213,13 @@ auto measure_case(benchmark_case const& bench, language const& value, std::files
     samples.reserve(bench.iterations);
     for(auto iteration = 0uz; iteration < bench.iterations; ++iteration) {
         auto start = std::chrono::steady_clock::now();
-        auto status = exit_code(run_status(run_command(value, binary), bench.input));
+        auto result = run_process(run_command(value, binary), bench.input, bench.stable_sort);
         auto end = std::chrono::steady_clock::now();
-        if(status != bench.expected_exit) {
-            std::cerr << bench.name << '/' << value.name << " returned " << status << ", expected " << bench.expected_exit << '\n';
+        run_peak_rss_kib = std::max(run_peak_rss_kib, result.max_rss_kib);
+        if(result.exit_code != bench.expected_exit) {
+            std::cerr << bench.name << '/' << value.name << " returned " << result.exit_code
+                      << ", expected " << bench.expected_exit
+                      << ", max_rss_kib " << result.max_rss_kib << '\n';
             return std::nullopt;
         }
         samples.push_back(duration_ms(start, end));
@@ -219,9 +230,11 @@ auto measure_case(benchmark_case const& bench, language const& value, std::files
         .case_name = bench.name,
         .language = value.name,
         .compile_ms = duration_ms(compile_start, compile_end),
+        .compile_max_rss_kib = compile_result.max_rss_kib,
         .median_ms = samples[samples.size() / 2uz],
         .min_ms = samples.front(),
         .max_ms = samples.back(),
+        .run_max_rss_kib = run_peak_rss_kib,
         .binary = binary,
     };
 }
@@ -234,17 +247,19 @@ auto print_jsonl(run_measurement const& value, benchmark_case const& bench) -> v
         << "\",\"input\":" << bench.input
         << ",\"iterations\":" << bench.iterations
         << ",\"compile_ms\":" << std::fixed << std::setprecision(3) << value.compile_ms
+        << ",\"compile_max_rss_kib\":" << value.compile_max_rss_kib
         << ",\"run_median_ms\":" << value.median_ms
         << ",\"run_min_ms\":" << value.min_ms
         << ",\"run_max_ms\":" << value.max_ms
+        << ",\"run_max_rss_kib\":" << value.run_max_rss_kib
         << ",\"binary_bytes\":" << artifact_size(value.binary)
         << "}\n";
 }
 
 auto print_summary(std::vector<run_measurement> const& measurements) -> void
 {
-    std::cout << "\ncase                 language   compile_ms   median_ms   vs_cpp\n";
-    std::cout << "---------------------------------------------------------------\n";
+    std::cout << "\ncase                    language   compile_ms   median_ms   run_rss_mb   vs_cpp\n";
+    std::cout << "-----------------------------------------------------------------------------\n";
 
     auto cpp_medians = std::map<std::string, double>{};
     for(auto const& value : measurements) {
@@ -259,10 +274,11 @@ auto print_summary(std::vector<run_measurement> const& measurements) -> void
             ratio = value.median_ms / iter->second;
         }
         std::cout
-            << std::left << std::setw(20) << value.case_name
+            << std::left << std::setw(24) << value.case_name
             << std::setw(11) << value.language
             << std::right << std::setw(11) << std::fixed << std::setprecision(3) << value.compile_ms
             << std::setw(12) << value.median_ms
+            << std::setw(13) << value.run_max_rss_kib / 1024.0
             << std::setw(9) << ratio
             << '\n';
     }
@@ -272,22 +288,19 @@ auto print_summary(std::vector<run_measurement> const& measurements) -> void
 
 auto main(int argc, char** argv) -> int
 {
-    if(argc != 7) {
-        std::cerr << "usage: cp_benchmark_runner <cp> <c++ compiler> <rustc> <javac> <java> <cases-dir>\n";
+    if(argc < 5) {
+        std::cerr << "usage: cp_benchmark_runner <cp> <c++ compiler> <rustc> <cases-dir> [case...]\n";
         return 2;
     }
 
     auto languages = std::vector<language> {
-        { .name = "c++", .compiler = argv[2], .runtime = {}, .extension = "cpp" },
-        { .name = "cp", .compiler = argv[1], .runtime = {}, .extension = "cp" },
-        { .name = "rust", .compiler = argv[3], .runtime = {}, .extension = "rs" },
-        { .name = "java", .compiler = argv[4], .runtime = argv[5], .extension = "java" },
+        { .name = "c++", .compiler = argv[2], .extension = "cpp" },
+        { .name = "cp", .compiler = argv[1], .extension = "cp" },
+        { .name = "rust", .compiler = argv[3], .extension = "rs" },
     };
     if(not require_tool("cp compiler", languages[1uz].compiler)
         or not require_tool("C++ compiler", languages[0uz].compiler)
-        or not require_tool("rustc", languages[2uz].compiler)
-        or not require_tool("javac", languages[3uz].compiler)
-        or not require_tool("java", languages[3uz].runtime)) {
+        or not require_tool("rustc", languages[2uz].compiler)) {
         return 2;
     }
 
@@ -300,13 +313,51 @@ auto main(int argc, char** argv) -> int
         { .name = "allocation_churn", .input = "100000", .expected_exit = 243, .iterations = 10 },
         { .name = "std_vector_string", .input = "500000", .expected_exit = 45, .iterations = 10 },
         { .name = "std_map_set", .input = "50000", .expected_exit = 55, .iterations = 10 },
+        { .name = "std_sort_int_small", .source_name = "std_sort", .input = "1024", .expected_exit = 19, .iterations = 10 },
+        { .name = "std_sort_int_medium", .source_name = "std_sort", .input = "65536", .expected_exit = 230, .iterations = 7 },
+        { .name = "std_sort_int_large", .source_name = "std_sort", .input = "1000000", .expected_exit = 194, .iterations = 5 },
+        { .name = "std_stable_sort_int_small", .source_name = "std_sort", .input = "1024", .expected_exit = 19, .iterations = 10, .stable_sort = true },
+        { .name = "std_stable_sort_int_medium", .source_name = "std_sort", .input = "65536", .expected_exit = 230, .iterations = 7, .stable_sort = true },
+        { .name = "std_stable_sort_int_large", .source_name = "std_sort", .input = "1000000", .expected_exit = 194, .iterations = 5, .stable_sort = true },
+        { .name = "std_sort_record_small", .source_name = "std_sort_record", .input = "1024", .expected_exit = 161, .iterations = 10 },
+        { .name = "std_sort_record_medium", .source_name = "std_sort_record", .input = "32768", .expected_exit = 45, .iterations = 7 },
+        { .name = "std_sort_record_large", .source_name = "std_sort_record", .input = "300000", .expected_exit = 32, .iterations = 5 },
+        { .name = "std_stable_sort_record_small", .source_name = "std_sort_record", .input = "1024", .expected_exit = 161, .iterations = 10, .stable_sort = true },
+        { .name = "std_stable_sort_record_medium", .source_name = "std_sort_record", .input = "32768", .expected_exit = 45, .iterations = 7, .stable_sort = true },
+        { .name = "std_stable_sort_record_large", .source_name = "std_sort_record", .input = "300000", .expected_exit = 32, .iterations = 5, .stable_sort = true },
+        { .name = "std_sort_string_view_small", .source_name = "std_sort_string", .input = "512", .expected_exit = 53, .iterations = 10 },
+        { .name = "std_sort_string_view_medium", .source_name = "std_sort_string", .input = "8192", .expected_exit = 110, .iterations = 7 },
+        { .name = "std_sort_string_view_large", .source_name = "std_sort_string", .input = "50000", .expected_exit = 117, .iterations = 5 },
+        { .name = "std_stable_sort_string_view_small", .source_name = "std_sort_string", .input = "512", .expected_exit = 53, .iterations = 10, .stable_sort = true },
+        { .name = "std_stable_sort_string_view_medium", .source_name = "std_sort_string", .input = "8192", .expected_exit = 110, .iterations = 7, .stable_sort = true },
+        { .name = "std_stable_sort_string_view_large", .source_name = "std_sort_string", .input = "50000", .expected_exit = 117, .iterations = 5, .stable_sort = true },
+        { .name = "std_sort_string_small", .source_name = "std_sort_owned_string", .input = "512", .expected_exit = 53, .iterations = 10 },
+        { .name = "std_sort_string_medium", .source_name = "std_sort_owned_string", .input = "8192", .expected_exit = 110, .iterations = 7 },
+        { .name = "std_sort_string_large", .source_name = "std_sort_owned_string", .input = "50000", .expected_exit = 117, .iterations = 5 },
+        { .name = "std_stable_sort_string_small", .source_name = "std_sort_owned_string", .input = "512", .expected_exit = 53, .iterations = 10, .stable_sort = true },
+        { .name = "std_stable_sort_string_medium", .source_name = "std_sort_owned_string", .input = "8192", .expected_exit = 110, .iterations = 7, .stable_sort = true },
+        { .name = "std_stable_sort_string_large", .source_name = "std_sort_owned_string", .input = "50000", .expected_exit = 117, .iterations = 5, .stable_sort = true },
+        { .name = "std_sort_unique_string_small", .source_name = "std_sort_unique_string", .input = "512", .expected_exit = 41, .iterations = 10 },
+        { .name = "std_sort_unique_string_medium", .source_name = "std_sort_unique_string", .input = "8192", .expected_exit = 121, .iterations = 7 },
+        { .name = "std_sort_unique_string_large", .source_name = "std_sort_unique_string", .input = "50000", .expected_exit = 9, .iterations = 5 },
+        { .name = "std_stable_sort_unique_string_small", .source_name = "std_sort_unique_string", .input = "512", .expected_exit = 41, .iterations = 10, .stable_sort = true },
+        { .name = "std_stable_sort_unique_string_medium", .source_name = "std_sort_unique_string", .input = "8192", .expected_exit = 121, .iterations = 7, .stable_sort = true },
+        { .name = "std_stable_sort_unique_string_large", .source_name = "std_sort_unique_string", .input = "50000", .expected_exit = 9, .iterations = 5, .stable_sort = true },
     };
-    auto cases_dir = std::filesystem::path{ argv[6] };
+    auto requested_cases = std::set<std::string>{};
+    for(auto index = 5; index < argc; ++index) {
+        requested_cases.emplace(argv[index]);
+    }
+
+    auto cases_dir = std::filesystem::path{ argv[4] };
     auto output_dir = std::filesystem::temp_directory_path() / std::format("cp-benchmark-{}", std::chrono::steady_clock::now().time_since_epoch().count());
     std::filesystem::create_directories(output_dir);
 
     auto measurements = std::vector<run_measurement>{};
     for(auto const& bench : cases) {
+        if(not requested_cases.empty() and not requested_cases.contains(bench.name)) {
+            continue;
+        }
         for(auto const& value : languages) {
             auto measurement = measure_case(bench, value, cases_dir, output_dir);
             if(not measurement) {
@@ -316,6 +367,11 @@ auto main(int argc, char** argv) -> int
             print_jsonl(*measurement, bench);
             measurements.push_back(*measurement);
         }
+    }
+    if(measurements.empty()) {
+        std::cerr << "no benchmark cases selected\n";
+        std::filesystem::remove_all(output_dir);
+        return 2;
     }
 
     print_summary(measurements);

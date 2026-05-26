@@ -1,0 +1,93 @@
+use std::env;
+
+fn repeat_count(count: i32) -> i32 {
+    if count <= 1024 {
+        return 256;
+    }
+    if count <= 8192 {
+        return 24;
+    }
+    4
+}
+
+fn stable_requested() -> bool {
+    env::var("CP_BENCH_STABLE").is_ok()
+}
+
+fn word_at(value: i32) -> String {
+    let mut result = String::from("key_");
+    let mut number = value;
+    let mut index = 0;
+    while index < 6 {
+        result.push((b'a' + (number % 26) as u8) as char);
+        number /= 26;
+        index += 1;
+    }
+    result
+}
+
+fn letter_score(ch: u8) -> i64 {
+    if ch == b'_' {
+        return 27;
+    }
+    (ch - b'a' + 1) as i64
+}
+
+fn word_score(value: &str) -> i64 {
+    let mut total = 0i64;
+    for ch in value.bytes() {
+        total = (total * 31 + letter_score(ch)) % 1_000_000_007;
+    }
+    total
+}
+
+fn checked_checksum(values: &[String]) -> i64 {
+    let mut total = 0i64;
+    let mut index = 0usize;
+    while index < values.len() {
+        if index > 0 && values[index] < values[index - 1] {
+            return -1;
+        }
+        total = (total + word_score(&values[index]) * (index % 251 + 1) as i64) % 1_000_000_007;
+        index += 1;
+    }
+    total
+}
+
+fn main() {
+    let count = env::var("CP_BENCH_INPUT")
+        .ok()
+        .and_then(|value| value.parse::<i32>().ok())
+        .unwrap_or(1);
+    if count <= 0 {
+        std::process::exit(1);
+    }
+
+    let mut original = Vec::<String>::with_capacity(count as usize);
+    let mut index = 0i32;
+    while index < count {
+        original.push(word_at(((index as i64 * 48271 + count as i64 * 97) % 1_000_003) as i32));
+        index += 1;
+    }
+
+    let mut total = 0i64;
+    let mut round = 0i32;
+    let repeats = repeat_count(count);
+    let stable = stable_requested();
+    while round < repeats {
+        let mut values = original.clone();
+        if stable {
+            values.sort();
+        } else {
+            values.sort_unstable();
+        }
+        let checksum = checked_checksum(&values);
+        if checksum < 0 {
+            std::process::exit(2);
+        }
+        total = (total + checksum) % 1_000_000_007;
+        round += 1;
+    }
+
+    std::process::exit((total % 251) as i32);
+}

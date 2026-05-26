@@ -206,42 +206,19 @@ sample_has_duplicates<T: mutable_object, Compare: strict_weak_order<T>>(values: 
         or equivalent_values(values, f, last - 1, compare);
 }
 
-sample_median_index<T: mutable_object, Compare: strict_weak_order<T>>(values: span<T>, first: usize, last: usize, compare: Compare) -> usize
+recursive_pivot_sample<T: mutable_object, Compare: strict_weak_order<T>>(values: span<T>, first: usize, middle: usize, last: usize, count: usize, compare: Compare) -> usize
 {
-    let count = last - first;
-    let step = count / 16;
-    let samples: [usize; 15] = [
-        first + step,
-        first + step * 2,
-        first + step * 3,
-        first + step * 4,
-        first + step * 5,
-        first + step * 6,
-        first + step * 7,
-        first + step * 8,
-        first + step * 9,
-        first + step * 10,
-        first + step * 11,
-        first + step * 12,
-        first + step * 13,
-        first + step * 14,
-        first + step * 15
-    ];
-
-    let data = values.data();
-    let index = 1 as usize;
-    while(index < 15 as usize) {
-        let item = samples[index];
-        let cursor = index;
-        while(cursor > 0 as usize and compare(*(data + item), *(data + samples[cursor - 1]))) {
-            samples[cursor] = samples[cursor - 1];
-            cursor -= 1;
-        }
-        samples[cursor] = item;
-        index += 1;
+    let left = first;
+    let center = middle;
+    let right = last;
+    if(count * 8 >= 64) {
+        let step = count / 8;
+        left = recursive_pivot_sample(values, left, left + step * 4, left + step * 7, step, compare);
+        center = recursive_pivot_sample(values, center, center + step * 4, center + step * 7, step, compare);
+        right = recursive_pivot_sample(values, right, right + step * 4, right + step * 7, step, compare);
     }
 
-    return samples[7 as usize];
+    return median_index(values, left, center, right, compare);
 }
 
 choose_unstable_pivot<T: mutable_object, Compare: strict_weak_order<T>>(values: span<T>, first: usize, last: usize, compare: Compare) -> usize
@@ -253,8 +230,8 @@ choose_unstable_pivot<T: mutable_object, Compare: strict_weak_order<T>>(values: 
     }
 
     let step = count / 8;
-    if(count >= 16384) {
-        return sample_median_index(values, first, last, compare);
+    if(count >= 524288) {
+        return recursive_pivot_sample(values, first, first + step * 4, first + step * 7, step, compare);
     }
 
     let left = median_index(values, first, first + step, first + step * 2, compare);
@@ -407,80 +384,29 @@ unstable_sort_range<T: mutable_object, Compare: strict_weak_order<T>>(values: sp
     unstable_quick_sort(values, 0 as usize, count, floor_log2(count) * 2, compare);
 }
 
-sample_block_has_duplicates<T: mutable_object, Compare: strict_weak_order<T>>(values: span<T>, first: usize, count: usize, compare: Compare) -> bool
+sample_has_long_local_runs<T: mutable_object, Compare: strict_weak_order<T>>(values: span<T>, compare: Compare) -> bool
 {
-    let left = 0 as usize;
-    while(left < count) {
-        let right = left + 1;
-        while(right < count) {
-            if(equivalent_values(values, first + left, first + right, compare)) {
-                return true;
+    let count = values.size();
+    let block_count = min_usize(16 as usize, count);
+    let block_len = min_usize(64 as usize, count);
+    let ascending: usize = 0;
+    let total: usize = 0;
+    let block = 0 as usize;
+    while(block < block_count) {
+        let start = (block * count) / block_count;
+        let stop = min_usize(start + block_len, count);
+        let index = start + 1;
+        while(index < stop) {
+            if(not compare(values[index], values[index - 1])) {
+                ascending += 1;
             }
-            right += 1;
+            total += 1;
+            index += 1;
         }
-        left += 1;
+        block += 1;
     }
 
-    return false;
-}
-
-dense_sample_has_duplicates<T: mutable_object, Compare: strict_weak_order<T>>(values: span<T>, compare: Compare) -> bool
-{
-    let count = values.size();
-    let sample = min_usize(count, 40 as usize);
-    if(sample_block_has_duplicates(values, 0 as usize, sample, compare)) {
-        return true;
-    }
-
-    if(count >= sample * 2) {
-        let middle = count / 2 - sample / 2;
-        if(sample_block_has_duplicates(values, middle, sample, compare)) {
-            return true;
-        }
-    }
-
-    if(count >= sample * 3) {
-        return sample_block_has_duplicates(values, count - sample, sample, compare);
-    }
-
-    return false;
-}
-
-hashed_sample_has_duplicates<T: mutable_object, Compare: strict_weak_order<T>>(values: span<T>, compare: Compare) -> bool
-{
-    let count = values.size();
-    let sample = min_usize(count, 192 as usize);
-
-    let left = 0 as usize;
-    while(left < sample) {
-        let right = left + 1;
-        let left_pos = (count / 3 + left * 1103 + left * left * 17) % count;
-        while(right < sample) {
-            let right_pos = (count / 3 + right * 1103 + right * right * 17) % count;
-            if(left_pos != right_pos and equivalent_values(values, left_pos, right_pos, compare)) {
-                return true;
-            }
-            right += 1;
-        }
-        left += 1;
-    }
-
-    return false;
-}
-
-sample_indicates_duplicate_keys<T: mutable_object, Compare: strict_weak_order<T>>(values: span<T>, compare: Compare) -> bool
-{
-    let count = values.size();
-    if(sample_has_duplicates(values, 0 as usize, count, compare)) {
-        return true;
-    }
-    if(dense_sample_has_duplicates(values, compare)) {
-        return true;
-    }
-    if(count >= 131072 and hashed_sample_has_duplicates(values, compare)) {
-        return true;
-    }
-    return false;
+    return total > 0 as usize and ascending * 4 >= total * 3;
 }
 
 count_run_and_make_ascending<T: mutable_object, Compare: strict_weak_order<T>>(values: span<T>, first: usize, last: usize, compare: Compare) -> usize
@@ -651,7 +577,17 @@ power_sort_range<T: mutable_object, Compare: strict_weak_order<T>>(values: span<
 
 sort_span<T: mutable_object, Compare: strict_weak_order<T> = less<T>>(values: span<T>, compare: Compare = Compare{}) -> void
 {
-    unstable_sort_range(values, compare);
+    let count = values.size();
+    if(count < 2 or finish_if_monotonic(values, compare)) {
+        return;
+    }
+
+    if(count <= 1024 or sample_has_long_local_runs(values, compare)) {
+        power_sort_range(values, compare);
+        return;
+    }
+
+    unstable_quick_sort(values, 0 as usize, count, floor_log2(count) * 2, compare);
 }
 
 stable_sort_span<T: mutable_object, Compare: strict_weak_order<T> = less<T>>(values: span<T>, compare: Compare = Compare{}) -> void
