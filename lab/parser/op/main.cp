@@ -483,9 +483,8 @@ parse_expression(text: str) -> parse_result
         // 接受条件必须在查矩阵前判断。
         // 当栈已经是 EOF E，并且当前输入也是 EOF，表示整个表达式已经规约完成。
         if(lookahead == op_terminal::eof and accept_stack(stack)) {
-            result.accepted = true;
             println("{}: accept", result.steps + 1);
-            return result;
+            return parse_result{ .accepted = true, .steps = result.steps };
         }
 
         // 算符优先矩阵只看终结符，不看栈顶是否是 E。

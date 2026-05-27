@@ -9,48 +9,23 @@ import parser.trace;
 import parser.table;
 
 export struct parser_value {
-    token: token;
-    span: source_span;
-    program: program_id;
-    functions: vector<function_id>;
-    function: function_id;
-    return_type: return_type_kind;
-    parameters: vector<parameter_syntax>;
-    parameter: parameter_syntax;
-    statements: vector<stmt_id>;
-    statement: stmt_id;
-    optional_statement: optional<stmt_id>;
-    declarations: vector<var_decl_item>;
-    declaration: var_decl_item;
-    expression: expr_id;
-    arguments: vector<expr_id>;
-    else_branch: optional<stmt_id>;
-    return_value: optional<expr_id>;
-}
-
-impl parser_value {
-    parser_value()
-    {
-        return parser_value{
-            .token = token{},
-            .span = source_span{},
-            .program = program_id{},
-            .functions = vector<function_id>{},
-            .function = function_id{},
-            .return_type = return_type_kind::int_type,
-            .parameters = vector<parameter_syntax>{},
-            .parameter = parameter_syntax{},
-            .statements = vector<stmt_id>{},
-            .statement = stmt_id{},
-            .optional_statement = optional<stmt_id>::none,
-            .declarations = vector<var_decl_item>{},
-            .declaration = var_decl_item{},
-            .expression = expr_id{},
-            .arguments = vector<expr_id>{},
-            .else_branch = optional<stmt_id>::none,
-            .return_value = optional<expr_id>::none
-        };
-    }
+    token: token = token{};
+    span: source_span = source_span{};
+    program: program_id = program_id{};
+    functions: vector<function_id> = vector<function_id>{};
+    function: function_id = function_id{};
+    return_type: return_type_kind = return_type_kind::int_type;
+    parameters: vector<parameter_syntax> = vector<parameter_syntax>{};
+    parameter: parameter_syntax = parameter_syntax{};
+    statements: vector<stmt_id> = vector<stmt_id>{};
+    statement: stmt_id = stmt_id{};
+    optional_statement: optional<stmt_id> = optional<stmt_id>::none;
+    declarations: vector<var_decl_item> = vector<var_decl_item>{};
+    declaration: var_decl_item = var_decl_item{};
+    expression: expr_id = expr_id{};
+    arguments: vector<expr_id> = vector<expr_id>{};
+    else_branch: optional<stmt_id> = optional<stmt_id>::none;
+    return_value: optional<expr_id> = optional<expr_id>::none;
 }
 
 export struct parser_state_result {
@@ -170,133 +145,87 @@ rhs_return_value(values: vector<parser_value> const&, index: usize) -> optional<
 
 value_with_token(item: token) -> parser_value
 {
-    let result = parser_value{};
-    result.token = item;
-    result.span = item.span;
-    return result;
+    return parser_value{ .token = item, .span = item.span };
 }
 
 value_with_program(span: source_span, id: program_id) -> parser_value
 {
-    let result = parser_value{};
-    result.span = span;
-    result.program = id;
-    return result;
+    return parser_value{ .span = span, .program = id };
 }
 
 value_with_functions(functions: vector<function_id>) -> parser_value
 {
-    let result = parser_value{};
-    result.functions = functions;
-    return result;
+    return parser_value{ .functions = functions };
 }
 
 value_with_function(span: source_span, id: function_id) -> parser_value
 {
-    let result = parser_value{};
-    result.span = span;
-    result.function = id;
-    return result;
+    return parser_value{ .span = span, .function = id };
 }
 
 value_with_return_type(span: source_span, kind: return_type_kind) -> parser_value
 {
-    let result = parser_value{};
-    result.span = span;
-    result.return_type = kind;
-    return result;
+    return parser_value{ .span = span, .return_type = kind };
 }
 
 value_with_parameters(parameters: vector<parameter_syntax>) -> parser_value
 {
-    let result = parser_value{};
-    result.parameters = parameters;
-    return result;
+    return parser_value{ .parameters = parameters };
 }
 
 value_with_parameter(span: source_span, parameter: parameter_syntax) -> parser_value
 {
-    let result = parser_value{};
-    result.span = span;
-    result.parameter = parameter;
-    return result;
+    return parser_value{ .span = span, .parameter = parameter };
 }
 
 value_with_statements(statements: vector<stmt_id>) -> parser_value
 {
-    let result = parser_value{};
-    result.statements = statements;
-    return result;
+    return parser_value{ .statements = statements };
 }
 
 value_with_statement(span: source_span, id: stmt_id) -> parser_value
 {
-    let result = parser_value{};
-    result.span = span;
-    result.statement = id;
-    return result;
+    return parser_value{ .span = span, .statement = id };
 }
 
 value_with_optional_statement(span: source_span, id: optional<stmt_id>) -> parser_value
 {
-    let result = parser_value{};
-    result.span = span;
-    result.optional_statement = id;
-    return result;
+    return parser_value{ .span = span, .optional_statement = id };
 }
 
 value_with_declarations(declarations: vector<var_decl_item>) -> parser_value
 {
-    let result = parser_value{};
-    result.declarations = declarations;
-    return result;
+    return parser_value{ .declarations = declarations };
 }
 
 value_with_declaration(span: source_span, declaration: var_decl_item) -> parser_value
 {
-    let result = parser_value{};
-    result.span = span;
-    result.declaration = declaration;
-    return result;
+    return parser_value{ .span = span, .declaration = declaration };
 }
 
 value_with_expression(span: source_span, id: expr_id) -> parser_value
 {
-    let result = parser_value{};
-    result.span = span;
-    result.expression = id;
-    return result;
+    return parser_value{ .span = span, .expression = id };
 }
 
 value_with_arguments(arguments: vector<expr_id>) -> parser_value
 {
-    let result = parser_value{};
-    result.arguments = arguments;
-    return result;
+    return parser_value{ .arguments = arguments };
 }
 
 value_with_arguments_span(span: source_span, arguments: vector<expr_id>) -> parser_value
 {
-    let result = parser_value{};
-    result.span = span;
-    result.arguments = arguments;
-    return result;
+    return parser_value{ .span = span, .arguments = arguments };
 }
 
 value_with_else_branch(span: source_span, branch: optional<stmt_id>) -> parser_value
 {
-    let result = parser_value{};
-    result.span = span;
-    result.else_branch = branch;
-    return result;
+    return parser_value{ .span = span, .else_branch = branch };
 }
 
 value_with_return_value(span: source_span, value: optional<expr_id>) -> parser_value
 {
-    let result = parser_value{};
-    result.span = span;
-    result.return_value = value;
-    return result;
+    return parser_value{ .span = span, .return_value = value };
 }
 
 impl parser_state {
