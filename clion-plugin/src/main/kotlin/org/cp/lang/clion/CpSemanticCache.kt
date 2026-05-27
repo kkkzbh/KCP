@@ -55,25 +55,28 @@ internal class CpSemanticCache private constructor(
     private val entries = ConcurrentHashMap<String, CpCachedInspection>()
     private val inFlight = Collections.newSetFromMap(ConcurrentHashMap<CpSemanticCacheKey, Boolean>())
 
-    fun current(file: PsiFile): CpCachedInspection? {
-        val path = file.cpSemanticPath() ?: return null
-        val cached = entries[path] ?: return null
-        return cached.takeIf { it.isCurrentFor(file) }
-    }
-
-    fun latest(file: PsiFile): CpCachedInspection? {
-        val path = file.cpSemanticPath() ?: return null
-        return entries[path]
-    }
-
-    fun presentation(file: PsiFile): CpInspectionResult? {
-        val path = file.cpSemanticPath() ?: return null
-        val cached = entries[path] ?: return null
-        if (cached.isCurrentFor(file)) {
-            return cached.result
+    fun current(file: PsiFile): CpCachedInspection? =
+        readAction {
+            val path = file.cpSemanticPath() ?: return@readAction null
+            val cached = entries[path] ?: return@readAction null
+            cached.takeIf { it.isCurrentFor(file) }
         }
-        return cached.projectedPresentationFor(file)
-    }
+
+    fun latest(file: PsiFile): CpCachedInspection? =
+        readAction {
+            val path = file.cpSemanticPath() ?: return@readAction null
+            entries[path]
+        }
+
+    fun presentation(file: PsiFile): CpInspectionResult? =
+        readAction {
+            val path = file.cpSemanticPath() ?: return@readAction null
+            val cached = entries[path] ?: return@readAction null
+            if (cached.isCurrentFor(file)) {
+                return@readAction cached.result
+            }
+            cached.projectedPresentationFor(file)
+        }
 
     fun store(request: CpInspectionRequest, result: CpInspectionResult, modificationCount: Long): CpSemanticStoreUpdate {
         CpDiagnosticsTrace.info("semantic-store:${request.activeFile}:${result.diagnosticSummary()}") {
@@ -226,6 +229,14 @@ private data class CpActiveTextSignature(
 
 internal fun cpModificationCount(project: Project): Long =
     PsiModificationTracker.getInstance(project).modificationCount
+
+private fun <T> readAction(block: () -> T): T {
+    val application = ApplicationManager.getApplication()
+    if (application.isReadAccessAllowed) {
+        return block()
+    }
+    return application.runReadAction<T>(block)
+}
 
 private fun PsiFile.cpSemanticPath(): String? =
     virtualFile?.path?.let(::cpNormalizePath)

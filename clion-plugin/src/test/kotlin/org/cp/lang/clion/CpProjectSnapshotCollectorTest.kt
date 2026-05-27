@@ -1,9 +1,12 @@
 package org.cp.lang.clion
 
 import com.intellij.lang.LanguageParserDefinitions
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import java.util.concurrent.Callable
+import java.util.concurrent.TimeUnit
 
 class CpProjectSnapshotCollectorTest : BasePlatformTestCase() {
     private val parserDefinition = CpParserDefinition()
@@ -135,6 +138,34 @@ class CpProjectSnapshotCollectorTest : BasePlatformTestCase() {
         )
 
         assertNotNull(cache.current(active))
+    }
+
+    fun testSemanticCacheCurrentCanRunFromBackgroundThreadWithoutCallerReadAction() {
+        val active = myFixture.configureByText(
+            CpFileType.INSTANCE,
+            """
+            main() -> i32
+            {
+                return 1;
+            }
+            """.trimIndent(),
+        )
+        val activePath = active.virtualFile.path
+        val cache = CpSemanticCache.get(project)
+        cache.store(
+            CpInspectionRequest(
+                activeFile = activePath,
+                files = listOf(CpInspectionFile(activePath, active.text)),
+            ),
+            CpExternalAnnotator.emptyInspectionResult(),
+            cpModificationCount(project),
+        )
+
+        val cached = ApplicationManager.getApplication()
+            .executeOnPooledThread(Callable { cache.current(active) })
+            .get(5, TimeUnit.SECONDS)
+
+        assertNotNull(cached)
     }
 
     fun testSemanticCacheCurrentInvalidatesWhenDependencyDocumentChanges() {
