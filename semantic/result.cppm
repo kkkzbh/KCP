@@ -433,6 +433,11 @@ export struct semantic_result
         return lookup_result_entry(expression_operators, context, unit, id);
     }
 
+    auto first_argument_ufcs_call(std::size_t context, std::size_t unit, expr_id id) const -> bool
+    {
+        return first_argument_ufcs_calls.contains(semantic_node_key{ context, unit, id });
+    }
+
     auto signature_of(function_id id) const -> function_signature_id
     {
         return signature_of(0uz, id);
@@ -794,6 +799,7 @@ export struct semantic_result
     std::map<semantic_node_key, semantic_type_id> expression_types{};
     std::map<semantic_node_key, symbol_id> expression_symbols{};
     std::map<semantic_node_key, symbol_id> expression_operators{};
+    std::set<semantic_node_key> first_argument_ufcs_calls{};
     std::map<semantic_node_key, function_signature_id> function_signatures{};
     std::map<semantic_node_key, std::vector<bool>> function_parameter_defaults{};
     std::map<semantic_node_key, symbol_id> statement_bindings{};

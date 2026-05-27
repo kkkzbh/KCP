@@ -11,7 +11,8 @@
 - `std.memory`: 连续内存基础类型，重导出 `std.memory.raw_buffer`、`std.memory.span`。
 - `std.collections`: 集合类型，重导出 `std.collections.vector`、`std.collections.map`、`std.collections.set`。
 - `std.text`: 文本类型，重导出 `std.text.str`、`std.text.string`。
-- `std.ranges`: ranges 聚合入口，重导出 `std.ranges.*` 的公共范围对象。
+- `std.ranges`: ranges 聚合入口，重导出 `std.ranges.*` 的公共 iterator source、adapter 和 terminal。
+- `std.meta`: 编译期类型查询和 callable concept，供泛型标准库提取类型能力。
 - `std.compare`: 比较协议和默认 order object，定义 `partial_ordering`、`weak_ordering`、`strong_ordering`、`mutable_object`、`ordering<T>`、`equality_comparable`、`three_way_comparable`、`asc<T>`、`desc<T>`。
 - `std.algorithm`: 泛型算法聚合入口，第一版重导出 `std.algorithm.sort`。
 - `std.io`: 第一版格式化输出，提供 `format` / `format_to` / `print` / `println` / `eprint` / `eprintln`。
@@ -32,7 +33,11 @@
 - `std.text.str`: 定义 compiler-recognized `str` 的 `size` / `data` 方法、`char` 迭代器、`iterable` 实现和按显式长度比较的字典序 operator。
 - `std.text.detail.string_storage`: 定义 string 专用存储壳，封装 trailing `'\0'` 所需的物理容量。
 - `std.text.string`: 定义拥有字符存储的 `string`，维护文本长度，并可通过 `as_str()` 借出 `str`。
-- `std.ranges.iota`: 定义可被范围 `for` 消费的泛型半开范围 `iota(begin, end)`，要求元素类型满足 `equality_comparable<T>` 和 `incrementable`。
+- `std.meta`: 定义 `read_type`、`remove_reference`、`pointee`、`tuple_element`、`call_result` 类型查询，以及编译器识别的 `callable<Args...>` concept。
+- `std.ranges.iota`: 定义可被范围 `for` 和 ranges adapter 消费的泛型半开 iterator `iota(begin, end)`，要求元素类型满足 `equality_comparable<T>` 和 `incrementable`。
+- `std.ranges.sources`: 定义 `empty<T>()`、`single(value)`、无限 `repeat(value)`、`all(ref source)`。
+- `std.ranges.adapters`: 定义 lazy adapter：`filter`、`transform`、`take`、`drop`、`enumerate`、`zip`、`concat`。
+- `std.ranges.terminals`: 定义消费 range 的 `count`、`fold`、`any`、`all_of`、`find`。
 - `std.compare`: `partial_ordering`、`weak_ordering`、`strong_ordering` 表达三路比较结果；`ordering<T>` 要求 order object 可用 `order(left, right)` 形式调用并返回 `weak_ordering`；`equality_comparable<Rhs = this>` 要求 `==` 返回 `bool`；`three_way_comparable<Rhs = this, Category = weak_ordering>` 要求 `<=>` 返回指定比较分类；`incrementable` 要求前置 `++` 返回 `this&`；`asc<T>` 基于 `<=>` 升序，`desc<T>` 基于 `asc<T>` 反向。`partial_ordering` 不满足 `sort` / `map` / `set` 的默认有序要求。
 - `std.algorithm.sort`: `sort<T: mutable_object, Order: ordering<T> = asc<T>>(values: span<T>, order: Order = Order{}) -> void` 使用非稳定 in-place hybrid quicksort；`stable_sort` 保留稳定 Powersort 风格 run-adaptive merge 实现。`span<T>` 必须借用可写元素，`T: mutable_object` 会拒绝只读元素视图。
 

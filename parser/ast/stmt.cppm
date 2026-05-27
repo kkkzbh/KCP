@@ -18,6 +18,7 @@ export struct declaration_statement_syntax
 
     source_span full_span{};
     bool is_const{};
+    bool is_static{};
     bool is_ref{};
     source_span name{};
     std::vector<source_span> binding_names{};

@@ -45,6 +45,7 @@ auto inline parse_diagnostic_kind(std::string const& spelling)
             diagnostic_kind::expected_expression,
             diagnostic_kind::expected_statement,
             diagnostic_kind::expected_type,
+            diagnostic_kind::invalid_type_argument,
             diagnostic_kind::empty_statement,
         }) {
         if(spec(kind).code == spelling) {

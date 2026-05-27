@@ -57,6 +57,13 @@ auto has_diagnostic(semantic_result const& result, diagnostic_kind kind) -> bool
     return std::ranges::contains(result.diagnostics, kind, &diagnostic::kind);
 }
 
+auto has_static_local(semantic_result const& result, std::string_view name) -> bool
+{
+    return std::ranges::any_of(result.symbols, [&](semantic_symbol const& symbol) {
+        return symbol.kind == symbol_kind::local and symbol.name == name and symbol.is_static_local;
+    });
+}
+
 auto has_capture_mode(semantic_result const& result, std::string_view name, semantic_lambda_capture_mode mode) -> bool
 {
     for(auto const& [key, lambda] : result.lambda_infos) {
@@ -90,7 +97,11 @@ auto constexpr std_io_modules = {
     std::string_view{ "memory.cp" },
     std::string_view{ "collections.cp" },
     std::string_view{ "text.cp" },
+    std::string_view{ "meta.cp" },
     std::string_view{ "ranges/iota.cp" },
+    std::string_view{ "ranges/sources.cp" },
+    std::string_view{ "ranges/adapters.cp" },
+    std::string_view{ "ranges/terminals.cp" },
     std::string_view{ "ranges.cp" },
     std::string_view{ "compare.cp" },
     std::string_view{ "algorithm/sort.cp" },
@@ -556,6 +567,125 @@ main()
         "std.ranges.iota should reject types without equality comparison");
 }
 
+auto check_meta_and_ranges_semantics() -> void
+{
+    auto meta = analyze_with_std_io(
+        "std_meta_semantics.cp",
+        R"(import std;
+
+apply<F>(value: i32, callback: F) -> call_result<F, i32>
+requires
+    F: callable<i32>
+{
+    return callback(value);
+}
+
+main() -> i32
+{
+    type raw = read_type<i32&>;
+    type plain = remove_reference<i32&>;
+    type pointed = pointee<i32*>;
+    type first = tuple_element<(i32, bool), 0>;
+    let a: raw = 1;
+    let b: plain = 2;
+    let c: pointed = 3;
+    let d: first = 4;
+    return apply(32, f(value: i32) -> i32 { return value + a + b + c + d; });
+})"
+    );
+    test_parser::assert_true(meta.accepted(), "std.meta type queries and callable should pass semantic analysis");
+
+    auto direct_meta = analyze_with_std_io(
+        "std_meta_direct_import_semantics.cp",
+        R"(import std.meta;
+
+main() -> i32
+{
+    type raw = read_type<i32&>;
+    let value: raw = 1;
+    return value;
+})"
+    );
+    test_parser::assert_true(direct_meta.accepted(), "std.meta should expose type queries through a direct module import");
+
+    auto unimported_meta = analyze_with_std_io(
+        "std_meta_unimported_rejected.cp",
+        R"(main()
+{
+    type raw = read_type<i32&>;
+})"
+    );
+    test_parser::assert_true(
+        has_diagnostic(unimported_meta, diagnostic_kind::unknown_type),
+        "std.meta type queries should not be available without importing std.meta or a re-exporting module"
+    );
+
+    auto ranges = analyze_with_std_io(
+        "std_ranges_pipeline_semantics.cp",
+        R"(import std;
+
+main() -> i32
+{
+    let values: [i32; 3] = [1, 2, 3];
+    let count = iota(0, 8)
+        .filter(f(value: i32) -> bool { return value != 3; })
+        .transform(f(value: i32) -> i32 { return value + 1; })
+        .take(4 as usize)
+        .count();
+    let repeated = repeat(1).take(5 as usize).count();
+    let indexed = repeat(0).enumerate().take(3 as usize).count();
+    let borrowed = all(ref values).filter(f(value: i32&) -> bool { return value > 1; }).count();
+    let direct = iota(0, 3);
+    let direct_count = direct.count();
+    return count as i32 + repeated as i32 + indexed as i32 + borrowed as i32 + direct_count as i32;
+})"
+    );
+    test_parser::assert_true(ranges.accepted(), "std.ranges adapters and terminals should compose through UFCS");
+
+    auto full_surface = analyze_with_std_io(
+        "std_ranges_full_surface_semantics.cp",
+        R"(import std;
+
+main() -> i32
+{
+    let empty_count = empty<i32>().count();
+    let single_count = single(1).count();
+    let dropped = iota(0, 5).drop(2 as usize).count();
+    let zipped = iota(0, 3).zip(iota(3, 6)).count();
+    let concatenated = iota(0, 2).concat(iota(2, 4)).count();
+    let any_ok = iota(0, 5).any(f(value: i32) -> bool { return value == 3; });
+    let all_ok = iota(0, 3).all_of(f(value: i32) -> bool { return value < 3; });
+    let found = iota(0, 5).find(f(value: i32) -> bool { return value == 4; });
+    let transformed = iota(0, 4)
+        .transform(f(value: i32) -> bool { return value == 2; })
+        .any(f(value: bool) -> bool { return value; });
+    if(any_ok and all_ok and found.has_value() and transformed) {
+        return empty_count as i32 + single_count as i32 + dropped as i32 + zipped as i32 + concatenated as i32;
+    }
+    return 1;
+})"
+    );
+    test_parser::assert_true(full_surface.accepted(), "std.ranges first-batch sources, adapters, and terminals should pass semantic analysis");
+
+    auto repeat_count = analyze_with_std_io("repeat_count_rejected.cp", "import std; main() { let values = repeat(1, 5); }");
+    test_parser::assert_true(
+        has_diagnostic(repeat_count, diagnostic_kind::argument_count_mismatch),
+        "std.ranges should express finite repeat with repeat(value).take(count)"
+    );
+
+    auto iota_end = analyze_with_std_io("iota_end_rejected.cp", "import std; main() { let values = iota(5); }");
+    test_parser::assert_true(
+        has_diagnostic(iota_end, diagnostic_kind::argument_count_mismatch),
+        "std.ranges should keep iota as the two-argument half-open source"
+    );
+
+    auto to_vector = analyze_with_std_io("to_vector_rejected.cp", "import std; main() { let values = iota(0, 3).to_vector(); }");
+    test_parser::assert_true(not to_vector.accepted(), "std.ranges should not expose to_vector terminal");
+
+    auto to_container = analyze_with_std_io("to_container_rejected.cp", "import std; main() { let values = iota(0, 3).to<vector>(); }");
+    test_parser::assert_true(not to_container.accepted(), "std.ranges should not promise to<Container>() before CTAD/type-constructor inference");
+}
+
 auto check_ordered_collections_semantics() -> void
 {
     auto checked = analyze_with_std_io(
@@ -680,6 +810,37 @@ auto check_side_tables() -> void
         "inferred function return should be recorded");
 }
 
+auto check_static_local_semantics() -> void
+{
+    auto accepted = analyze_one(
+        "static_local_ok.cp",
+        R"(main() -> i32
+{
+    let static counter = 0;
+    counter += 1;
+    return counter;
+})"
+    );
+    test_parser::assert_true(accepted.accepted(), "static local should pass semantic analysis");
+    test_parser::assert_true(has_static_local(accepted, "counter"), "static local should be recorded on its symbol");
+
+    expect_diagnostic(
+        "const_static_assign.cp",
+        "main() { const static answer = 1; answer = 2; }",
+        diagnostic_kind::assign_to_const
+    );
+    expect_diagnostic(
+        "static_ref_rejected.cp",
+        "main() { let value = 1; let static ref alias = value; }",
+        diagnostic_kind::invalid_assignment_target
+    );
+    expect_diagnostic(
+        "static_destructure_rejected.cp",
+        "main() { let static (left, right) = (1, 2); }",
+        diagnostic_kind::invalid_assignment_target
+    );
+}
+
 auto check_array_index_semantics() -> void
 {
     auto sources = source_manager{};
@@ -749,6 +910,30 @@ auto check_tuple_member_semantics() -> void
     test_parser::assert_true(
         function_return_type(sources, parsed, checked, "main") == semantic_type_ids::i32,
         "tuple member access should infer selected element type");
+}
+
+auto check_first_argument_ufcs_semantics() -> void
+{
+    auto checked = analyze_one(
+        "first_argument_ufcs.cp",
+        R"(struct point {
+    value: i32;
+}
+
+impl point {
+    add(self const&, rhs: i32) -> i32
+    {
+        return value + rhs;
+    }
+}
+
+main() -> i32
+{
+    let item = point{ .value = 40 };
+    return add(item, 2);
+})"
+    );
+    test_parser::assert_true(checked.accepted(), "ordinary calls should fall back to first-argument UFCS methods");
 }
 
 auto check_fixed_type_ids() -> void
@@ -1227,6 +1412,11 @@ main() -> i32
         "struct a { } impl a { foo(self&) -> void { } test(self&) -> void { let foo = 1; foo(); } }",
         not_callable
     );
+    expect_diagnostic (
+        "constructor_paren_call_is_not_struct_initialization.cp",
+        "struct point { x: i32; y: i32; } impl point { point(x: i32, y: i32) { return point{ .x = x, .y = y }; } } main() { let p = point(1, 2); }",
+        not_callable
+    );
 }
 
 auto check_struct_field_default_semantics() -> void
@@ -1582,13 +1772,13 @@ auto check_concept_semantics() -> void
 {
     auto result = analyze_one(
         "concept_impl.cp",
-        R"(concept iterator {
+        R"(concept cursor {
     type item;
     next(self&) -> item;
 }
 
-concept sized_iterator {
-    requires iterator;
+concept sized_cursor {
+    requires cursor;
     remaining(self const&) -> i32;
 }
 
@@ -1597,7 +1787,7 @@ struct range_iter {
     remaining_value: i32;
 }
 
-impl iterator for range_iter {
+impl cursor for range_iter {
     type item = i32;
 
     next(self&) -> i32
@@ -1606,7 +1796,7 @@ impl iterator for range_iter {
     }
 }
 
-impl sized_iterator for range_iter {
+impl sized_cursor for range_iter {
     remaining(self const&) -> i32
     {
         return remaining_value;
@@ -2312,6 +2502,11 @@ main() -> i32
         not_callable
     );
     expect_diagnostic(
+        "deleted_constructor_blocks_aggregate_fallback.cp",
+        "struct box { value: i32; } impl box { box(value: i32) = delete; } main() { let item = box{ 1 }; }",
+        not_callable
+    );
+    expect_diagnostic(
         "deleted_assignment_operator.cp",
         "struct box { value: i32; } impl box { operator =(self&, rhs: this const&) = delete; } main() { let left = box{ 1 }; let right = box{ 2 }; left = right; }",
         invalid_operator
@@ -2966,11 +3161,14 @@ auto main() -> int
     check_std_layered_imports();
     check_sort_and_callable_semantics();
     check_iota_semantics();
+    check_meta_and_ranges_semantics();
     check_ordered_collections_semantics();
     check_error_handling_semantics();
     check_side_tables();
+    check_static_local_semantics();
     check_array_index_semantics();
     check_tuple_member_semantics();
+    check_first_argument_ufcs_semantics();
     check_fixed_type_ids();
     check_inferred_return_types();
     check_nrvo_and_direct_initializer_metadata();

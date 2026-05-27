@@ -2,7 +2,7 @@
 
 本文档记录泛型设计，覆盖泛型函数、函数级整数 const 参数、泛型 `struct`、泛型 `variant`、泛型 `concept`、泛型固有 `impl`、泛型 concept `impl`、默认泛型参数、参数包、`template for` 展开以及 `requires` 约束。
 
-函数泛型采用偏现代 C++ 的强模板模型：无约束泛型也可以在函数体内使用依赖于类型参数的操作；`concept` 和 `requires` 是可选约束机制，用于提前表达能力要求、改善诊断、约束公共 API 和辅助重载选择。
+函数泛型采用偏现代 C++ 的强模板模型：无约束泛型也可以在函数体内使用依赖于类型参数的操作；`concept` 和 `requires` 是可选约束机制，用于提前表达能力要求、改善诊断、约束公共 API，并约束构造函数和 operator 候选。
 
 ## 目标
 
@@ -769,7 +769,7 @@ concept comparable {
 }
 ```
 
-类型通过 `impl concept for Type` 证明自己满足能力：
+类型通过 `impl Concept for Type` 证明自己满足能力：
 
 ```cp
 impl comparable for i32 {

@@ -84,6 +84,9 @@ struct llvm_type_lowerer
             [&](associated_type_ref const&) -> llvm::Type* {
                 return llvm::Type::getVoidTy(context);
             },
+            [&](meta_type_query const&) -> llvm::Type* {
+                return llvm::Type::getVoidTy(context);
+            },
             [&](integer_constant_type const&) -> llvm::Type* {
                 return llvm::Type::getVoidTy(context);
             },
@@ -134,6 +137,7 @@ struct llvm_type_lowerer
                 return llvm::Type::getVoidTy(context);
             },
             [&](associated_type_ref const&) -> llvm::Type* { return llvm::Type::getVoidTy(context); },
+            [&](meta_type_query const&) -> llvm::Type* { return llvm::Type::getVoidTy(context); },
             [&](array_type const& type) -> llvm::Type* {
                 return llvm::ArrayType::get(lower_substituted(type.element, arguments), array_length_value(substitute_integer(type.length, arguments)));
             },
@@ -212,6 +216,7 @@ struct llvm_type_lowerer
                 return id;
             },
             [&](associated_type_ref const&) { return id; },
+            [&](meta_type_query const&) { return id; },
             [&](integer_constant_type const&) { return id; },
             [&](generic_integer_parameter_type const& parameter) {
                 if(parameter.index < arguments.size() and arguments[parameter.index] != id) {
@@ -377,6 +382,7 @@ struct llvm_module_lowerer
 
     auto lower() -> llvm_emit_result
     {
+        declare_globals();
         declare_functions();
         for(auto const& function : ir.functions) {
             if(not lower_function(function)) {
@@ -398,6 +404,23 @@ struct llvm_module_lowerer
             .ir = output_stream.str(),
             .error = error_stream.str(),
         };
+    }
+
+    auto declare_globals() -> void
+    {
+        for(auto const& global : ir.globals) {
+            auto type = types.lower(global.type);
+            globals.emplace_back(
+                new llvm::GlobalVariable(
+                    llvm_module,
+                    type,
+                    false,
+                    llvm::GlobalValue::InternalLinkage,
+                    llvm::Constant::getNullValue(type),
+                    global.name
+                )
+            );
+        }
     }
 
     auto declare_functions() -> void
@@ -476,6 +499,9 @@ struct llvm_module_lowerer
                 break;
             case store:
                 builder.CreateStore(value(instruction.operands[1]), value(instruction.operands[0]));
+                break;
+            case global_address:
+                bind(instruction.result, globals[instruction.global_index]);
                 break;
             case field_address:
                 bind(
@@ -815,6 +841,7 @@ struct llvm_module_lowerer
                 [](function_type const&) -> std::uint64_t { return 8; },
                 [](generic_parameter_type const&) -> std::uint64_t { return 0; },
                 [](associated_type_ref const&) -> std::uint64_t { return 0; },
+                [](meta_type_query const&) -> std::uint64_t { return 0; },
                 [](integer_constant_type const&) -> std::uint64_t { return 0; },
                 [](generic_integer_parameter_type const&) -> std::uint64_t { return 0; },
                 [&](struct_type const& type) -> std::uint64_t {
@@ -906,6 +933,7 @@ struct llvm_module_lowerer
                 [](function_type const&) -> std::uint64_t { return 8; },
                 [](generic_parameter_type const&) -> std::uint64_t { return 1; },
                 [](associated_type_ref const&) -> std::uint64_t { return 1; },
+                [](meta_type_query const&) -> std::uint64_t { return 1; },
                 [](integer_constant_type const&) -> std::uint64_t { return 1; },
                 [](generic_integer_parameter_type const&) -> std::uint64_t { return 1; },
                 [&](struct_type const& type) -> std::uint64_t {
@@ -1078,6 +1106,7 @@ struct llvm_module_lowerer
     llvm_type_lowerer types;
     llvm::IRBuilder<> builder;
     std::map<symbol_id, llvm::Function*> functions{};
+    std::vector<llvm::GlobalVariable*> globals{};
     std::map<ir_value_id, llvm::Value*> values{};
     std::vector<llvm::BasicBlock*> blocks{};
     std::string error{};

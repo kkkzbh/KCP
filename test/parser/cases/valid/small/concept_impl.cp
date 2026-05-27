@@ -1,4 +1,4 @@
-export concept iterator {
+export concept cursor {
     type item;
     next(self&) -> item;
 }
@@ -7,7 +7,7 @@ struct range_iter {
     value: i32;
 }
 
-impl iterator for range_iter {
+impl cursor for range_iter {
     type item = i32;
 
     next(self&) -> i32

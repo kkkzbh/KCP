@@ -22,7 +22,7 @@
 - [类型转换](/docs/cast)：`as` 显式转换。
 - [Lambda 与函数值](/docs/lambda)：函数类型、函数指针、普通函数绑定、lambda、捕获和闭包边界。
 - [泛型](/docs/generic)：泛型函数、泛型类型、泛型 `impl`、参数包、`template for`、约束和实例化。
-- [Concept](/docs/concept)：静态协议、关联类型、默认实现、父 concept 和 `impl concept for Type`。
+- [Concept](/docs/concept)：静态协议、关联类型、默认实现、父 concept 和 `impl Concept for Type`。
 - [所有权、借用与移动](/docs/ownership)：默认 copy、显式 `ref` / `move`、`like` const 转发 / `move&`、特殊成员和能力推导。
 
 ## 标准库
@@ -30,7 +30,7 @@
 - [标准库导览](/docs/stdlib)：标准库模块分层、导入方式和常见类型。
 - [迭代](/docs/iteration)：range-for 的语言入口、`iterator` / `iterable` 协议要求和内建类型入口。
 - [标准库 collections](/docs/std_collections)：`vector`、有序唯一键 `map/set`、node 语义和 order-statistics 接口。
-- [标准库 ranges](/docs/std_ranges)：`std.ranges` 的范围对象、`iota` 入口和非重载命名规则。
+- [标准库 ranges](/docs/std_ranges)：`std.ranges` 的 sources、lazy adapters、terminals、UFCS 组合和非重载命名规则。
 - [标准库 fs](/docs/std_fs)：`std.fs.file`、`open_options`、同步读写和 runtime 文件 ABI。
 
 ## 底层与互操作

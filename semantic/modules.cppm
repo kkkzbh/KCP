@@ -1658,7 +1658,7 @@ auto semantic_analyzer::validate_concept_impl(semantic_concept_impl const& impl,
         auto const& ast = units[bound.unit_index].ast;
         auto target = requirement_type(bound.unit_index, ast, bound.type, impl.target_type);
         for(auto const& concept_ref : bound.concepts) {
-            if(target_implements(bound.unit_index, ast, concept_ref, target)) {
+            if(is_dependent_type(target) or target_implements(bound.unit_index, ast, concept_ref, target)) {
                 continue;
             }
             report(
@@ -1673,7 +1673,7 @@ auto semantic_analyzer::validate_concept_impl(semantic_concept_impl const& impl,
         auto const& ast = units[equality.unit_index].ast;
         auto left = requirement_type(equality.unit_index, ast, equality.left, impl.target_type);
         auto right = requirement_type(equality.unit_index, ast, equality.right, impl.target_type);
-        if(left == right) {
+        if(is_dependent_type(left) or is_dependent_type(right) or read_type(left) == read_type(right)) {
             continue;
         }
         report(diagnostic_kind::type_mismatch, equality.span, "concept requires equal associated types");
@@ -1744,7 +1744,21 @@ auto semantic_analyzer::lower_concept_arguments(std::size_t unit_index, ast_aren
     auto const& concept_value = result.concepts[result.symbols[concept_symbol.value].concept_index];
     auto const& concept_ast = units[concept_value.unit_index].ast;
     auto const& concept_syntax = concept_ast.node(concept_value.syntax);
-    if(concept_ref.arguments.size() > concept_syntax.generic_parameters.size()) {
+    auto const has_pack = (
+        not concept_syntax.generic_parameters.empty()
+        and concept_syntax.generic_parameters.back().is_pack
+    );
+    auto minimum_count = 0uz;
+    for(auto index = 0uz; index < concept_syntax.generic_parameters.size(); ++index) {
+        auto const& parameter = concept_syntax.generic_parameters[index];
+        if(parameter.is_pack) {
+            break;
+        }
+        if(not parameter.default_argument) {
+            minimum_count = index + 1uz;
+        }
+    }
+    if(concept_ref.arguments.size() < minimum_count or (not has_pack and concept_ref.arguments.size() > concept_syntax.generic_parameters.size())) {
         report(
             diagnostic_kind::invalid_type_argument,
             concept_ref.full_span,
@@ -1763,6 +1777,18 @@ auto semantic_analyzer::lower_concept_arguments(std::size_t unit_index, ast_aren
     auto arguments = std::vector<semantic_type_id>{};
     for(auto index = 0uz; index < concept_syntax.generic_parameters.size(); ++index) {
         auto const& parameter = concept_syntax.generic_parameters[index];
+        if(parameter.is_pack) {
+            for(auto argument_index = index; argument_index < concept_ref.arguments.size(); ++argument_index) {
+                arguments.emplace_back(lower_generic_type_argument(
+                    ast,
+                    concept_ref.arguments[argument_index],
+                    parameter.parameter_kind,
+                    concept_ref.full_span
+                ));
+            }
+            break;
+        }
+
         auto argument = semantic_type_id{};
         if(index < concept_ref.arguments.size()) {
             argument = lower_generic_type_argument(ast, concept_ref.arguments[index], parameter.parameter_kind, concept_ref.full_span);
@@ -1869,7 +1895,7 @@ auto semantic_analyzer::target_implements(symbol_id concept_symbol, semantic_typ
 auto semantic_analyzer::target_implements(symbol_id concept_symbol, std::vector<semantic_type_id> const& concept_arguments, semantic_type_id target_type) -> bool
 {
     auto const& concept_value = result.concepts[result.symbols[concept_symbol.value].concept_index];
-    if(auto builtin = target_implements_builtin_concept(concept_value.name, concept_arguments, target_type)) {
+    if(auto builtin = target_implements_builtin_concept(concept_symbol, concept_arguments, target_type)) {
         return *builtin;
     }
     if(concept_impl_index.contains(std::tuple{ concept_symbol, concept_arguments, target_type })) {
@@ -1888,8 +1914,10 @@ auto semantic_analyzer::target_implements(symbol_id concept_symbol, std::vector<
     return false;
 }
 
-auto semantic_analyzer::target_implements_builtin_concept(std::string_view concept_name, std::vector<semantic_type_id> const& concept_arguments, semantic_type_id target_type) -> std::optional<bool>
+auto semantic_analyzer::target_implements_builtin_concept(symbol_id concept_symbol, std::vector<semantic_type_id> const& concept_arguments, semantic_type_id target_type) -> std::optional<bool>
 {
+    auto const& concept_value = result.concepts[result.symbols[concept_symbol.value].concept_index];
+    auto const& concept_name = concept_value.name;
     if(concept_name == "mutable_object") {
         return is_mutable_object_type(target_type);
     }
@@ -1917,6 +1945,12 @@ auto semantic_analyzer::target_implements_builtin_concept(std::string_view conce
         }
         return is_incrementable_type(target_type, source_span{});
     }
+    if(concept_name == "callable") {
+        if(concept_value.unit_index >= units.size() or units[concept_value.unit_index].module_name != "std.meta") {
+            return std::nullopt;
+        }
+        return is_callable_type(target_type, concept_arguments, source_span{});
+    }
     return std::nullopt;
 }
 
@@ -1943,6 +1977,7 @@ auto semantic_analyzer::is_mutable_object_type(semantic_type_id type) const -> b
             [](function_type const&) { return false; },
             [](generic_parameter_type const&) { return false; },
             [](associated_type_ref const&) { return false; },
+            [](meta_type_query const&) { return false; },
             [](integer_constant_type const&) { return false; },
             [](generic_integer_parameter_type const&) { return false; },
             [](struct_type const&) { return true; },

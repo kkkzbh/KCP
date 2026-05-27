@@ -18,12 +18,7 @@ export struct parse_result {
 
 export parse(tokens: vector<token>, options: parse_options = parse_options{}) -> parse_result
 {
-    let tables = build_parser_tables();
-    return parse_with_tables(move tokens, tables, options);
-}
-
-export parse_with_tables(tokens: vector<token>, tables: parser_tables const&, options: parse_options = parse_options{}) -> parse_result
-{
+    const static tables = build_parser_tables();
     let state = parser_state{move tokens, options};
     let result = state.run(tables);
     return parse_result{

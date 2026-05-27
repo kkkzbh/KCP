@@ -39,6 +39,9 @@ struct parser
     auto parse_requires_clause_until(token_kind end) -> std::optional<concept_requires_syntax>;
     auto parse_concept_requires_constraints_until(token_kind end) -> std::optional<std::vector<concept_requires_constraint_syntax>>;
     auto parse_concept_requires_primary() -> std::optional<concept_requires_constraint_syntax>;
+    auto looks_like_requires_type_equality(std::size_t lookahead = 0uz) const -> bool;
+    auto skip_requires_type(std::size_t lookahead) const -> std::optional<std::size_t>;
+    auto skip_requires_type_arguments(std::size_t lookahead) const -> std::optional<std::size_t>;
     auto parse_concept_id() -> std::optional<concept_id_syntax>;
     auto looks_like_concept_impl_block() const -> bool;
     auto parse_type_alias() -> std::optional<type_alias_syntax>;
@@ -217,6 +220,8 @@ struct parser
                 return "'impl'";
             case kw_concept:
                 return "'concept'";
+            case kw_operator:
+                return "'operator'";
             case kw_as:
                 return "'as'";
             case kw_true:
@@ -231,6 +236,18 @@ struct parser
                 return "'or'";
             case kw_not:
                 return "'not'";
+            case kw_ref:
+                return "'ref'";
+            case kw_move:
+                return "'move'";
+            case kw_like:
+                return "'like'";
+            case kw_forward:
+                return "'forward'";
+            case kw_new:
+                return "'new'";
+            case kw_delete:
+                return "'delete'";
             case l_paren:
                 return "'('";
             case r_paren:
@@ -279,12 +296,16 @@ struct parser
                 return "'='";
             case equal_equal:
                 return "'=='";
+            case bang:
+                return "'!'";
             case bang_equal:
                 return "'!='";
             case less:
                 return "'<'";
             case less_equal:
                 return "'<='";
+            case spaceship:
+                return "'<=>'";
             case greater:
                 return "'>'";
             case greater_equal:

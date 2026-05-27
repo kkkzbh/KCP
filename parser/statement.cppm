@@ -106,6 +106,15 @@ auto parser::parse_block_statement() -> std::optional<stmt_id>
 auto parser::parse_declaration_statement() -> std::optional<stmt_id>
 {
     auto start = consume();
+    auto is_static = false;
+    if (
+        check_contextual("static")
+        and (peek(1uz).kind == token_kind::kw_ref or peek(1uz).kind == token_kind::identifier or peek(1uz).kind == token_kind::l_paren)
+    ) {
+        consume();
+        is_static = true;
+    }
+
     auto is_ref = false;
     if(check(token_kind::kw_ref)) {
         consume();
@@ -163,6 +172,7 @@ auto parser::parse_declaration_statement() -> std::optional<stmt_id>
     auto statement = declaration_statement_syntax {
         .full_span = combine_spans(start.span, semicolon->span),
         .is_const = start.kind == token_kind::kw_const,
+        .is_static = is_static,
         .is_ref = is_ref,
         .name = name->span,
         .binding_names = std::move(binding_names),

@@ -882,7 +882,7 @@ auto parser::parse_concept_requires_constraints_until(token_kind end)
 {
     auto constraints = std::vector<concept_requires_constraint_syntax>{};
     while(not check_any({ end, token_kind::eof })) {
-        if(check(token_kind::l_paren)) {
+        if(check(token_kind::l_paren) and not looks_like_requires_type_equality()) {
             consume();
             auto nested = parse_concept_requires_constraints_until(token_kind::r_paren);
             auto close = expect(token_kind::r_paren);
@@ -916,18 +916,25 @@ auto parser::parse_concept_requires_constraints_until(token_kind end)
 
 auto parser::parse_concept_requires_primary() -> std::optional<concept_requires_constraint_syntax>
 {
-    if(not check(token_kind::identifier)) {
+    if(
+        not starts_type(peek().kind)
+        and not looks_like_function_type()
+        and not looks_like_decltype()
+        and not (check_contextual("storage") and starts_type(peek(1uz).kind))
+    ) {
         report_current(
-            diagnostic_kind::expected_identifier,
+            diagnostic_kind::expected_type,
             std::format("expected requires constraint, got {}", token_name(peek().kind))
         );
         return std::nullopt;
     }
 
     if (
-        peek(1uz).kind != token_kind::colon
+        check(token_kind::identifier)
+        and peek(1uz).kind != token_kind::colon
         and peek(1uz).kind != token_kind::colon_colon
         and peek(1uz).kind != token_kind::equal_equal
+        and not looks_like_requires_type_equality()
         and not (
             peek(1uz).kind == token_kind::dot
             and peek(2uz).kind == token_kind::dot
@@ -969,6 +976,7 @@ auto parser::parse_concept_requires_primary() -> std::optional<concept_requires_
             and peek(2uz).kind != token_kind::colon
             and peek(2uz).kind != token_kind::colon_colon
             and peek(2uz).kind != token_kind::equal_equal
+            and not looks_like_requires_type_equality(1uz)
             and not (
                 peek(2uz).kind == token_kind::dot
                 and peek(3uz).kind == token_kind::dot
@@ -1012,6 +1020,198 @@ auto parser::parse_concept_requires_primary() -> std::optional<concept_requires_
             .right = *right,
         }
     };
+}
+
+auto parser::looks_like_requires_type_equality(std::size_t lookahead) const -> bool
+{
+    auto type_end = skip_requires_type(lookahead);
+    return type_end and peek(*type_end).kind == token_kind::equal_equal;
+}
+
+auto parser::skip_requires_type(std::size_t lookahead) const -> std::optional<std::size_t>
+{
+    auto cursor = lookahead;
+    auto skip_balanced = [this](std::size_t open_index, token_kind open_kind, token_kind close_kind)
+        -> std::optional<std::size_t>
+    {
+        if(peek(open_index).kind != open_kind) {
+            return std::nullopt;
+        }
+        auto depth = 1uz;
+        auto cursor = open_index + 1uz;
+        while(depth > 0uz) {
+            if(peek(cursor).kind == token_kind::eof) {
+                return std::nullopt;
+            }
+            if(peek(cursor).kind == open_kind) {
+                depth += 1uz;
+            } else if(peek(cursor).kind == close_kind) {
+                depth -= 1uz;
+            }
+            cursor += 1uz;
+        }
+        return cursor;
+    };
+
+    if(check_contextual("decltype", cursor) and peek(cursor + 1uz).kind == token_kind::l_paren) {
+        auto close = skip_balanced(cursor + 1uz, token_kind::l_paren, token_kind::r_paren);
+        if(not close) {
+            return std::nullopt;
+        }
+        cursor = *close;
+    } else if(
+        check_contextual("f", cursor)
+        and (
+            peek(cursor + 1uz).kind == token_kind::l_paren
+            or (peek(cursor + 1uz).kind == token_kind::star and peek(cursor + 2uz).kind == token_kind::l_paren)
+        )
+    ) {
+        cursor += 1uz;
+        if(peek(cursor).kind == token_kind::star) {
+            cursor += 1uz;
+        }
+        auto close = skip_balanced(cursor, token_kind::l_paren, token_kind::r_paren);
+        if(not close or peek(*close).kind != token_kind::arrow) {
+            return std::nullopt;
+        }
+        cursor = *close + 1uz;
+        auto returns = skip_requires_type(cursor);
+        if(not returns) {
+            return std::nullopt;
+        }
+        cursor = *returns;
+    } else if(check_contextual("storage", cursor) and starts_type(peek(cursor + 1uz).kind)) {
+        auto element = skip_requires_type(cursor + 1uz);
+        if(not element) {
+            return std::nullopt;
+        }
+        cursor = *element;
+    } else if(peek(cursor).kind == token_kind::bang) {
+        cursor += 1uz;
+    } else if(peek(cursor).kind == token_kind::l_bracket) {
+        auto element = skip_requires_type(cursor + 1uz);
+        if(not element or peek(*element).kind != token_kind::semicolon) {
+            return std::nullopt;
+        }
+        cursor = *element + 1uz;
+        if(peek(cursor).kind != token_kind::integer_literal and peek(cursor).kind != token_kind::identifier) {
+            return std::nullopt;
+        }
+        cursor += 1uz;
+        if(peek(cursor).kind != token_kind::r_bracket) {
+            return std::nullopt;
+        }
+        cursor += 1uz;
+    } else if(peek(cursor).kind == token_kind::l_paren) {
+        cursor += 1uz;
+        auto first = skip_requires_type(cursor);
+        if(not first) {
+            return std::nullopt;
+        }
+        cursor = *first;
+        while(peek(cursor).kind == token_kind::comma) {
+            cursor += 1uz;
+            if(peek(cursor).kind == token_kind::r_paren) {
+                break;
+            }
+            auto next = skip_requires_type(cursor);
+            if(not next) {
+                return std::nullopt;
+            }
+            cursor = *next;
+        }
+        if(peek(cursor).kind != token_kind::r_paren) {
+            return std::nullopt;
+        }
+        cursor += 1uz;
+    } else if(peek(cursor).kind == token_kind::identifier) {
+        cursor += 1uz;
+        if(peek(cursor).kind == token_kind::less) {
+            auto arguments_end = skip_requires_type_arguments(cursor);
+            if(not arguments_end) {
+                return std::nullopt;
+            }
+            cursor = *arguments_end;
+        }
+
+        while(peek(cursor).kind == token_kind::colon_colon) {
+            cursor += 1uz;
+            if(peek(cursor).kind != token_kind::identifier) {
+                return std::nullopt;
+            }
+            cursor += 1uz;
+        }
+    } else {
+        return std::nullopt;
+    }
+
+    if(
+        peek(cursor).kind == token_kind::kw_const
+        or peek(cursor).kind == token_kind::kw_like
+        or peek(cursor).kind == token_kind::kw_forward
+    ) {
+        cursor += 1uz;
+    }
+
+    while(peek(cursor).kind == token_kind::star) {
+        cursor += 1uz;
+    }
+
+    if(peek(cursor).kind == token_kind::amp) {
+        cursor += 1uz;
+    } else if(peek(cursor).kind == token_kind::kw_move or peek(cursor).kind == token_kind::kw_forward) {
+        cursor += 1uz;
+        if(peek(cursor).kind != token_kind::amp) {
+            return std::nullopt;
+        }
+        cursor += 1uz;
+    }
+
+    return cursor;
+}
+
+auto parser::skip_requires_type_arguments(std::size_t lookahead) const -> std::optional<std::size_t>
+{
+    auto depth = 0uz;
+    auto cursor = lookahead;
+    while(true) {
+        switch(peek(cursor).kind) {
+            case token_kind::less:
+                depth += 1uz;
+                cursor += 1uz;
+                break;
+            case token_kind::greater:
+                if(depth == 0uz) {
+                    return std::nullopt;
+                }
+                depth -= 1uz;
+                cursor += 1uz;
+                if(depth == 0uz) {
+                    return cursor;
+                }
+                break;
+            case token_kind::greater_greater:
+                if(depth == 0uz) {
+                    return std::nullopt;
+                }
+                if(depth == 1uz) {
+                    return cursor + 1uz;
+                }
+                depth -= 2uz;
+                cursor += 1uz;
+                if(depth == 0uz) {
+                    return cursor;
+                }
+                break;
+            case token_kind::eof:
+            case token_kind::l_brace:
+            case token_kind::r_brace:
+                return std::nullopt;
+            default:
+                cursor += 1uz;
+                break;
+        }
+    }
 }
 
 auto parser::parse_concept_id() -> std::optional<concept_id_syntax>
@@ -1822,6 +2022,12 @@ auto parser::parse_generic_parameter() -> std::optional<generic_parameter_syntax
 
     auto default_argument = std::optional<type_argument_syntax>{};
     if(check(token_kind::equal)) {
+        if(is_pack) {
+            report_current(diagnostic_kind::invalid_type_argument, "generic parameter pack cannot have a default argument");
+            consume();
+            static_cast<void>(parse_type_argument());
+            return std::nullopt;
+        }
         consume();
         default_argument = parse_type_argument();
         if(not default_argument) {

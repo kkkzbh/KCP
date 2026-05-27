@@ -319,11 +319,12 @@ let closure = f(x: i32) {
 // apply(1, closure); // error if apply expects f(i32) -> i32
 ```
 
-泛型函数可以通过 `operator()` / `invocable` 风格的 concept 接收普通函数、无捕获 lambda 和有捕获闭包。lambda/闭包语义上满足调用表达式协议，因此可作为 comparator、projection 这类泛型算法对象使用：
+泛型函数可以通过 `callable<Args...>` concept 接收普通函数、无捕获 lambda 和有捕获闭包。lambda/闭包语义上满足调用表达式协议，因此可作为 comparator、projection 这类泛型算法对象使用：
 
 ```cp
-apply<F>(value: i32, callback: F) -> i32
-requires F: invocable<i32, i32>
+apply<F>(value: i32, callback: F) -> call_result<F, i32>
+requires
+    F: callable<i32>
 {
     return callback(value);
 }

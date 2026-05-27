@@ -145,7 +145,7 @@ main() -> i32
         return 3;
     }
 
-    let result = parse_with_tables(move lexical.tokens, tables, parse_options{ .trace_enabled = true });
+    let result = parse(move lexical.tokens, parse_options{ .trace_enabled = true });
     let program = result.ast.programs[result.root.value];
     println("mini c parser accepted: {}", result.accepted);
     println("mini c parser diagnostics: {}", result.diagnostics.size());

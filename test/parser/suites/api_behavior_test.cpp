@@ -167,7 +167,7 @@ export extern "C" answer() -> i32
 	    some(T);
 	}
 
-	concept iterator {
+	concept cursor {
 	    type item;
 	    next(self&) -> item;
 	}
@@ -176,7 +176,7 @@ struct range_iter {
     value: i32;
 }
 
-impl iterator for range_iter {
+impl cursor for range_iter {
     type item = i32;
 
     next(self&) -> i32
@@ -379,6 +379,29 @@ requires T...: display
     auto const& single_type = parsed.ast.node(*single.declared_type);
     test_parser::assert_true(single_type.is_tuple_type, "single type should be a tuple type");
     test_parser::assert_true(single_type.tuple_elements.size() == 1, "single tuple should contain one element");
+
+    auto const static_source = sources.add_source (
+        "api_static_declaration.cp",
+        R"(main()
+{
+    const static answer: i32 = 42;
+    let static counter = 0;
+    let static = 1;
+})");
+    auto static_parsed = parse_source(sources, static_source);
+    test_parser::assert_true(static_parsed.accepted, "static declaration source should parse");
+    auto const& static_body = function_body(static_parsed, first_function(static_parsed));
+    auto const& static_answer = declaration(static_parsed, static_body.statements[0]);
+    test_parser::assert_true(
+        static_answer.is_const and static_answer.is_static,
+        "const static declaration should preserve both modifiers");
+    auto const& static_counter = declaration(static_parsed, static_body.statements[1]);
+    test_parser::assert_true(
+        not static_counter.is_const and static_counter.is_static,
+        "let static declaration should preserve static without const");
+    auto const& contextual_static = declaration(static_parsed, static_body.statements[2]);
+    test_parser::assert_true(not contextual_static.is_static, "static should remain a valid declaration name");
+    test_parser::assert_true(ast_source.identifier(contextual_static.name) == "static", "contextual static name should be preserved");
 
     auto const grouped_source = sources.add_source (
         "api_grouped_type.cp",

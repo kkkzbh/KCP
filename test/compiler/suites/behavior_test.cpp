@@ -195,6 +195,31 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 5, "member default argument should use the declared expression");
 }
 
+auto check_static_local_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("static-local");
+    auto source = dir / "static_local.cp";
+    auto app = dir / "static_local";
+    write_source(
+        source,
+R"(next() -> i32
+{
+    let static counter = 0;
+    counter += 1;
+    return counter;
+}
+
+main() -> i32
+{
+    return next() * 10 + next();
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile static local binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 12, "static local should keep its value across calls");
+}
+
 auto check_struct_field_default_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("struct-field-default");
@@ -243,6 +268,36 @@ main() -> i32
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status == 0, "cp should compile UFCS receiver implicit conversion");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "UFCS receiver should be converted before the call");
+}
+
+auto check_first_argument_ufcs_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("first-argument-ufcs");
+    auto source = dir / "first_argument_ufcs.cp";
+    auto app = dir / "first_argument_ufcs";
+    write_source(
+        source,
+R"(struct point {
+    value: i32;
+}
+
+impl point {
+    add(self const&, rhs: i32) -> i32
+    {
+        return value + rhs;
+    }
+}
+
+main() -> i32
+{
+    let item = point{ .value = 40 };
+    return add(item, 2);
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile ordinary calls that fall back to first-argument UFCS methods");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "first-argument UFCS method call should pass receiver explicitly");
 }
 
 auto check_emit_ll(test_tools const& tools) -> void
@@ -537,7 +592,7 @@ auto check_fixture_examples(test_tools const& tools) -> void
         { "interop", { tools.fixture_examples / "interop" / "main.cp" }, 42 },
         { "errors", { tools.fixture_examples / "errors" / "main.cp" }, 42 },
         { "fs", { tools.fixture_examples / "fs" / "main.cp" }, 0 },
-        { "std", { tools.fixture_examples / "std" / "main.cp" }, 118 },
+        { "std", { tools.fixture_examples / "std" / "main.cp" }, 137 },
     };
 
     for(auto const& group : groups) {
@@ -1093,6 +1148,52 @@ auto check_lambda_binary(test_tools const& tools) -> void
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status == 0, "cp should compile lambda binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "lambda binary should return 42");
+}
+
+auto check_callable_field_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("callable-field");
+    auto source = dir / "callable_field.cp";
+    auto app = dir / "callable_field";
+    write_source(
+        source,
+        R"(import std;
+
+struct holder<F> {
+    callback: F;
+}
+
+impl<F> holder<F> {
+    apply(self&, value: i32) -> i32
+    {
+        return callback(value);
+    }
+}
+
+make_holder<F>(callback: F) -> holder<F>
+{
+    return holder<F>{ .callback = move callback };
+}
+
+plus_one(value: i32) -> i32
+{
+    return value + 1;
+}
+
+main() -> i32
+{
+    let first = make_holder(plus_one);
+    let bias = 2;
+    let second = make_holder(f(value: i32) -> i32 {
+        return value + bias;
+    });
+    return first.apply(19) + second.apply(20);
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile direct calls through callable fields");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "callable fields should support function values and captured closures");
 }
 
 auto check_nested_inferred_lambda_binary(test_tools const& tools) -> void
@@ -2344,6 +2445,36 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "custom incrementable iota should iterate by prefix ++");
 }
 
+auto check_ranges_pipeline_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("ranges-pipeline");
+    auto source = dir / "ranges_pipeline.cp";
+    auto app = dir / "ranges_pipeline";
+    write_source(
+        source,
+        R"(import std;
+
+main() -> i32
+{
+    let bias = 1;
+    let sum = iota(0, 8)
+        .filter(f(value: i32) -> bool { return value != 3; })
+        .transform(f(value: i32) -> i32 { return value + bias; })
+        .take(4 as usize)
+        .fold(0, f(total: i32, value: i32) -> i32 { return total + value; });
+    let repeated = repeat(1).take(5 as usize).count() as i32;
+    let indexed = repeat(0).enumerate().take(3 as usize).count() as i32;
+    let values: [i32; 3] = [1, 2, 3];
+    let borrowed = all(ref values).filter(f(value: i32&) -> bool { return value > 1; }).count() as i32;
+    return sum + repeated + indexed + borrowed + 21;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile composed std.ranges pipelines");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "std.ranges pipelines should compose through UFCS");
+}
+
 auto check_std_map_set_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("std-map-set");
@@ -3589,8 +3720,10 @@ auto main(int argc, char** argv) -> int
     check_short_circuit_binary(tools);
     check_extern_c_binary(tools);
     check_member_default_argument_binary(tools);
+    check_static_local_binary(tools);
     check_struct_field_default_binary(tools);
     check_ufcs_receiver_conversion_binary(tools);
+    check_first_argument_ufcs_binary(tools);
     check_emit_ll(tools);
     check_emit_obj(tools);
     check_multi_input(tools);
@@ -3619,6 +3752,7 @@ auto main(int argc, char** argv) -> int
     check_update_expression_binary(tools);
     check_decltype_ref_destructure_binary(tools);
     check_lambda_binary(tools);
+    check_callable_field_binary(tools);
     check_nested_inferred_lambda_binary(tools);
     check_generic_lambda_binary(tools);
     check_lambda_capture_mode_binaries(tools);
@@ -3645,6 +3779,7 @@ auto main(int argc, char** argv) -> int
     check_forward_reference_binary(tools);
     check_iota_public_import_binary(tools);
     check_iota_custom_incrementable_binary(tools);
+    check_ranges_pipeline_binary(tools);
     check_std_map_set_binary(tools);
     check_std_map_set_btree_stress_binary(tools);
     check_compiler_lab_workload_binary(tools);

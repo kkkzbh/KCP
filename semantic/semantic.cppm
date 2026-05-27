@@ -247,7 +247,7 @@ private:
     auto target_implements(std::size_t unit_index, ast_arena const& ast, concept_id_syntax const& concept_ref, semantic_type_id target_type) -> bool;
     auto target_implements(symbol_id concept_symbol, semantic_type_id target_type) -> bool;
     auto target_implements(symbol_id concept_symbol, std::vector<semantic_type_id> const& concept_arguments, semantic_type_id target_type) -> bool;
-    auto target_implements_builtin_concept(std::string_view concept_name, std::vector<semantic_type_id> const& concept_arguments, semantic_type_id target_type) -> std::optional<bool>;
+    auto target_implements_builtin_concept(symbol_id concept_symbol, std::vector<semantic_type_id> const& concept_arguments, semantic_type_id target_type) -> std::optional<bool>;
     auto is_mutable_object_type(semantic_type_id type) const -> bool;
     auto weak_ordering_type() const -> std::optional<semantic_type_id>;
     auto is_ordering_type(semantic_type_id type, semantic_type_id value_type, source_span span) -> bool;
@@ -298,6 +298,12 @@ private:
 
     auto lower_type(ast_arena const& ast, type_id id) -> semantic_type_id;
     auto lower_return_type(ast_arena const& ast, type_id id) -> semantic_type_id;
+    auto lower_meta_type_query(ast_arena const& ast, type_syntax const& syntax, std::string_view name) -> std::optional<semantic_type_id>;
+    auto meta_type_queries_visible() const -> bool;
+    auto evaluate_meta_type_query(meta_type_query_kind kind, std::vector<semantic_type_id> arguments, source_span span) -> semantic_type_id;
+    auto try_call_result_type(semantic_type_id callable, std::span<semantic_type_id const> argument_types, source_span span, bool report_failure) -> std::optional<semantic_type_id>;
+    auto call_result_argument_info(semantic_type_id type) -> expression_info;
+    auto is_callable_type(semantic_type_id type, std::span<semantic_type_id const> arguments, source_span span) -> bool;
     auto materialize_like_type(semantic_type_id type, bool is_const) -> semantic_type_id;
     auto expression_for_return_type(semantic_type_id type) -> expression_info;
     auto lower_type_with_substitutions(ast_arena const& ast, type_id id, std::map<std::string, semantic_type_id> const& substitutions) -> semantic_type_id;
@@ -452,6 +458,8 @@ private:
     auto compound_assignment_operator(token_kind operator_kind) -> std::optional<token_kind>;
     auto check_call_expression(ast_arena const& ast, call_expr_syntax const& node, expr_id id) -> expression_info;
     auto check_implicit_self_call(ast_arena const& ast, call_expr_syntax const& node, name_expr_syntax const& callee)
+        -> std::optional<expression_info>;
+    auto check_first_argument_ufcs_call(ast_arena const& ast, call_expr_syntax const& node, name_expr_syntax const& callee, expr_id id)
         -> std::optional<expression_info>;
     auto check_member_call(ast_arena const& ast, call_expr_syntax const& node, member_expr_syntax const& callee, expr_id id)
         -> expression_info;

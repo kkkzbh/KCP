@@ -1203,6 +1203,9 @@ auto semantic_analyzer::check_call_expression(ast_arena const& ast, call_expr_sy
             if(auto implicit_self = check_implicit_self_call(ast, node, *name)) {
                 return *implicit_self;
             }
+            if(auto first_argument = check_first_argument_ufcs_call(ast, node, *name, id)) {
+                return *first_argument;
+            }
         }
     }
 
@@ -1471,6 +1474,38 @@ auto semantic_analyzer::check_implicit_self_call(ast_arena const& ast, call_expr
         check_expression(ast, node.arguments[index], std::nullopt);
     }
     return expression_for_return_type(materialize_like_type(callable.returns, object.is_const));
+}
+
+auto semantic_analyzer::check_first_argument_ufcs_call(ast_arena const& ast, call_expr_syntax const& node, name_expr_syntax const& callee, expr_id id)
+    -> std::optional<expression_info>
+{
+    if(node.arguments.empty()) {
+        return std::nullopt;
+    }
+
+    auto object = check_expression(ast, node.arguments.front(), std::nullopt);
+    auto name = std::string{ ast_source.identifier(callee.name) };
+    if(not method_symbol(object.type, name)) {
+        return std::nullopt;
+    }
+
+    auto arguments = std::vector<expr_id>{};
+    arguments.reserve(node.arguments.size() - 1uz);
+    arguments.insert(arguments.end(), node.arguments.begin() + 1, node.arguments.end());
+    auto member = member_expr_syntax {
+        .full_span = combine_spans(ast.span(node.arguments.front()), callee.name),
+        .object = node.arguments.front(),
+        .name = callee.name,
+    };
+    auto member_call = call_expr_syntax {
+        .full_span = node.full_span,
+        .callee = node.callee,
+        .type_arguments = node.type_arguments,
+        .arguments = std::move(arguments),
+    };
+    auto checked = check_member_call(ast, member_call, member, id);
+    result.first_argument_ufcs_calls.emplace(node_key(id));
+    return checked;
 }
 
 auto semantic_analyzer::check_storage_member_call(ast_arena const& ast, call_expr_syntax const& node, member_expr_syntax const& callee, expr_id id, expression_info const& object, storage_type const& storage)
@@ -2205,9 +2240,6 @@ auto semantic_analyzer::choose_constructor(semantic_type_id type, std::vector<ex
     }
 
     for(auto symbol : result.structs[*struct_index].constructors) {
-        if(function_is_deleted(symbol)) {
-            continue;
-        }
         auto candidate = symbol;
         auto const& function = result.symbols[symbol.value];
         if(function_is_generic(function.unit_index, function.function)) {
@@ -2339,6 +2371,9 @@ auto semantic_analyzer::check_struct_initializer(ast_arena const& ast, struct_in
         }
         if(auto constructor = choose_constructor(type, arguments, node.full_span)) {
             result.expression_symbols[node_key(id)] = *constructor;
+            if(function_is_deleted(*constructor)) {
+                report(diagnostic_kind::not_callable, node.full_span, "deleted constructor is not callable");
+            }
             auto const* callable = std::get_if<function_type>(&result.types.get(result.symbols[constructor->value].type));
             for(auto index = 0uz; callable and index < positional.size(); ++index) {
                 if(can_implicitly_convert(arguments[index], callable->parameters[index])

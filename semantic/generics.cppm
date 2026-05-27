@@ -899,6 +899,15 @@ auto semantic_analyzer::substitute_type_for_instance(semantic_type_id type, std:
                 }
                 return semantic_type_ids::error;
             },
+            [&](meta_type_query const& value) {
+                auto substituted = (
+                    value.arguments
+                    | std::views::transform([&](auto argument) {
+                        return substitute_type_for_instance(argument, pack_index, type_arguments, pack_element, span);
+                    }) | std::ranges::to<std::vector<semantic_type_id>>()
+                );
+                return evaluate_meta_type_query(value.kind, std::move(substituted), span);
+            },
             [&](integer_constant_type const&) { return type; },
             [&](generic_integer_parameter_type const& value) {
                 if(value.index < type_arguments.size()) {

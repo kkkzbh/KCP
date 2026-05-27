@@ -127,6 +127,23 @@ export struct associated_type_ref
     std::string name{};
 };
 
+export enum class meta_type_query_kind : std::uint8_t
+{
+    read_type,
+    remove_reference,
+    pointee,
+    tuple_element,
+    call_result,
+};
+
+export struct meta_type_query
+{
+    auto constexpr operator==(meta_type_query const&) const -> bool = default;
+
+    meta_type_query_kind kind{};
+    std::vector<semantic_type_id> arguments{};
+};
+
 export struct integer_constant_type
 {
     auto constexpr operator==(integer_constant_type const&) const -> bool = default;
@@ -187,6 +204,7 @@ export using semantic_type_kind = std::variant <
     function_type,
     generic_parameter_type,
     associated_type_ref,
+    meta_type_query,
     integer_constant_type,
     generic_integer_parameter_type,
     struct_type,

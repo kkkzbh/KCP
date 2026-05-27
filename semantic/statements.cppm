@@ -136,6 +136,8 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
     auto old_function = active_function;
     auto old_substitutions = active_type_substitutions;
     auto old_pack_substitutions = active_type_pack_substitutions;
+    auto old_self_type = active_self_type;
+    auto old_type_aliases = active_type_aliases;
     auto old_self = active_self;
     auto old_scopes = scopes;
     auto old_type_scopes = type_scopes;
@@ -158,6 +160,8 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
     auto restore_state = [&] {
         active_type_substitutions = old_substitutions;
         active_type_pack_substitutions = old_pack_substitutions;
+        active_self_type = old_self_type;
+        active_type_aliases = old_type_aliases;
         active_function = old_function;
         active_self = old_self;
         scopes = std::move(old_scopes);
@@ -187,6 +191,24 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
 
     auto& signature = result.signatures[signature_id.value];
     auto const* instance = result.function_instance_of(function_symbol);
+    auto body_self_type = function_impl_target_pattern(unit_index, id);
+    if(body_self_type.valid() and instance != nullptr) {
+        body_self_type = substitute_type(body_self_type, instance->key.type_arguments);
+    }
+    if(not body_self_type.valid() and function_symbol.valid()) {
+        auto const& symbol = result.symbols[function_symbol.value];
+        if(symbol.owner_type.valid()) {
+            body_self_type = symbol.owner_type;
+        } else if(symbol.struct_index != std::numeric_limits<std::uint32_t>::max()) {
+            body_self_type = result.structs[symbol.struct_index].type;
+        } else if(symbol.variant_index != std::numeric_limits<std::uint32_t>::max()) {
+            body_self_type = result.variants[symbol.variant_index].type;
+        }
+    }
+    if(body_self_type.valid()) {
+        active_self_type = body_self_type;
+        active_type_aliases = &associated_types[body_self_type];
+    }
     collect_lambda_escapes_for_function(unit_index, id);
     auto returns = return_state{ .inferred_return = signature.inferred_return };
     if(not is_error(signature.returns)) {
@@ -351,7 +373,7 @@ auto semantic_analyzer::nrvo_candidate_for_return(expr_id value, expression_info
     }
 
     auto const& candidate = result.symbols[symbol.value];
-    if(candidate.kind != symbol_kind::local or candidate.unit_index != active_unit_index or candidate.function != active_function) {
+    if(candidate.kind != symbol_kind::local or candidate.is_static_local or candidate.unit_index != active_unit_index or candidate.function != active_function) {
         return {};
     }
     if(std::holds_alternative<reference_type>(result.types.get(candidate.type))) {
@@ -563,6 +585,14 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
 
                 auto initializer = check_expression(*active_ast, node.initializer, expected);
                 if(not node.binding_names.empty()) {
+                    if(node.is_static) {
+                        report(
+                            diagnostic_kind::invalid_assignment_target,
+                            node.full_span,
+                            "static destructuring declarations are not supported"
+                        );
+                        return;
+                    }
                     auto initializer_type = expected.value_or(read_type(initializer.type));
                     auto const* tuple = std::get_if<tuple_type>(&result.types.get(read_type(initializer_type)));
                     if(tuple == nullptr) {
@@ -626,6 +656,13 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                     declared_type = semantic_type_ids::error;
                 }
                 if(node.is_ref) {
+                    if(node.is_static) {
+                        report(
+                            diagnostic_kind::invalid_assignment_target,
+                            node.full_span,
+                            "static ref declarations are not supported"
+                        );
+                    }
                     if(not initializer.is_lvalue) {
                         report(
                             diagnostic_kind::invalid_assignment_target,
@@ -654,16 +691,17 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                         .kind = symbol_kind::local,
                         .name = std::string{ ast_source.slice(node.name) },
                         .span = node.name,
-                    .type = declared_type,
-                    .is_const = node.is_const,
-                    .unit_index = active_unit_index,
-                    .function = active_function,
-                })
-            );
+                        .type = declared_type,
+                        .is_const = node.is_const,
+                        .is_static_local = node.is_static,
+                        .unit_index = active_unit_index,
+                        .function = active_function,
+                    })
+                );
                 if(symbol.valid()) {
                     result.statement_bindings[node_key(id)] = symbol;
                     result.local_bindings[parameter_key(node.name)] = symbol;
-                    if(not std::holds_alternative<reference_type>(result.types.get(declared_type))) {
+                    if(not node.is_static and not std::holds_alternative<reference_type>(result.types.get(declared_type))) {
                         static_cast<void>(concrete_destructor_symbol(declared_type, node.full_span));
                     }
                 }

@@ -108,6 +108,7 @@ export struct semantic_symbol
     semantic_type_id type{};
     bool exported{};
     bool is_const{};
+    bool is_static_local{};
     semantic_function_body_kind body_kind{ semantic_function_body_kind::source_body };
     std::size_t unit_index{};
     function_id function{};

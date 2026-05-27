@@ -88,15 +88,21 @@ struct point {
 }
 
 impl point {
-    new(x: i32, y: i32) -> this
+    point(x: i32, y: i32)
     {
-        return this{ .x = x, .y = y };
+        return point{ .x = x, .y = y };
     }
 
     len2(self const&) -> i32
     {
         return x * x + y * y;
     }
+}
+
+main() -> i32
+{
+    let p = point{ 3, 4 };
+    return p.len2();
 }
 ```
 
@@ -167,7 +173,7 @@ add(left, right) -> i32
 
 显式类型和省略类型不能混写；`value&: i32` 应写成 `value: i32&` 或 `value&`。
 
-`impl concept for Type` 给具体类型实现协议；标准库也可以提供由编译器识别的内建 concept。
+`impl Concept for Type` 给具体类型实现协议；标准库也可以提供由编译器识别的内建 concept。
 
 相关参考：[泛型](generic.md)、[Concept](concept.md)。
 

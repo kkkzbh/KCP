@@ -20,7 +20,8 @@ import std;
 | `std.memory` | `raw_buffer<T>`、`span<T>` 和连续内存基础类型 |
 | `std.collections` | `vector<T>`、`map<K,V>`、`set<K>` |
 | `std.text` | compiler-recognized `str` 的扩展和拥有字符串 `string` |
-| `std.ranges` | 可被范围 `for` 消费的范围对象，第一版提供 `iota` |
+| `std.ranges` | 可组合 range sources、lazy adapters 和 terminals |
+| `std.meta` | 类型查询、`call_result` 和 `callable` |
 | `std.compare` | 三路比较分类、比较器和泛型算法所需 concept |
 | `std.algorithm` | 泛型算法，第一版提供 `sort` |
 | `std.io` | `format`、`print`、`println`、`eprint`、`eprintln` |
@@ -116,24 +117,37 @@ main() -> i32
 
 相关参考：[类型系统](type_system.md)、[迭代](iteration.md)。
 
-## iota 和范围 for
+## ranges
 
-`iota(begin, end)` 产生半开范围 `[begin, end)`，元素类型需要支持 `==` 和前置 `++`。最常见用法是整数循环。
+`std.ranges` 使用 UFCS 点调用组合。`iota(begin, end)` 产生半开范围；`repeat(value)` 是无限 range，有限重复写作 `repeat(value).take(count)`；`all(ref source)` 把 lvalue 容器或数组转成借用 view。
 
 ```cp
 main() -> i32
 {
-    let total = 0;
-
-    for(let index : iota(0, 4)) {
-        total += index;
-    }
-
-    return total;
+    return iota(0, 8)
+        .filter(f(value: i32) -> bool { return value != 3; })
+        .transform(f(value: i32) -> i32 { return value + 1; })
+        .take(4 as usize)
+        .fold(0, f(total: i32, value: i32) -> i32 { return total + value; });
 }
 ```
 
 相关参考：[标准库 ranges](std_ranges.md)、[迭代](iteration.md)。
+
+## meta
+
+`std.meta` 提供类型层工具，例如 `call_result<F, Args...>` 和 `callable<Args...>`。它用于标准库的长期泛型表达能力，而不是运行时反射。
+
+```cp
+apply<F>(value: i32, callback: F) -> call_result<F, i32>
+requires
+    F: callable<i32>
+{
+    return callback(value);
+}
+```
+
+相关参考：[元编程与反射基础](meta.md)。
 
 ## 格式化输出
 
@@ -152,7 +166,7 @@ main() -> i32
 
 ## 文件 IO
 
-`std.fs` 提供同步文件 IO。`file::open` 返回 `expected<file, file_error>` 风格结果，常用 `match` 处理成功和失败分支。
+`std.fs` 提供同步文件 IO。`file::open` 返回 `expected<file, io_error>` 风格结果，常用 `match` 处理成功和失败分支。
 
 ```cp
 main() -> i32

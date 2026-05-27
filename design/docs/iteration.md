@@ -45,8 +45,9 @@ export concept iterator {
 - `iter_item` 是每次迭代产生的元素类型。
 - `next(self&)` 需要可写 `self`，因为 iterator 本身保存遍历状态。
 - 返回 `.some(value)` 表示本轮产生一个元素，并且 iterator 已经前进到下一状态。
-- 返回 `.none` 表示迭代结束。结束后再次调用 `next` 应继续返回 `.none`。
-- 按值产生元素。引用迭代、可变引用迭代和借用生命周期不属于当前迭代协议。
+- 返回 `.none` 表示迭代结束。有限 iterator 结束后再次调用 `next` 应继续返回 `.none`。
+- `next()` 不承诺最终返回 `.none`。无限 iterator 是合法表达能力，终止性由调用者或消费它的 terminal 控制。
+- `iter_item` 可以是值类型，也可以是引用类型。借用 view 应把引用语义明确体现在 `iter_item` 中，例如 `T&`。
 
 例如：
 
@@ -74,7 +75,7 @@ impl iterator for range_iter {
 
 ## Iterable 协议
 
-`iterable` 表示一个值可以产生 iterator。它通常由容器、范围对象或视图实现。
+`iterable` 表示一个值可以产生 iterator。它通常由容器、数组或借用对象实现；iterator 本身已经能表达一次性 range，标准库 ranges 组合层直接消费 iterator。
 
 ```cp
 export module std.core.iter;
@@ -98,7 +99,7 @@ export concept iterable {
 - `iter_type` 必须实现 `iterator`。
 - `iter_type::iter_item` 必须和 `iterable::iter_item` 相同。
 - `iter(self&)` 可以保存必要的当前位置、边界、指针或引用信息。
-- 只定义可写 `self` 的入口。只读迭代需要通过 `iter(self const&)`、独立 concept 或函数重载规则单独定义。
+- 只定义可写 `self` 的入口。只读迭代需要通过 `iter(self const&)`、独立 concept 或后续 const iterable 规则单独定义。
 
 例如：
 
@@ -108,16 +109,14 @@ struct range {
     end: i32;
 }
 
-impl range {
+impl iterable for range {
+    type iter_type = range_iter;
+    type iter_item = i32;
+
     iter(self&) -> range_iter
     {
         return range_iter{ .current_value = begin, .end_value = end };
     }
-}
-
-impl iterable for range {
-    type iter_type = range_iter;
-    type iter_item = i32;
 }
 ```
 
@@ -134,13 +133,14 @@ for(let value : values) {
 语义检查先把范围表达式转换成 iterator：
 
 1. 令 `R = type(values)`。
-2. 如果 `R implements iterable`，则检查 `R::iter_type implements iterator`，并检查 `R::iter_type::iter_item == R::iter_item`。循环使用 `values.iter()` 产生的 iterator。
-3. 否则，如果 `R implements iterator`，则直接把 `values` 作为一次性 iterator 消费。
-4. 否则报错：范围表达式必须实现 `iterable` 或 `iterator`。
+2. 如果 `R` 是内建数组 `[T; N]`，则使用数组 iterator，元素类型为 `T&`。
+3. 否则，如果 `R implements iterable`，则检查 `R::iter_type implements iterator`，并检查 `R::iter_type::iter_item == R::iter_item`。循环使用 `values.iter()` 产生的 iterator。
+4. 否则，如果 `R implements iterator`，则直接把 `values` 作为一次性 iterator 消费。
+5. 否则报错：范围表达式必须实现 `iterable` 或 `iterator`。
 
 如果选中的入口需要 `self&`，但范围表达式只能作为 const 值或 const 引用使用，则报错。实现 `iterator` 不代表任意当前值都能推进；`next(self&)` 需要可写 iterator 状态。
 
-取得 iterator 后，range-for 只有一套展开规则：
+取得 iterator 后，range-for 只有一套展开规则。对无限 iterator 使用 range-for 会无限执行，除非循环体自行 `break`：
 
 ```cp
 let __iter = /* values.iter() or values */;

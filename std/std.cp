@@ -6,6 +6,7 @@ export import std.collections;
 export import std.text;
 export import std.ranges;
 export import std.compare;
+export import std.meta;
 export import std.algorithm;
 export import std.io;
 export import std.fs;

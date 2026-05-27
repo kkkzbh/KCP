@@ -141,6 +141,15 @@ auto semantic_analyzer::substitute_type(semantic_type_id type, std::vector<seman
                 }
                 return semantic_type_ids::error;
             },
+            [&](meta_type_query const& value) {
+                auto substituted = (
+                    value.arguments
+                    | std::views::transform([&](auto argument) {
+                        return substitute_type(argument, arguments);
+                    }) | std::ranges::to<std::vector<semantic_type_id>>()
+                );
+                return evaluate_meta_type_query(value.kind, std::move(substituted), source_span{});
+            },
             [&](integer_constant_type const&) { return type; },
             [&](generic_integer_parameter_type const& value) {
                 if(value.index < arguments.size()) {
