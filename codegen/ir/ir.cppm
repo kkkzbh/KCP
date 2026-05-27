@@ -1893,7 +1893,12 @@ struct function_lowerer
         auto aggregate = emit_aggregate_undef(lambda.closure_type);
         for(auto index = 0uz; index < lambda.captures.size(); ++index) {
             auto const& capture = lambda.captures[index];
-            auto value = emit_symbol_read(capture.symbol, capture.type);
+            auto value = ir_value_id{};
+            if(is_reference(capture.type)) {
+                value = emit_symbol_address(capture.symbol);
+            } else {
+                value = emit_symbol_read(capture.symbol, capture.value_type);
+            }
             if(not value.valid()) {
                 return {};
             }
@@ -2270,7 +2275,7 @@ struct function_lowerer
             if(not address.valid()) {
                 return {};
             }
-            return emit_load(address, lambda.captures[capture.field_index].type);
+            return emit_load(address, lambda.captures[capture.field_index].value_type);
         }
 
         auto symbol = resolved_name(id);
@@ -3173,11 +3178,13 @@ struct function_lowerer
         if(not environment.valid()) {
             return {};
         }
-        return emit_field_address(
+        return emit_field_value_address(
             environment,
             lambda.closure_type,
-            lambda.captures[capture.field_index].type,
-            capture.field_index
+            semantic_field_access {
+                .struct_index = lambda.closure_struct_index,
+                .field_index = capture.field_index,
+            }
         );
     }
 

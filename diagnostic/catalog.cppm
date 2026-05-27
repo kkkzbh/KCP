@@ -110,6 +110,13 @@ export auto spec(diagnostic_kind kind) -> diagnostic_spec
             return { semantic, error, "missing_return"sv, "missing return"sv };
         case cannot_infer_return_type:
             return { semantic, error, "cannot_infer_return_type"sv, "cannot infer return type"sv };
+        case independent_closure_capture:
+            return {
+                semantic,
+                warning,
+                "independent_closure_capture"sv,
+                "escaping closure captures are independent"sv
+            };
         case duplicate_field:
             return { semantic, error, "duplicate_field"sv, "duplicate field"sv };
         case unknown_field:

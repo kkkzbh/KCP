@@ -44,6 +44,19 @@ data class CpHelperNavigation(
 )
 
 @Serializable
+data class CpHelperCapture(
+    val name: String,
+    val mode: String,
+    val reason: String,
+    val referenceStartOffset: Int,
+    val referenceEndOffset: Int,
+    val sourceStartOffset: Int,
+    val sourceEndOffset: Int,
+    val mutated: Boolean,
+    val escaped: Boolean,
+)
+
+@Serializable
 data class CpInspectionFile(
     val path: String,
     val text: String,
@@ -71,6 +84,7 @@ data class CpInspectionResult(
     val accepted: Boolean,
     val diagnostics: List<CpHelperDiagnostic>,
     val highlights: List<CpHelperHighlight>,
+    val captures: List<CpHelperCapture> = emptyList(),
     val navigation: List<CpHelperNavigation> = emptyList(),
 )
 

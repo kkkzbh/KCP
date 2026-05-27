@@ -34,6 +34,9 @@ class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, CpIns
         }
 
         val textLength = file.textLength
+        val capturesByRange = annotationResult.captures.associateBy {
+            it.referenceStartOffset to it.referenceEndOffset
+        }
         for (highlight in annotationResult.highlights.distinctBy(::highlightAnnotationKey)) {
             val key = highlightKey(highlight.category) ?: continue
             val start = highlight.startOffset.coerceIn(0, textLength)
@@ -41,8 +44,13 @@ class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, CpIns
             if (end == start) {
                 continue
             }
-            holder.newSilentAnnotation(HighlightSeverity.INFORMATION)
-                .range(TextRange(start, end))
+            val capture = capturesByRange[start to end]
+            val builder = if (capture == null) {
+                holder.newSilentAnnotation(HighlightSeverity.INFORMATION)
+            } else {
+                holder.newAnnotation(HighlightSeverity.INFORMATION, captureMessage(capture))
+            }
+            builder.range(TextRange(start, end))
                 .textAttributes(key)
                 .create()
         }
@@ -62,6 +70,20 @@ class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, CpIns
         return CpSemanticCache.get(file.project).presentation(file)?.let(::Request)
     }
 
+    private fun captureMessage(capture: CpHelperCapture): String {
+        val escape = if (capture.escaped) {
+            ", escaping ${capture.reason}"
+        } else {
+            ", non-escaping"
+        }
+        val mutation = if (capture.mutated) {
+            ", mutable"
+        } else {
+            ", read-only"
+        }
+        return "capture ${capture.name}: ${capture.mode}$escape$mutation"
+    }
+
     private fun highlightKey(category: String): TextAttributesKey? = when (category) {
         "function.declaration" -> CpSyntaxHighlighter.FUNCTION_DECLARATION
         "function.call" -> CpSyntaxHighlighter.FUNCTION_CALL
@@ -79,7 +101,11 @@ class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, CpIns
         "pattern.binding" -> CpSyntaxHighlighter.PARAMETER
         "local.declaration", "local.reference" -> CpSyntaxHighlighter.LOCAL_VARIABLE
         "constant.declaration", "constant.reference" -> CpSyntaxHighlighter.LOCAL_CONSTANT
-        "lambda.capture.reference" -> CpSyntaxHighlighter.LAMBDA_CAPTURE
+        "lambda.capture.reference",
+        "lambda.capture.const_ref",
+        "lambda.capture.ref",
+        "lambda.capture.copy",
+        "lambda.capture.owned_mut_copy" -> CpSyntaxHighlighter.LAMBDA_CAPTURE
         "type" -> CpSyntaxHighlighter.TYPE
         "type.parameter", "type.parameter.pack", "self.type" -> CpSyntaxHighlighter.TYPE_PARAMETER
         "type.alias.declaration", "opaque.type.declaration" -> CpSyntaxHighlighter.TYPE_ALIAS

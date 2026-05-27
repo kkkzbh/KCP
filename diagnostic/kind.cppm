@@ -61,6 +61,7 @@ export enum class diagnostic_kind : std::uint16_t
     return_type_mismatch,
     missing_return,
     cannot_infer_return_type,
+    independent_closure_capture,
 
     // Semantic member and object diagnostics.
     duplicate_field,

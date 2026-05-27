@@ -21,8 +21,10 @@ struct loop_label
 struct return_state
 {
     std::optional<semantic_type_id> declared_return{};
+    std::optional<semantic_type_id> observed_return{};
     symbol_id nrvo_candidate{};
     bool nrvo_possible{ true };
+    bool inferred_return{};
     std::vector<stmt_id> nrvo_return_statements{};
 };
 
@@ -131,6 +133,18 @@ struct return_inference_binding
 {
     semantic_type_id type{};
     bool is_const{};
+};
+
+struct lambda_escape_capture_record
+{
+    lambda_escape_capture_record() = default;
+
+    lambda_escape_capture_record(semantic_lambda_capture_mode capture_mode, source_span capture_span) :
+        mode(capture_mode),
+        span(capture_span) {}
+
+    semantic_lambda_capture_mode mode{};
+    source_span span{};
 };
 
 struct semantic_analyzer
@@ -464,7 +478,17 @@ private:
     auto build_generic_lambda_info(lambda_expr_syntax const& node) -> semantic_lambda_info;
     auto collect_generic_lambda_captures(function_id id) -> std::vector<semantic_lambda_capture>;
     auto build_lambda_info(lambda_expr_syntax const& node, std::vector<semantic_lambda_capture> captures, function_type callable, bool force_closure) -> semantic_lambda_info;
+    auto collect_lambda_escapes_for_function(std::size_t unit_index, function_id id) -> void;
+    auto collect_lambda_escapes_in_statement(ast_arena const& ast, stmt_id id, std::vector<std::map<std::string, std::set<std::uint32_t>>>& scopes) -> void;
+    auto collect_lambda_escapes_in_expression(ast_arena const& ast, expr_id id, std::vector<std::map<std::string, std::set<std::uint32_t>>>& scopes) -> std::set<std::uint32_t>;
+    auto mark_lambdas_escaped(std::size_t unit_index, std::set<std::uint32_t> const& lambdas, semantic_lambda_escape_reason reason) -> void;
+    auto lambda_escapes(std::size_t unit_index, function_id id) const -> bool;
+    auto lambda_escape_reason(std::size_t unit_index, function_id id) const -> semantic_lambda_escape_reason;
+    auto finalize_lambda_captures(function_id id, std::vector<semantic_lambda_capture>& captures) -> void;
+    auto record_escaping_lambda_captures(std::vector<semantic_lambda_capture> const& captures) -> void;
     auto record_lambda_capture(symbol_id symbol, expr_id id) -> void;
+    auto mark_lambda_capture_mutated(expr_id id) -> void;
+    auto mark_lambda_capture_mutated_for_parameter(expr_id id, semantic_type_id parameter) -> void;
     auto constant_integer_index(ast_arena const& ast, expr_id id) -> std::optional<std::int64_t>;
     auto parse_integer_literal(std::string_view text) -> std::int64_t;
     auto parse_float_literal(std::string_view text) -> double;
@@ -519,6 +543,9 @@ private:
     std::vector<loop_label> loops{}; ///< 当前嵌套循环标签栈，用于校验跳转语句。
     std::size_t active_template_for_depth{}; ///< 当前 template for 展开深度，用于限制 break/continue 穿透。
     std::vector<lambda_capture_context> lambda_capture_stack{}; ///< 当前正在语义检查的嵌套 lambda 捕获上下文。
+    std::map<return_inference_key, semantic_lambda_escape_reason> lambda_escape_reasons{}; ///< lambda 是否逃逸以及逃逸原因。
+    std::map<symbol_id, std::vector<lambda_escape_capture_record>> escaping_capture_records{}; ///< 逃逸闭包捕获同一外部变量的记录。
+    std::set<symbol_id> warned_independent_captures{}; ///< 已发出独立逃逸 copy 警告的捕获源符号。
     std::map<return_inference_key, return_inference_state> return_states{}; ///< 函数返回类型推断状态表。
     std::vector<std::map<std::string, return_inference_binding>> return_scopes{}; ///< 返回类型推断阶段的词法绑定栈。
     std::size_t return_unit{}; ///< 当前返回类型推断所在的翻译单元下标。

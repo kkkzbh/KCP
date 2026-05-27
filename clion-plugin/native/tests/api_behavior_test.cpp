@@ -442,8 +442,13 @@ R"(> i32 {
         "inspect should highlight function type markers");
     assert_true(highlight_count(global_highlights, global_source, "lambda.marker", "f") == 2uz,
         "inspect should highlight lambda markers");
-    assert_true(highlight_count(global_highlights, global_source, "lambda.capture.reference", "bias") == 1uz,
+    assert_true(highlight_count(global_highlights, global_source, "lambda.capture.const_ref", "bias") == 1uz,
         "inspect should distinguish lambda captures");
+    assert_true(
+        std::ranges::any_of(global_highlights.captures, [](cp_lexer_helper::capture_record const& capture) {
+            return capture.name == "bias" and capture.mode == "const_ref" and not capture.escaped;
+        }),
+        "inspect should expose lambda capture metadata");
     assert_true(highlight_count(global_highlights, global_source, "constant.declaration", "bias") == 1uz,
         "inspect should distinguish const local declarations");
 

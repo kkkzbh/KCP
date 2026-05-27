@@ -187,7 +187,8 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
 
     auto& signature = result.signatures[signature_id.value];
     auto const* instance = result.function_instance_of(function_symbol);
-    auto returns = return_state{};
+    collect_lambda_escapes_for_function(unit_index, id);
+    auto returns = return_state{ .inferred_return = signature.inferred_return };
     if(not is_error(signature.returns)) {
         returns.declared_return = signature.returns;
     }
@@ -743,7 +744,7 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
             [&](return_statement_syntax const& node) {
                 auto returned = expression_info{ .type = semantic_type_ids::unit };
                 if(node.value) {
-                    if(returns.declared_return) {
+                    if(returns.declared_return and not returns.inferred_return) {
                         returned = check_expression(*active_ast, *node.value, returns.declared_return);
                     } else {
                         returned = check_expression(*active_ast, *node.value, std::nullopt);
@@ -761,6 +762,20 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                     }
                 }
 
+                if(returns.inferred_return) {
+                    if(not returns.observed_return) {
+                        returns.observed_return = returned.type;
+                        returns.declared_return = returned.type;
+                        update_inferred_function_return(active_unit_index, active_function, returned.type);
+                    } else if(not can_implicitly_convert(returned, *returns.observed_return)) {
+                        report(
+                            diagnostic_kind::return_type_mismatch,
+                            node.full_span,
+                            "return type does not match previous inferred return type"
+                        );
+                    }
+                    return;
+                }
                 if(returns.declared_return and not can_implicitly_convert(returned, *returns.declared_return)) {
                     report(
                         diagnostic_kind::return_type_mismatch,

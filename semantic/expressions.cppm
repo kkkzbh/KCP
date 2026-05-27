@@ -92,7 +92,10 @@ auto semantic_analyzer::check_expression(ast_arena const& ast, expr_id id, std::
         and not is_unit(*expected)
         and read_type(info.type) != read_type(*expected)
     ) {
-        result.expression_conversions[node_key(id)] = *expected;
+            result.expression_conversions[node_key(id)] = *expected;
+    }
+    if(expected) {
+        mark_lambda_capture_mutated_for_parameter(id, *expected);
     }
     return info;
 }
@@ -472,6 +475,9 @@ auto semantic_analyzer::check_unary_expression(ast_arena const& ast, unary_expr_
                 );
                 return expression_info{ .type = semantic_type_ids::error };
             }
+            if(not operand.is_const) {
+                mark_lambda_capture_mutated(node.operand);
+            }
             return unary_type(node.operator_kind, node.position, operand);
         case kw_ref:
             if(not operand.is_lvalue or operand.is_const) {
@@ -482,6 +488,7 @@ auto semantic_analyzer::check_unary_expression(ast_arena const& ast, unary_expr_
                 );
                 return expression_info{ .type = semantic_type_ids::error };
             }
+            mark_lambda_capture_mutated(node.operand);
             return unary_type(node.operator_kind, node.position, operand);
         case kw_const:
             if(node.const_ref and not operand.is_lvalue) {
@@ -518,6 +525,7 @@ auto semantic_analyzer::check_unary_expression(ast_arena const& ast, unary_expr_
                 );
                 return expression_info{ .type = semantic_type_ids::error };
             }
+            mark_lambda_capture_mutated(node.operand);
             return unary_type(node.operator_kind, node.position, operand);
         case kw_forward: {
             auto const& expression = ast.node(stripped_expression(node.operand));
@@ -638,6 +646,7 @@ auto semantic_analyzer::check_unary_expression(ast_arena const& ast, unary_expr_
                     "increment operand must be a non-const lvalue"
                 );
             }
+            mark_lambda_capture_mutated(node.operand);
             if(auto builtin = as_builtin(operand_value); builtin and is_integer(*builtin)) {
                 return unary_type(node.operator_kind, node.position, operand);
             }
@@ -898,6 +907,7 @@ auto semantic_analyzer::check_assignment_expression(ast_arena const& ast, assign
 {
     auto left = check_expression(ast, node.left, std::nullopt);
     auto left_type = read_type(left.type);
+    mark_lambda_capture_mutated(node.left);
     if(not left.is_lvalue) {
         report(
             diagnostic_kind::invalid_assignment_target,

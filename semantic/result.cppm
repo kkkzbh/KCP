@@ -186,6 +186,46 @@ export struct semantic_builtin_call
     semantic_type_id type{};
 };
 
+export enum class semantic_lambda_capture_mode : std::uint8_t
+{
+    const_ref,
+    ref,
+    copy,
+    owned_mut_copy,
+};
+
+export auto constexpr semantic_lambda_capture_mode_name(semantic_lambda_capture_mode mode) -> std::string_view
+{
+    using enum semantic_lambda_capture_mode;
+    switch(mode) {
+        case const_ref: return "const_ref";
+        case ref: return "ref";
+        case copy: return "copy";
+        case owned_mut_copy: return "owned_mut_copy";
+    }
+    std::unreachable();
+}
+
+export enum class semantic_lambda_escape_reason : std::uint8_t
+{
+    none,
+    returned,
+    stored,
+    passed,
+};
+
+export auto constexpr semantic_lambda_escape_reason_name(semantic_lambda_escape_reason reason) -> std::string_view
+{
+    using enum semantic_lambda_escape_reason;
+    switch(reason) {
+        case none: return "none";
+        case returned: return "returned";
+        case stored: return "stored";
+        case passed: return "passed";
+    }
+    std::unreachable();
+}
+
 export struct semantic_lambda_capture
 {
     semantic_lambda_capture() = default;
@@ -195,6 +235,7 @@ export struct semantic_lambda_capture
         name(std::move(captured_name)),
         span(captured_span),
         type(captured_type),
+        value_type(captured_type),
         is_const(captured_const) {}
 
     auto constexpr operator==(semantic_lambda_capture const&) const -> bool = default;
@@ -203,7 +244,12 @@ export struct semantic_lambda_capture
     std::string name{};
     source_span span{};
     semantic_type_id type{};
+    semantic_type_id value_type{};
+    semantic_lambda_capture_mode mode{ semantic_lambda_capture_mode::copy };
+    semantic_lambda_escape_reason escape_reason{ semantic_lambda_escape_reason::none };
     bool is_const{};
+    bool mutated{};
+    bool escaped{};
 };
 
 export struct semantic_lambda_info

@@ -43,9 +43,303 @@ auto semantic_analyzer::apply_lambda_parameter_context(lambda_expr_syntax const&
     });
 }
 
+auto lambda_escape_reason_rank(semantic_lambda_escape_reason reason) -> int
+{
+    using enum semantic_lambda_escape_reason;
+    switch(reason) {
+        case none: return 0;
+        case passed: return 1;
+        case stored: return 2;
+        case returned: return 3;
+    }
+    std::unreachable();
+}
+
+auto semantic_analyzer::collect_lambda_escapes_for_function(std::size_t unit_index, function_id id) -> void
+{
+    auto const& unit = units[unit_index];
+    auto const& function = unit.ast.node(id);
+    auto scopes = std::vector<std::map<std::string, std::set<std::uint32_t>>>{};
+    scopes.emplace_back();
+    for(auto const& parameter : function.parameters) {
+        scopes.back().emplace(std::string{ ast_source.slice(parameter.name) }, std::set<std::uint32_t>{});
+    }
+    collect_lambda_escapes_in_statement(unit.ast, function.body, scopes);
+}
+
+auto semantic_analyzer::collect_lambda_escapes_in_statement(ast_arena const& ast, stmt_id id, std::vector<std::map<std::string, std::set<std::uint32_t>>>& scopes) -> void
+{
+    std::visit(
+        overloaded {
+            [&](block_statement_syntax const& node) {
+                scopes.emplace_back();
+                for(auto child : node.statements) {
+                    collect_lambda_escapes_in_statement(ast, child, scopes);
+                }
+                scopes.pop_back();
+            },
+            [&](declaration_statement_syntax const& node) {
+                auto initializer_lambdas = collect_lambda_escapes_in_expression(ast, node.initializer, scopes);
+                if(not node.binding_names.empty()) {
+                    for(auto binding : node.binding_names) {
+                        scopes.back().emplace(std::string{ ast_source.slice(binding) }, std::set<std::uint32_t>{});
+                    }
+                    return;
+                }
+                scopes.back().emplace(std::string{ ast_source.slice(node.name) }, std::move(initializer_lambdas));
+            },
+            [&](type_alias_statement_syntax const&) {},
+            [&](if_statement_syntax const& node) {
+                collect_lambda_escapes_in_expression(ast, node.condition, scopes);
+                collect_lambda_escapes_in_statement(ast, node.then_branch, scopes);
+                if(node.else_branch) {
+                    collect_lambda_escapes_in_statement(ast, *node.else_branch, scopes);
+                }
+            },
+            [&](while_statement_syntax const& node) {
+                collect_lambda_escapes_in_expression(ast, node.condition, scopes);
+                collect_lambda_escapes_in_statement(ast, node.body, scopes);
+            },
+            [&](do_while_statement_syntax const& node) {
+                collect_lambda_escapes_in_statement(ast, node.body, scopes);
+                collect_lambda_escapes_in_expression(ast, node.condition, scopes);
+            },
+            [&](for_statement_syntax const& node) {
+                collect_lambda_escapes_in_expression(ast, node.range, scopes);
+                scopes.emplace_back();
+                scopes.back().emplace(std::string{ ast_source.slice(node.name) }, std::set<std::uint32_t>{});
+                collect_lambda_escapes_in_statement(ast, node.body, scopes);
+                scopes.pop_back();
+            },
+            [&](template_for_statement_syntax const& node) {
+                scopes.emplace_back();
+                scopes.back().emplace(std::string{ ast_source.slice(node.name) }, std::set<std::uint32_t>{});
+                collect_lambda_escapes_in_statement(ast, node.body, scopes);
+                scopes.pop_back();
+            },
+            [&](break_statement_syntax const&) {},
+            [&](continue_statement_syntax const&) {},
+            [&](return_statement_syntax const& node) {
+                if(node.value) {
+                    auto lambdas = collect_lambda_escapes_in_expression(ast, *node.value, scopes);
+                    mark_lambdas_escaped(active_unit_index, lambdas, semantic_lambda_escape_reason::returned);
+                }
+            },
+            [&](expression_statement_syntax const& node) {
+                collect_lambda_escapes_in_expression(ast, node.expression, scopes);
+            },
+        },
+        ast.node(id)
+    );
+}
+
+auto semantic_analyzer::collect_lambda_escapes_in_expression(ast_arena const& ast, expr_id id, std::vector<std::map<std::string, std::set<std::uint32_t>>>& scopes) -> std::set<std::uint32_t>
+{
+    auto merge = [](std::set<std::uint32_t>& target, std::set<std::uint32_t> source) {
+        target.insert(source.begin(), source.end());
+    };
+
+    return std::visit(
+        overloaded {
+            [&](name_expr_syntax const& node) {
+                auto name = std::string{ ast_source.identifier(node.name) };
+                for(auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+                    if(auto found = scope->find(name); found != scope->end()) {
+                        return found->second;
+                    }
+                }
+                return std::set<std::uint32_t>{};
+            },
+            [&](literal_expr_syntax const&) {
+                return std::set<std::uint32_t>{};
+            },
+            [&](unary_expr_syntax const& node) {
+                return collect_lambda_escapes_in_expression(ast, node.operand, scopes);
+            },
+            [&](binary_expr_syntax const& node) {
+                auto result = collect_lambda_escapes_in_expression(ast, node.left, scopes);
+                merge(result, collect_lambda_escapes_in_expression(ast, node.right, scopes));
+                return result;
+            },
+            [&](assignment_expr_syntax const& node) {
+                auto result = collect_lambda_escapes_in_expression(ast, node.left, scopes);
+                auto right = collect_lambda_escapes_in_expression(ast, node.right, scopes);
+                mark_lambdas_escaped(active_unit_index, right, semantic_lambda_escape_reason::stored);
+                merge(result, std::move(right));
+                return result;
+            },
+            [&](call_expr_syntax const& node) {
+                collect_lambda_escapes_in_expression(ast, node.callee, scopes);
+                for(auto argument : node.arguments) {
+                    auto lambdas = collect_lambda_escapes_in_expression(ast, argument, scopes);
+                    mark_lambdas_escaped(active_unit_index, lambdas, semantic_lambda_escape_reason::passed);
+                }
+                return std::set<std::uint32_t>{};
+            },
+            [&](member_expr_syntax const& node) {
+                return collect_lambda_escapes_in_expression(ast, node.object, scopes);
+            },
+            [&](index_expr_syntax const& node) {
+                auto result = collect_lambda_escapes_in_expression(ast, node.object, scopes);
+                merge(result, collect_lambda_escapes_in_expression(ast, node.index, scopes));
+                return result;
+            },
+            [&](associated_name_expr_syntax const&) {
+                return std::set<std::uint32_t>{};
+            },
+            [&](cast_expr_syntax const& node) {
+                return collect_lambda_escapes_in_expression(ast, node.operand, scopes);
+            },
+            [&](array_literal_expr_syntax const& node) {
+                auto result = std::set<std::uint32_t>{};
+                for(auto element : node.elements) {
+                    merge(result, collect_lambda_escapes_in_expression(ast, element, scopes));
+                }
+                return result;
+            },
+            [&](tuple_literal_expr_syntax const& node) {
+                auto result = std::set<std::uint32_t>{};
+                for(auto element : node.elements) {
+                    merge(result, collect_lambda_escapes_in_expression(ast, element, scopes));
+                }
+                return result;
+            },
+            [&](grouped_expr_syntax const& node) {
+                return collect_lambda_escapes_in_expression(ast, node.expression, scopes);
+            },
+            [&](struct_init_expr_syntax const& node) {
+                auto result = std::set<std::uint32_t>{};
+                for(auto const& initializer : node.initializers) {
+                    std::visit(
+                        overloaded {
+                            [&](named_field_initializer_syntax const& value) {
+                                merge(result, collect_lambda_escapes_in_expression(ast, value.value, scopes));
+                            },
+                            [&](positional_initializer_syntax const& value) {
+                                merge(result, collect_lambda_escapes_in_expression(ast, value.value, scopes));
+                            },
+                        },
+                        initializer
+                    );
+                }
+                return result;
+            },
+            [&](new_expr_syntax const& node) {
+                auto result = collect_lambda_escapes_in_expression(ast, node.initializer, scopes);
+                mark_lambdas_escaped(active_unit_index, result, semantic_lambda_escape_reason::stored);
+                return result;
+            },
+            [&](block_expr_syntax const& node) {
+                scopes.emplace_back();
+                for(auto statement : node.statements) {
+                    collect_lambda_escapes_in_statement(ast, statement, scopes);
+                }
+                auto result = node.tail
+                    ? collect_lambda_escapes_in_expression(ast, *node.tail, scopes)
+                    : std::set<std::uint32_t>{};
+                mark_lambdas_escaped(active_unit_index, result, semantic_lambda_escape_reason::stored);
+                scopes.pop_back();
+                return result;
+            },
+            [&](match_expr_syntax const& node) {
+                auto result = collect_lambda_escapes_in_expression(ast, node.value, scopes);
+                for(auto const& arm : node.arms) {
+                    scopes.emplace_back();
+                    if(auto const* pattern = std::get_if<match_case_pattern_syntax>(&arm.pattern)) {
+                        for(auto binding : pattern->bindings) {
+                            scopes.back().emplace(std::string{ ast_source.identifier(binding) }, std::set<std::uint32_t>{});
+                        }
+                    }
+                    merge(result, collect_lambda_escapes_in_expression(ast, arm.value, scopes));
+                    scopes.pop_back();
+                }
+                return result;
+            },
+            [&](lambda_expr_syntax const& node) {
+                return std::set<std::uint32_t>{ node.function.value };
+            },
+        },
+        ast.node(id)
+    );
+}
+
+auto semantic_analyzer::mark_lambdas_escaped(std::size_t unit_index, std::set<std::uint32_t> const& lambdas, semantic_lambda_escape_reason reason) -> void
+{
+    if(reason == semantic_lambda_escape_reason::none) {
+        return;
+    }
+    for(auto raw : lambdas) {
+        auto key = function_key(unit_index, function_id{ raw });
+        auto found = lambda_escape_reasons.find(key);
+        if(found == lambda_escape_reasons.end() or lambda_escape_reason_rank(found->second) < lambda_escape_reason_rank(reason)) {
+            lambda_escape_reasons[key] = reason;
+        }
+    }
+}
+
+auto semantic_analyzer::lambda_escapes(std::size_t unit_index, function_id id) const -> bool
+{
+    return lambda_escape_reasons.contains(return_inference_key{ unit_index, id });
+}
+
+auto semantic_analyzer::lambda_escape_reason(std::size_t unit_index, function_id id) const -> semantic_lambda_escape_reason
+{
+    auto found = lambda_escape_reasons.find(return_inference_key{ unit_index, id });
+    if(found == lambda_escape_reasons.end()) {
+        return semantic_lambda_escape_reason::none;
+    }
+    return found->second;
+}
+
+auto semantic_analyzer::finalize_lambda_captures(function_id id, std::vector<semantic_lambda_capture>& captures) -> void
+{
+    auto escaped = lambda_escapes(active_unit_index, id);
+    auto reason = lambda_escape_reason(active_unit_index, id);
+    for(auto& capture : captures) {
+        capture.value_type = read_type(capture.value_type.valid() ? capture.value_type : capture.type);
+        capture.escaped = escaped;
+        capture.escape_reason = reason;
+        if(escaped) {
+            capture.mode = capture.mutated ? semantic_lambda_capture_mode::owned_mut_copy : semantic_lambda_capture_mode::copy;
+            capture.type = capture.value_type;
+            continue;
+        }
+        auto writable = capture.mutated and not capture.is_const;
+        capture.mode = writable ? semantic_lambda_capture_mode::ref : semantic_lambda_capture_mode::const_ref;
+        capture.type = intern_type(reference_type{ capture.value_type, not writable });
+    }
+}
+
+auto semantic_analyzer::record_escaping_lambda_captures(std::vector<semantic_lambda_capture> const& captures) -> void
+{
+    for(auto const& capture : captures) {
+        if(not capture.escaped) {
+            continue;
+        }
+        auto& records = escaping_capture_records[capture.symbol];
+        records.emplace_back(
+            capture.mode,
+            capture.span
+        );
+        auto has_mutable_copy = std::ranges::any_of(records, [](lambda_escape_capture_record const& record) {
+            return record.mode == semantic_lambda_capture_mode::owned_mut_copy;
+        });
+        if(records.size() < 2uz or not has_mutable_copy or warned_independent_captures.contains(capture.symbol)) {
+            continue;
+        }
+        warned_independent_captures.emplace(capture.symbol);
+        report(
+            diagnostic_kind::independent_closure_capture,
+            capture.span,
+            std::format("{} is copied into multiple escaping closures; mutations are not shared", capture.name)
+        );
+    }
+}
+
 auto semantic_analyzer::check_lambda_body(lambda_expr_syntax const& node) -> semantic_lambda_info
 {
     infer_lambda_return_from_current_value_scope(active_unit_index, node.function);
+    collect_lambda_escapes_for_function(active_unit_index, node.function);
 
     auto symbol = result.function_symbol_of(active_context_index, active_unit_index, node.function);
     auto signature_id = result.signature_of(active_context_index, active_unit_index, node.function);
@@ -86,7 +380,7 @@ auto semantic_analyzer::check_lambda_body(lambda_expr_syntax const& node) -> sem
         }
     }
 
-    auto returns = return_state{};
+    auto returns = return_state{ .inferred_return = signature.inferred_return };
     if(not is_error(signature.returns)) {
         returns.declared_return = signature.returns;
     }
@@ -500,6 +794,7 @@ auto semantic_analyzer::instantiate_lambda(semantic_lambda_info const& lambda, s
 auto semantic_analyzer::build_lambda_info(lambda_expr_syntax const& node, std::vector<semantic_lambda_capture> captures, function_type callable, bool force_closure) -> semantic_lambda_info
 {
     auto function_symbol = result.function_symbol_of(active_context_index, active_unit_index, node.function);
+    finalize_lambda_captures(node.function, captures);
     auto info = semantic_lambda_info {
         .function = node.function,
         .function_symbol = function_symbol,
@@ -541,6 +836,7 @@ auto semantic_analyzer::build_lambda_info(lambda_expr_syntax const& node, std::v
     }
 
     result.lambda_infos[node_key(node.function)] = info;
+    record_escaping_lambda_captures(info.captures);
     return info;
 }
 
@@ -570,4 +866,37 @@ auto semantic_analyzer::record_lambda_capture(symbol_id symbol, expr_id id) -> v
         .function = capture.function,
         .field_index = found->second,
     };
+}
+
+auto semantic_analyzer::mark_lambda_capture_mutated(expr_id id) -> void
+{
+    if(lambda_capture_stack.empty()) {
+        return;
+    }
+
+    auto stripped = stripped_expression(id);
+    auto found = result.lambda_capture_accesses.find(node_key(stripped));
+    if(found == result.lambda_capture_accesses.end()) {
+        return;
+    }
+
+    auto access = found->second;
+    for(auto context = lambda_capture_stack.rbegin(); context != lambda_capture_stack.rend(); ++context) {
+        if(context->function != access.function) {
+            continue;
+        }
+        if(access.field_index < context->captures.size()) {
+            context->captures[access.field_index].mutated = true;
+        }
+        return;
+    }
+}
+
+auto semantic_analyzer::mark_lambda_capture_mutated_for_parameter(expr_id id, semantic_type_id parameter) -> void
+{
+    auto const* reference = std::get_if<reference_type>(&result.types.get(parameter));
+    if(reference == nullptr or reference->is_const or reference->reference_kind != reference_type::kind::regular) {
+        return;
+    }
+    mark_lambda_capture_mutated(id);
 }

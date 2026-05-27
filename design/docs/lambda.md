@@ -213,10 +213,14 @@ let bad_pointer: f*(i32) -> i32 = f(x: i32) {
 
 为了让默认捕获自然，同时避免悬垂引用，逃逸规则按上下文区分：
 
-- lambda 只在当前作用域内调用或传给非逃逸参数时，捕获可以按引用实现。
+- lambda 只在当前作用域内调用时，捕获按引用实现。
 - lambda 被返回、赋给外层存储、放入结构体字段或传给可能保存它的参数时，视为逃逸。
-- 逃逸 lambda 的只读捕获按值保存。
-- 逃逸 lambda 的可写捕获报错。
+- 非逃逸只读捕获是 `const_ref`，借用外层变量。
+- 非逃逸可写捕获是 `ref`，写回外层变量。
+- 逃逸只读捕获是 `copy`，创建闭包时拷贝快照。
+- 逃逸可写捕获是 `owned_mut_copy`，闭包拥有自己的可写副本。
+- 无捕获 lambda 不需要环境对象，仍按普通函数值处理。
+- 不隐式生成 shared cell 或 shared capture frame。
 
 示例：
 
@@ -240,7 +244,40 @@ make_counter()
         count = count + 1;
         count
     };
-} // error: escaping lambda mutably captures count
+}
+```
+
+这里 `count` 是逃逸可写捕获，闭包对象保存自己的 `owned_mut_copy` 字段；多次调用同一个闭包会保留该字段状态。
+
+多个逃逸闭包捕获同一个可写变量时，不共享状态，每个闭包各自保存独立副本：
+
+```cp
+make_pair()
+{
+    let count = 0;
+
+    let inc = f() {
+        count = count + 1;
+        count
+    };
+    let get = f() {
+        count
+    };
+
+    return (inc, get);
+} // warning: count is copied into multiple escaping closures; mutations are not shared
+```
+
+如果需要拆开变量身份，可以用已有块表达式创建新的局部变量，不需要额外捕获语法：
+
+```cp
+let counter = {
+    let count = 0;
+    f() {
+        count = count + 1;
+        count
+    }
+};
 ```
 
 ## 函数参数中的回调

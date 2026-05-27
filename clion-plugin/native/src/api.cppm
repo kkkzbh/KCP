@@ -85,11 +85,38 @@ struct navigation_record
     std::size_t target_end_offset{};
 };
 
+struct capture_record
+{
+    capture_record() = default;
+
+    capture_record(std::string capture_name, std::string capture_mode, std::string escape_reason, std::size_t reference_start, std::size_t reference_end, std::size_t source_start, std::size_t source_end, bool is_mutated, bool is_escaped) :
+        name(std::move(capture_name)),
+        mode(std::move(capture_mode)),
+        reason(std::move(escape_reason)),
+        reference_start_offset(reference_start),
+        reference_end_offset(reference_end),
+        source_start_offset(source_start),
+        source_end_offset(source_end),
+        mutated(is_mutated),
+        escaped(is_escaped) {}
+
+    std::string name;
+    std::string mode;
+    std::string reason;
+    std::size_t reference_start_offset{};
+    std::size_t reference_end_offset{};
+    std::size_t source_start_offset{};
+    std::size_t source_end_offset{};
+    bool mutated{};
+    bool escaped{};
+};
+
 struct inspect_result
 {
     bool accepted{};
     std::vector<diagnostic_record> diagnostics;
     std::vector<highlight_record> highlights;
+    std::vector<capture_record> captures;
     std::vector<navigation_record> navigation;
 };
 
@@ -222,10 +249,39 @@ struct highlight_collector
         }
     }
 
+    auto add_capture(semantic_result const& checked, std::size_t unit_index, expr_id id, source_span reference) -> void
+    {
+        auto access = checked.lambda_capture_of(unit_index, id);
+        if(not access.valid()) {
+            return;
+        }
+        auto lambda = checked.lambda_of(unit_index, access.function);
+        if(not lambda.valid() or access.field_index >= lambda.captures.size()) {
+            return;
+        }
+        if(reference.start == reference.end or not in_file(sources, reference, active_file)) {
+            return;
+        }
+
+        auto const& capture = lambda.captures[access.field_index];
+        captures.emplace_back(
+            capture.name,
+            std::string{ semantic_lambda_capture_mode_name(capture.mode) },
+            std::string{ semantic_lambda_escape_reason_name(capture.escape_reason) },
+            span_local_start(sources, reference),
+            span_local_end(sources, reference),
+            in_file(sources, capture.span, active_file) ? span_local_start(sources, capture.span) : 0uz,
+            in_file(sources, capture.span, active_file) ? span_local_end(sources, capture.span) : 0uz,
+            capture.mutated,
+            capture.escaped
+        );
+    }
+
     source_manager const& sources;
     file_id active_file{};
     std::set<std::tuple<std::string, std::size_t, std::size_t>> seen{};
     std::vector<highlight_record> highlights{};
+    std::vector<capture_record> captures{};
 };
 
 struct navigation_collector
@@ -496,6 +552,19 @@ auto local_category(semantic_result const* checked, symbol_id symbol, std::strin
     return fallback;
 }
 
+auto lambda_capture_category(semantic_result const& checked, std::size_t unit_index, expr_id id) -> std::string
+{
+    auto access = checked.lambda_capture_of(unit_index, id);
+    if(not access.valid()) {
+        return "lambda.capture.reference";
+    }
+    auto lambda = checked.lambda_of(unit_index, access.function);
+    if(not lambda.valid() or access.field_index >= lambda.captures.size()) {
+        return "lambda.capture.reference";
+    }
+    return std::format("lambda.capture.{}", semantic_lambda_capture_mode_name(lambda.captures[access.field_index].mode));
+}
+
 auto collect_expression_highlights(highlight_collector& collector, ast_arena const& ast, semantic_result const* checked, std::size_t unit_index, expr_id id, bool call_callee) -> void
 {
     auto const& expression = ast.node(id);
@@ -516,7 +585,8 @@ auto collect_expression_highlights(highlight_collector& collector, ast_arena con
                 return;
             }
             if(checked != nullptr and checked->lambda_capture_of(unit_index, id).valid()) {
-                collector.add("lambda.capture.reference", node.name);
+                collector.add(lambda_capture_category(*checked, unit_index, id), node.name);
+                collector.add_capture(*checked, unit_index, id, node.name);
                 return;
             }
             if(auto const symbol = semantic_symbol(); symbol.valid()) {
@@ -1983,6 +2053,7 @@ auto inspect(inspect_request request) -> inspect_result
         collect_ast_highlights(collector, parsed_units[*active_unit], semantic, *active_unit);
     }
     result.highlights = std::move(collector.highlights);
+    result.captures = std::move(collector.captures);
 
     if(active_unit and checked) {
         auto navigation = navigation_collector{ sources, *active_file };
@@ -2081,6 +2152,20 @@ auto inspect_to_json(inspect_result const& result) -> std::string
         item["category"] = highlight.category;
         item["startOffset"] = highlight.start_offset;
         item["endOffset"] = highlight.end_offset;
+    }
+
+    payload["captures"] = nlohmann::ordered_json::array();
+    for(auto const& capture : result.captures) {
+        auto& item = payload["captures"].emplace_back();
+        item["name"] = capture.name;
+        item["mode"] = capture.mode;
+        item["reason"] = capture.reason;
+        item["referenceStartOffset"] = capture.reference_start_offset;
+        item["referenceEndOffset"] = capture.reference_end_offset;
+        item["sourceStartOffset"] = capture.source_start_offset;
+        item["sourceEndOffset"] = capture.source_end_offset;
+        item["mutated"] = capture.mutated;
+        item["escaped"] = capture.escaped;
     }
 
     payload["navigation"] = nlohmann::ordered_json::array();

@@ -57,6 +57,19 @@ auto has_diagnostic(semantic_result const& result, diagnostic_kind kind) -> bool
     return std::ranges::contains(result.diagnostics, kind, &diagnostic::kind);
 }
 
+auto has_capture_mode(semantic_result const& result, std::string_view name, semantic_lambda_capture_mode mode) -> bool
+{
+    for(auto const& [key, lambda] : result.lambda_infos) {
+        static_cast<void>(key);
+        for(auto const& capture : lambda.captures) {
+            if(capture.name == name and capture.mode == mode) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 auto constexpr std_io_modules = {
     std::string_view{ "core/option.cp" },
     std::string_view{ "core/expected.cp" },
@@ -2377,6 +2390,80 @@ auto check_lambda_semantics() -> void
         "lambda main should return i32");
 }
 
+auto check_lambda_capture_modes() -> void
+{
+    auto sources = source_manager{};
+    auto parsed = parse_source(
+        sources,
+        "lambda_capture_modes.cp",
+        R"(make_read()
+{
+    let snapshot = 10;
+    return f() {
+        snapshot
+    };
+}
+
+make_write()
+{
+    let owned = 0;
+    return f() {
+        owned = owned + 1;
+        owned
+    };
+}
+
+make_pair()
+{
+    let pair_count = 0;
+    let inc = f() {
+        pair_count = pair_count + 1;
+        pair_count
+    };
+    let get = f() {
+        pair_count
+    };
+    return (inc, get);
+}
+
+main() -> i32
+{
+    let readonly = 1;
+    let read = f() {
+        readonly
+    };
+    let local_mut = 0;
+    let write = f() {
+        local_mut = local_mut + 1;
+        local_mut
+    };
+    return read() + write();
+})");
+    auto checked = analyze_single(sources, parsed);
+    test_parser::assert_true(checked.accepted(), "lambda capture mode source should pass semantic analysis");
+    test_parser::assert_true(
+        has_capture_mode(checked, "readonly", semantic_lambda_capture_mode::const_ref),
+        "non-escaping read-only capture should be const_ref");
+    test_parser::assert_true(
+        has_capture_mode(checked, "local_mut", semantic_lambda_capture_mode::ref),
+        "non-escaping mutable capture should be ref");
+    test_parser::assert_true(
+        has_capture_mode(checked, "snapshot", semantic_lambda_capture_mode::copy),
+        "escaping read-only capture should be copy");
+    test_parser::assert_true(
+        has_capture_mode(checked, "owned", semantic_lambda_capture_mode::owned_mut_copy),
+        "escaping mutable capture should be owned_mut_copy");
+    test_parser::assert_true(
+        has_capture_mode(checked, "pair_count", semantic_lambda_capture_mode::copy),
+        "second escaping closure should copy the shared source independently");
+    test_parser::assert_true(
+        has_capture_mode(checked, "pair_count", semantic_lambda_capture_mode::owned_mut_copy),
+        "mutating escaping closure should own an independent mutable copy");
+    test_parser::assert_true(
+        has_diagnostic(checked, diagnostic_kind::independent_closure_capture),
+        "multiple escaping captures with mutation should produce a warning");
+}
+
 auto check_operator_overload_semantics() -> void
 {
     auto sources = source_manager{};
@@ -2906,6 +2993,7 @@ auto main() -> int
     check_forward_reference_semantics();
     check_like_receiver_and_delete_semantics();
     check_lambda_semantics();
+    check_lambda_capture_modes();
     check_operator_overload_semantics();
     check_operator_import_semantics();
     check_operator_negative_semantics();

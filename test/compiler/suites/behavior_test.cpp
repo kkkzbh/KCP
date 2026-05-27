@@ -1143,6 +1143,81 @@ auto check_generic_lambda_binary(test_tools const& tools) -> void
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "generic lambda binary should return 42");
 }
 
+auto check_lambda_capture_mode_binaries(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("lambda-capture-modes");
+    auto source = dir / "lambda_capture_modes.cp";
+    auto app = dir / "lambda_capture_modes";
+    write_source(
+        source,
+        R"(make_counter()
+{
+    let count = 0;
+    return f() {
+        count = count + 1;
+        count
+    };
+}
+
+make_pair()
+{
+    let count = 0;
+    let inc = f() {
+        count = count + 1;
+        count
+    };
+    let get = f() {
+        count
+    };
+    return (inc, get);
+}
+
+main() -> i32
+{
+    let local_count = 0;
+    let local_inc = f() {
+        local_count = local_count + 1;
+        local_count
+    };
+    local_inc();
+    local_inc();
+    if(local_count != 2) {
+        return 1;
+    }
+
+    let counter = make_counter();
+    let first = counter();
+    let second = counter();
+    if(first != 1 or second != 2) {
+        return 2;
+    }
+
+    let pair = make_pair();
+    let inc = pair.0;
+    let get = pair.1;
+    let pair_first = inc();
+    let pair_second = inc();
+    let snapshot = get();
+    if(pair_first != 1 or pair_second != 2 or snapshot != 0) {
+        return 3;
+    }
+
+    let block_counter = {
+        let block_count = 0;
+        f() {
+            block_count = block_count + 1;
+            block_count
+        }
+    };
+    return block_counter() + 41;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile lambda capture mode binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "lambda capture mode binary should return 42");
+}
+
 auto check_generic_struct_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("generic-struct");
@@ -3546,6 +3621,7 @@ auto main(int argc, char** argv) -> int
     check_lambda_binary(tools);
     check_nested_inferred_lambda_binary(tools);
     check_generic_lambda_binary(tools);
+    check_lambda_capture_mode_binaries(tools);
     check_generic_struct_binary(tools);
     check_const_generic_struct_binary(tools);
     check_generic_function_binary(tools);
