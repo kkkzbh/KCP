@@ -73,7 +73,7 @@ sum_to(end: i32) -> i32
 }
 ```
 
-范围 `for` 依赖 `iterable` / `iterator` 协议，标准库的 `iota` 提供最常见的半开范围。
+范围 `for` 依赖 `iterable` / `const_iterable` 协议，标准库的 `iota` 提供最常见的半开范围。`.iter()` 返回的是内部游标，不能直接作为范围表达式。
 
 相关参考：[流程控制](flow.md)、[迭代](iteration.md)、[标准库 ranges](std_ranges.md)。
 

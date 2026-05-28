@@ -504,14 +504,20 @@ struct llvm_module_lowerer
                 bind(instruction.result, globals[instruction.global_index]);
                 break;
             case field_address:
-                bind(
-                    instruction.result,
-                    builder.CreateStructGEP(
-                        types.lower(instruction.aggregate_type),
-                        value(instruction.operands.front()),
-                        static_cast<unsigned>(instruction.indices.front())
-                    )
-                );
+                {
+                    auto* current_type = types.lower(instruction.aggregate_type);
+                    auto* current_value = value(instruction.operands.front());
+                    for(auto index : instruction.indices) {
+                        auto* struct_type = llvm::cast<llvm::StructType>(current_type);
+                        current_value = builder.CreateStructGEP(
+                            current_type,
+                            current_value,
+                            static_cast<unsigned>(index)
+                        );
+                        current_type = struct_type->getElementType(static_cast<unsigned>(index));
+                    }
+                    bind(instruction.result, current_value);
+                }
                 break;
             case element_address:
                 bind(

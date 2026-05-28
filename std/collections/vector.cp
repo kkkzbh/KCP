@@ -10,11 +10,6 @@ export struct vector<T> {
     len: usize;
 }
 
-export struct vector_iter<T> {
-    current: T*;
-    end: T*;
-}
-
 impl vector<T> {
     vector() = default;
 
@@ -291,28 +286,23 @@ impl vector<T> {
     }
 }
 
-impl iterator for vector_iter<T> {
+impl iterable for vector<T> {
+    type iter_type = ptr_iter<T>;
     type iter_item = T&;
 
-    next(self&) -> optional<T&>
+    iter(self&) -> ptr_iter<T>
     {
-        if(current >= end) {
-            return optional<T&>::none;
-        }
-
-        let item = current;
-        current = current + 1;
-        return optional<T&>::some(ref *item);
+        return ptr_iter<T>{ .current = data(), .end = data() + len };
     }
 }
 
-impl iterable for vector<T> {
-    type iter_type = vector_iter<T>;
-    type iter_item = T&;
+impl const_iterable for vector<T> {
+    type const_iter_type = const_ptr_iter<T>;
+    type const_iter_item = T const&;
 
-    iter(self&) -> vector_iter<T>
+    iter(self const&) -> const_ptr_iter<T>
     {
-        return vector_iter<T>{ .current = storage.data(), .end = storage.data() + len };
+        return const_ptr_iter<T>{ .current = data(), .end = data() + len };
     }
 }
 

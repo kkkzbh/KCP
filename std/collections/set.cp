@@ -3,6 +3,7 @@ export module std.collections.set;
 import std.collections.detail.btree;
 import std.collections.detail.btree_storage;
 import std.compare;
+import std.core.iter;
 import std.core.option;
 
 export struct set_node<K> {
@@ -99,5 +100,65 @@ impl set<K, Order> {
     rank(self const&, key: K const&) -> usize
     {
         return tree.rank(key);
+    }
+}
+
+export struct set_iter<K, Order: ordering<K> = asc<K>> {
+    source: set<K, Order>*;
+    index: usize;
+}
+
+export struct const_set_iter<K, Order: ordering<K> = asc<K>> {
+    source: set<K, Order> const*;
+    index: usize;
+}
+
+impl<K, Order: ordering<K>> iterator for set_iter<K, Order> {
+    type iter_item = K&;
+
+    next(self&) -> optional<K&>
+    {
+        if(index >= (*source).size()) {
+            return optional<K&>::none;
+        }
+
+        let current = index;
+        index += 1;
+        return optional<K&>::some(ref (*source).nth(current));
+    }
+}
+
+impl<K, Order: ordering<K>> iterator for const_set_iter<K, Order> {
+    type iter_item = K const&;
+
+    next(self&) -> optional<K const&>
+    {
+        if(index >= (*source).size()) {
+            return optional<K const&>::none;
+        }
+
+        let current = index;
+        index += 1;
+        return optional<K const&>::some(const ref (*source).nth(current));
+    }
+}
+
+impl<K, Order: ordering<K>> iterable for set<K, Order> {
+    type iter_type = set_iter<K, Order>;
+    type iter_item = K&;
+
+    iter(self&) -> set_iter<K, Order>
+    {
+        return set_iter<K, Order>{ .source = &self, .index = 0 as usize };
+    }
+}
+
+impl<K, Order: ordering<K>> const_iterable for set<K, Order> {
+    type const_iter_type = const_set_iter<K, Order>;
+    type const_iter_item = K const&;
+
+    iter(self const&) -> const_set_iter<K, Order>
+    {
+        return const_set_iter<K, Order>{ .source = &self, .index = 0 as usize };
     }
 }

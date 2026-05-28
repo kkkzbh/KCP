@@ -85,11 +85,10 @@ T forward&
 
 `T forward&` 是独立于 C++ `T&&` 的显式转发设计：
 
-- `T forward&` 可绑定可写左值、临时值、函数返回值和 `move x`。
-- `T forward&` 不绑定 const 左值；只读场景使用 `T const&` 和 `const value`。
+- `T forward&` 可绑定可写左值、const 左值、临时值、函数返回值和 `move x`。
 - 命名的 `T forward&` 参数在函数体内按左值使用。
 - 继续传递原始值类别必须写 `forward value`。
-- 同一个泛型函数以左值和右值调用时生成不同实例签名，避免把 `T&` 和 `T move&` 混用。
+- 同一个泛型函数以可写左值、const 左值和右值调用时生成不同实例签名，避免把 `T&`、`T const&` 和 `T move&` 混用。
 
 `T like` 是为成员函数和 concept requirement 准备的窄规则。它只传播 receiver 的 target constness，不传播 move，不推导基础类型，也不表示任意类型限定：
 
@@ -240,6 +239,7 @@ forward value
 
 - `forward expr` 只允许作用于当前函数的 `forward&` 参数。
 - 如果该参数由左值绑定，`forward value` 表现为普通可写左值。
+- 如果该参数由 const 左值绑定，`forward value` 表现为只读左值。
 - 如果该参数由临时值、函数返回值或 `move` 绑定，`forward value` 表现为 `move value`。
 - 多次转发右值不绕过 moved-state 检查；需要继续转移仍然必须显式写 `forward`。
 

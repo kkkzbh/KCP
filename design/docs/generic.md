@@ -98,6 +98,22 @@ TypePack
 TemplateFor
     -> template for ( TemplateForBinding : PackExpansion ) Block
 
+TemplateIf
+    -> template if ( TemplateIfCondition ) Block TemplateIfElse*
+
+TemplateIfElse
+    -> else template if ( TemplateIfCondition ) Block
+     | else Block
+
+TemplateIfCondition
+    -> Type == Type
+     | Type : ConceptId
+     | Expression
+     | not TemplateIfCondition
+     | TemplateIfCondition and TemplateIfCondition
+     | TemplateIfCondition or TemplateIfCondition
+     | ( TemplateIfCondition )
+
 TemplateForBinding
     -> let identifier
      | const identifier
@@ -505,6 +521,27 @@ debug<T...>(values: T...)
 - `return` 仍然返回外层函数、lambda 或当前函数边界。
 - `break` 和 `continue` 不允许直接作用于 `template for`，因为它不是运行时循环。
 - 展开后的语句按普通语义检查；依赖类型或依赖表达式可以延迟到实例化后检查。
+
+## template if
+
+`template if` 是语句级编译期分支，用于在泛型实例化后选择一段普通语句体：
+
+```cp
+select<T>(value: T) -> i32
+{
+    template if(T == i32) {
+        return value;
+    } else template if(T == bool) {
+        return 1;
+    } else {
+        return 0;
+    }
+}
+```
+
+条件支持类型相等、concept 条件、可求值为 `bool` 的编译期常量表达式，以及 `not`、`and`、`or` 和括号组合。`T == U` 两侧能作为类型解析时按类型相等处理；普通表达式相等仍按常量表达式求值。
+
+选中分支按普通语句做语义检查并参与 IR/codegen；未选中分支只要求语法正确，不解析名字、不检查类型，也不参与返回、循环或借用状态。没有分支命中且没有 `else` 时等价于空语句。
 
 参数包约束可以写在内联泛型参数或 `requires` 中：
 
@@ -941,7 +978,7 @@ main() -> i32
 3. 检查显式 concept / `requires` 约束。
 4. 用具体类型替换类型参数。
 5. 对替换后的函数体执行完整语义检查，包括依赖 UFCS 调用。
-6. 缓存已成功实例化的版本，避免重复生成；含 `forward&` 参数的函数还要把每个 forward 参数的左值/右值绑定类别放入实例化 key。
+6. 缓存已成功实例化的版本，避免重复生成；含 `forward&` 参数的函数还要把每个 forward 参数的可写左值、const 左值、右值绑定类别放入实例化 key。
 
 如果实例化失败，诊断应同时指出调用点和泛型函数体中失败的依赖操作。
 

@@ -435,6 +435,58 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 7, "range-for sum should return 7");
 }
 
+auto check_range_for_binding_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("range-for-binding");
+    auto source = dir / "range_for_binding.cp";
+    auto app = dir / "range_for_binding";
+    write_source(
+        source,
+        R"(import std;
+
+main() -> i32
+{
+    let values = vector<i32>{};
+    values.push_back(1);
+    values.push_back(2);
+
+    for(let value : values) {
+        value += 10;
+    }
+    let after_value_loop = values[0];
+
+    for(let ref value : values) {
+        value += 20;
+    }
+    let after_ref_loop = values[0];
+
+    const fixed = values;
+    let readonly_sum = 0;
+    for(const ref value : fixed) {
+        readonly_sum += value;
+    }
+
+    let enumerated_sum = 0;
+    for(const entry : values.enumerate()) {
+        const ref (index, item) = entry;
+        enumerated_sum += index as i32 + item;
+    }
+
+    let texts = vector<string>{};
+    texts.push_back(string{"a"});
+    for(let text : texts) {
+        text.push_back('b');
+    }
+
+    return after_value_loop + after_ref_loop + readonly_sum + enumerated_sum + texts[0].size() as i32;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile range-for binding modes");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 110, "range-for value/ref/const-ref bindings should have distinct runtime behavior");
+}
+
 auto check_array_index_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("array-index");
@@ -1408,6 +1460,38 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 22, "generic function binary should return monomorphized value");
 }
 
+auto check_template_if_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("template-if");
+    auto source = dir / "template_if.cp";
+    auto app = dir / "template_if";
+    write_source(
+        source,
+        R"(select<T>(value: T) -> i32
+{
+    template if(T == i32) {
+        return value;
+    } else template if(T == bool) {
+        if(value) {
+            return 20;
+        }
+        return 0;
+    } else {
+        return missing_name;
+    }
+}
+
+main() -> i32
+{
+    return select(22) + select(true);
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile template if binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "template if binary should emit only selected branches");
+}
+
 auto check_inferred_parameter_generic_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("inferred-parameter-generic");
@@ -1500,7 +1584,7 @@ auto check_parameter_pack_binary(test_tools const& tools) -> void
         R"(sum<T...>(values: T...) -> i32
 {
     let total = 0;
-    template fo)" "r" R"( (let value : values...) {
+    template fo)" "r" R"( (const ref value : values...) {
         total = total + value;
     }
     return total;
@@ -1545,11 +1629,10 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "parameter pack binary should return 42");
 }
 
-auto check_direct_iterator_consumes_original_binary(test_tools const& tools) -> void
+auto check_direct_iterator_range_for_rejected_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("direct-iterator");
     auto source = dir / "direct_iterator.cp";
-    auto app = dir / "direct_iterator";
     write_source(
         source,
         R"(variant optional<T> {
@@ -1592,9 +1675,8 @@ main() -> i32
 })"
     );
 
-    auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile direct iterator range-for binary");
-    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "direct iterator range-for should consume original cursor");
+    auto status = compile(tools, { source.string(), "-o", (dir / "direct_iterator").string() });
+    test_parser::assert_true(status != 0, "range-for should reject direct iterator cursors");
 }
 
 auto check_string_index_binary(test_tools const& tools) -> void
@@ -2352,6 +2434,11 @@ read(value: i32 const&) -> i32
     return value;
 }
 
+relay_read<T>(value: T forward&) -> i32
+{
+    return read(forward value);
+}
+
 copy_value(value: i32) -> i32
 {
     return value + 1;
@@ -2366,7 +2453,9 @@ main() -> i32
     let c = relay_move(move second);
     let d = read(const first);
     let e = copy_value(const first);
-    return a + b + c + d + e + 10;
+    const third = 4;
+    let f = relay_read(third);
+    return a + b + c + d + e + f + 6;
 })"
     );
 
@@ -2465,8 +2554,24 @@ main() -> i32
     let repeated = repeat(1).take(5 as usize).count() as i32;
     let indexed = repeat(0).enumerate().take(3 as usize).count() as i32;
     let values: [i32; 3] = [1, 2, 3];
-    let borrowed = all(ref values).filter(f(value: i32&) -> bool { return value > 1; }).count() as i32;
-    return sum + repeated + indexed + borrowed + 21;
+    let borrowed = values.filter(f(value: i32&) -> bool { return value > 1; }).count() as i32;
+    let left = vector<i32>{};
+    left.push_back(1);
+    left.push_back(2);
+    let right = vector<i32>{};
+    right.push_back(3);
+    right.push_back(4);
+    let paired = 0;
+    for(const pair : zip(left, right)) {
+        paired += pair.0 + pair.1;
+    }
+    for(const item : left.enumerate()) {
+        paired += item.0 as i32 + item.1;
+    }
+    for(const ref value : left.drop(1 as usize)) {
+        paired += value;
+    }
+    return sum + repeated + indexed + borrowed + paired + 5;
 })"
     );
 
@@ -2506,6 +2611,10 @@ main() -> i32
     if(values.rank(3) != 2 or values.remove(8) or not values.remove(1)) {
         return 3;
     }
+    let map_total = 0;
+    for(const entry : values) {
+        map_total += entry.key + entry.value;
+    }
 
     let keys = set<i32>{};
     let a = keys.insert(4);
@@ -2517,6 +2626,13 @@ main() -> i32
     if(keys.size() != 2 or keys.nth(0 as usize) != 2 or keys.rank(4) != 1) {
         return 5;
     }
+    let key_total = 0;
+    for(const ref key : keys) {
+        key_total += key;
+    }
+    if(map_total != 56 or key_total != 6) {
+        return 7;
+    }
 
     return values.at(2) + values.at(3) - keys.nth(0 as usize) - keys.rank(4) as i32 - values.size() as i32 - keys.size() as i32 - 3;
 })"
@@ -2525,6 +2641,62 @@ main() -> i32
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status == 0, "cp should compile std map/set binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 41, "std map/set binary should return ordered-container checksum");
+}
+
+auto check_default_compare_map_set_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("default-compare-map-set");
+    auto source = dir / "default_compare_map_set.cp";
+    auto app = dir / "default_compare_map_set";
+    write_source(
+        source,
+        R"(import std;
+
+enum marker : u8 {
+    alpha = 1;
+    beta = 2;
+}
+
+struct key {
+    name: str;
+    priority: i32;
+    marker: marker;
+}
+
+impl key {
+    operator <=>(self const&, rhs: this const&) -> weak_ordering = default;
+}
+
+main() -> i32
+{
+    let keys = set<key>{};
+    let first = keys.insert(key{ .name = "b", .priority = 0, .marker = marker::alpha });
+    let second = keys.insert(key{ .name = "a", .priority = 1, .marker = marker::beta });
+    let third = keys.insert(key{ .name = "a", .priority = 1, .marker = marker::alpha });
+    let duplicate = keys.insert(key{ .name = "a", .priority = 1, .marker = marker::beta });
+    if(not first.inserted or not second.inserted or not third.inserted or duplicate.inserted) {
+        return 1;
+    }
+    if(keys.size() != 3 or keys.rank(key{ .name = "a", .priority = 1, .marker = marker::beta }) != 1) {
+        return 2;
+    }
+
+    let values = map<key, i32>{};
+    values.insert(key{ .name = "a", .priority = 1, .marker = marker::alpha }, 22);
+    values.insert(key{ .name = "a", .priority = 1, .marker = marker::beta }, 17);
+    if(values.size() != 2) {
+        return 3;
+    }
+    return values.at(key{ .name = "a", .priority = 1, .marker = marker::alpha })
+        + values.at(key{ .name = "a", .priority = 1, .marker = marker::beta })
+        + keys.rank(key{ .name = "b", .priority = 0, .marker = marker::alpha }) as i32
+        + 1;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile defaulted comparison map/set binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "defaulted comparison should order map/set keys lexicographically");
 }
 
 auto check_std_map_set_btree_stress_binary(test_tools const& tools) -> void
@@ -3489,6 +3661,11 @@ auto check_compiler_lab_lr1_table_binary(test_tools const& tools) -> void
         source,
         R"(import std;
 
+enum lookahead_kind : u8 {
+    eof = 0;
+    semicolon = 15;
+}
+
 struct table_key {
     state: i32;
     symbol: i32;
@@ -3497,7 +3674,7 @@ struct table_key {
 struct lr1_item {
     rule: i32;
     dot: i32;
-    lookahead: i32;
+    lookahead: lookahead_kind;
 }
 
 variant action {
@@ -3508,22 +3685,11 @@ variant action {
 }
 
 impl table_key {
-    operator <=>(self const&, rhs: table_key const&) -> weak_ordering
-    {
-        if(state != rhs.state) {
-            return state <=> rhs.state;
-        }
-        return symbol <=> rhs.symbol;
-    }
+    operator <=>(self const&, rhs: this const&) -> weak_ordering = default;
 }
 
 impl lr1_item {
-    operator <=>(self const&, rhs: lr1_item const&) -> weak_ordering
-    {
-        if(rule != rhs.rule) { return rule <=> rhs.rule; }
-        if(dot != rhs.dot) { return dot <=> rhs.dot; }
-        return lookahead <=> rhs.lookahead;
-    }
+    operator <=>(self const&, rhs: this const&) -> weak_ordering = default;
 }
 
 score(act: action const&) -> i32
@@ -3539,9 +3705,9 @@ score(act: action const&) -> i32
 main() -> i32
 {
     let closure = set<lr1_item>{};
-    closure.insert(lr1_item{ .rule = 0, .dot = 0, .lookahead = 0 });
-    closure.insert(lr1_item{ .rule = 1, .dot = 0, .lookahead = 0 });
-    closure.insert(lr1_item{ .rule = 1, .dot = 0, .lookahead = 0 });
+    closure.insert(lr1_item{ .rule = 0, .dot = 0, .lookahead = lookahead_kind::eof });
+    closure.insert(lr1_item{ .rule = 1, .dot = 0, .lookahead = lookahead_kind::eof });
+    closure.insert(lr1_item{ .rule = 1, .dot = 0, .lookahead = lookahead_kind::eof });
     if(closure.size() != 2) { return 1; }
 
     let actions = map<table_key, action>{};
@@ -3558,7 +3724,7 @@ main() -> i32
     return score(actions.at(table_key{ .state = 0, .symbol = 1 }))
         + score(actions.at(table_key{ .state = 2, .symbol = 0 }))
         + score(actions.at(table_key{ .state = 1, .symbol = 0 }))
-        + closure.rank(lr1_item{ .rule = 1, .dot = 0, .lookahead = 0 }) as i32
+        + closure.rank(lr1_item{ .rule = 1, .dot = 0, .lookahead = lookahead_kind::eof }) as i32
         + 20;
 }
 )"
@@ -3731,6 +3897,7 @@ auto main(int argc, char** argv) -> int
     check_keep_ll(tools);
     check_keep_obj(tools);
     check_sum_non_negative(tools);
+    check_range_for_binding_binary(tools);
     check_array_index_binary(tools);
     check_tuple_member_binary(tools);
     check_accumulate_and_countdown(tools);
@@ -3759,11 +3926,12 @@ auto main(int argc, char** argv) -> int
     check_generic_struct_binary(tools);
     check_const_generic_struct_binary(tools);
     check_generic_function_binary(tools);
+    check_template_if_binary(tools);
     check_inferred_parameter_generic_binary(tools);
     check_const_generic_array_binary(tools);
     check_imported_generic_function_binary(tools);
     check_parameter_pack_binary(tools);
-    check_direct_iterator_consumes_original_binary(tools);
+    check_direct_iterator_range_for_rejected_binary(tools);
     check_string_index_binary(tools);
     check_string_iteration_binary(tools);
     check_string_compare_binary(tools);
@@ -3781,6 +3949,7 @@ auto main(int argc, char** argv) -> int
     check_iota_custom_incrementable_binary(tools);
     check_ranges_pipeline_binary(tools);
     check_std_map_set_binary(tools);
+    check_default_compare_map_set_binary(tools);
     check_std_map_set_btree_stress_binary(tools);
     check_compiler_lab_workload_binary(tools);
     check_compiler_lab_ll1_sets_binary(tools);

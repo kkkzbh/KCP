@@ -40,7 +40,7 @@ main() -> i32
         .fold(0, f(total: i32, value: i32) -> i32 { return total + value; });
     let repeated_count = repeat(1).take(5 as usize).count() as i32;
     let borrowed_values: [i32; 3] = [1, 2, 3];
-    let borrowed_count = all(ref borrowed_values)
+    let borrowed_count = borrowed_values
         .filter(f(value: i32&) -> bool { return value > 1; })
         .count() as i32;
     let mapper = f(value: i32) -> i32 { return value + 1; };

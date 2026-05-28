@@ -115,3 +115,13 @@ impl iterable for str {
         return str_iter{ .text = self, .index = 0 };
     }
 }
+
+impl const_iterable for str {
+    type const_iter_type = str_iter;
+    type const_iter_item = char;
+
+    iter(self const&) -> str_iter
+    {
+        return str_iter{ .text = self, .index = 0 };
+    }
+}

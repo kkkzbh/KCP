@@ -244,6 +244,11 @@ struct function_lowerer
         return semantics.template_for_expansions_of(current_context_index(), unit_index, id);
     }
 
+    auto template_if_selection_of(stmt_id id) const -> semantic_template_if_selection
+    {
+        return semantics.template_if_selection_of(current_context_index(), unit_index, id);
+    }
+
     auto local_binding_of(source_span name) const -> symbol_id
     {
         return semantics.local_binding_of(current_context_index(), unit_index, name);
@@ -375,6 +380,19 @@ struct function_lowerer
         function = &module.functions.back();
 
         auto const& signature = semantics.signatures[signature_id.value];
+        if(semantic_function_body_is_defaulted_compare(symbol_info.body_kind)) {
+            for(auto index = 0uz; index < syntax.parameters.size() and index < signature.parameters.size(); ++index) {
+                function->parameters.emplace_back(
+                    make_value(),
+                    signature.parameters[index],
+                    symbol_id{},
+                    std::string{ ast_source.slice(syntax.parameters[index].name) }
+                );
+            }
+            current = add_block("entry");
+            return emit_default_compare_body(symbol, signature);
+        }
+
         if(not semantic_function_body_has_source(symbol_info.body_kind)) {
             for(auto index = 0uz; index < syntax.parameters.size() and index < signature.parameters.size(); ++index) {
                 function->parameters.emplace_back(
@@ -620,13 +638,54 @@ struct function_lowerer
         return emit(std::move(instruction));
     }
 
-    auto emit_field_address(ir_value_id base, semantic_type_id aggregate_type, semantic_type_id field_type, std::uint64_t index) -> ir_value_id
+    auto emit_store_range_binding(ir_value_id address, semantic_type_id binding_type, ir_value_id payload, semantic_type_id payload_type) -> bool
+    {
+        if(is_reference(binding_type)) {
+            if(not payload.valid()) {
+                return false;
+            }
+            emit_store(address, payload, binding_type);
+            return true;
+        }
+
+        auto value = payload;
+        if(is_reference(payload_type)) {
+            auto const* reference = std::get_if<reference_type>(&module.types.get(payload_type));
+            auto constructor = copy_constructor_for_type(binding_type, reference != nullptr and reference->is_const);
+            if(constructor.valid()) {
+                auto const* function = std::get_if<function_type>(&module.types.get(semantics.symbols[constructor.value].type));
+                if(function == nullptr or function->parameters.empty()) {
+                    return false;
+                }
+                auto instruction = emit_value_instruction(ir_opcode::call, function->returns);
+                instruction.symbol = constructor;
+                instruction.operands = { payload };
+                value = emit(std::move(instruction));
+            } else {
+                value = emit_load(payload, binding_type);
+            }
+        } else {
+            value = cast_to(payload, payload_type, binding_type);
+        }
+        if(not value.valid()) {
+            return false;
+        }
+        emit_store(address, value, binding_type);
+        return true;
+    }
+
+    auto emit_field_address(ir_value_id base, semantic_type_id aggregate_type, semantic_type_id field_type, std::vector<std::uint64_t> indices) -> ir_value_id
     {
         auto instruction = emit_value_instruction(ir_opcode::field_address, field_type);
         instruction.operands = { base };
         instruction.aggregate_type = aggregate_type;
-        instruction.indices = { index };
+        instruction.indices = std::move(indices);
         return emit(std::move(instruction));
+    }
+
+    auto emit_field_address(ir_value_id base, semantic_type_id aggregate_type, semantic_type_id field_type, std::uint64_t index) -> ir_value_id
+    {
+        return emit_field_address(base, aggregate_type, field_type, std::vector<std::uint64_t>{ index });
     }
 
     auto emit_field_value_address(ir_value_id base, semantic_type_id aggregate_type, semantic_field_access field) -> ir_value_id
@@ -641,10 +700,7 @@ struct function_lowerer
 
     auto expression_requests_move(expr_id id) const -> bool
     {
-        auto const& expression = parsed->ast.node(stripped_expression(id));
-        auto const* unary = std::get_if<unary_expr_syntax>(&expression);
-        return unary != nullptr
-               and (unary->operator_kind == token_kind::kw_move or unary->operator_kind == token_kind::kw_forward);
+        return info_of(id).is_move;
     }
 
     auto copy_move_constructor_for(expr_id argument, semantic_type_id target_type) const -> symbol_id
@@ -685,8 +741,39 @@ struct function_lowerer
         return {};
     }
 
+    auto copy_constructor_for_type(semantic_type_id target_type, bool source_const) const -> symbol_id
+    {
+        auto struct_index = struct_index_of(target_type);
+        if(not struct_index) {
+            return {};
+        }
+
+        for(auto symbol : module.structs[*struct_index].constructors) {
+            auto const& constructor = semantics.symbols[symbol.value];
+            if(semantic_function_body_is_deleted(constructor.body_kind)) {
+                continue;
+            }
+            auto const* function = std::get_if<function_type>(&module.types.get(constructor.type));
+            if(function == nullptr or function->parameters.size() != 1uz) {
+                continue;
+            }
+            auto const* reference = std::get_if<reference_type>(&module.types.get(function->parameters.front()));
+            if(reference == nullptr or read_type(reference->pointee) != read_type(target_type)) {
+                continue;
+            }
+            if(reference->reference_kind == reference_type::kind::regular and (reference->is_const or not source_const)) {
+                return symbol;
+            }
+        }
+        return {};
+    }
+
     auto emit_constructed_value(expr_id argument, semantic_type_id target_type) -> ir_value_id
     {
+        if(is_reference(target_type)) {
+            return emit_address(argument);
+        }
+
         if(auto constructor = copy_move_constructor_for(argument, target_type); constructor.valid()) {
             auto const* function = std::get_if<function_type>(&module.types.get(semantics.symbols[constructor.value].type));
             if(function == nullptr or function->parameters.empty()) {
@@ -1242,6 +1329,9 @@ struct function_lowerer
                 [&](template_for_statement_syntax const& node) {
                     return emit_template_for_statement(node, id);
                 },
+                [&](template_if_statement_syntax const&) {
+                    return emit_template_if_statement(id);
+                },
             },
             statement
         );
@@ -1301,12 +1391,24 @@ struct function_lowerer
             auto depth = cleanup_depth();
             context_stack.emplace_back(expansion.context_index);
             if(expansion.kind == semantic_template_for_expansion_kind::value) {
-                auto source_address = address_of(expansion.pack_symbol);
-                if(not source_address.valid()) {
-                    context_stack.pop_back();
-                    return fail("template for value expansion is missing source parameter storage");
+                if(node.is_ref) {
+                    auto source_address = emit_symbol_address(expansion.pack_symbol);
+                    if(not source_address.valid()) {
+                        context_stack.pop_back();
+                        return fail("template for ref expansion is missing source parameter address");
+                    }
+                    auto binding_type = semantics.symbols[expansion.binding_symbol.value].type;
+                    auto binding_address = emit_alloca(binding_type, std::string{ ast_source.slice(node.name) });
+                    bind(expansion.binding_symbol, binding_address);
+                    emit_store(binding_address, source_address, binding_type);
+                } else {
+                    auto source_address = address_of(expansion.pack_symbol);
+                    if(not source_address.valid()) {
+                        context_stack.pop_back();
+                        return fail("template for value expansion is missing source parameter storage");
+                    }
+                    bind(expansion.binding_symbol, source_address);
                 }
-                bind(expansion.binding_symbol, source_address);
             }
             if(not emit_statement(node.body)) {
                 context_stack.pop_back();
@@ -1318,6 +1420,27 @@ struct function_lowerer
             }
             discard_cleanups_to(depth);
         }
+        return true;
+    }
+
+    auto emit_template_if_statement(stmt_id id) -> bool
+    {
+        auto selection = template_if_selection_of(id);
+        if(not selection.has_body) {
+            return true;
+        }
+
+        auto depth = cleanup_depth();
+        context_stack.emplace_back(selection.context_index);
+        if(not emit_statement(selection.body)) {
+            context_stack.pop_back();
+            return false;
+        }
+        context_stack.pop_back();
+        if(not current_block().terminated()) {
+            emit_cleanups_to(depth);
+        }
+        discard_cleanups_to(depth);
         return true;
     }
 
@@ -1361,11 +1484,21 @@ struct function_lowerer
                     tuple->elements[index],
                     index
                 );
-                emit_store(address, element_address, type);
+                auto payload = is_reference(tuple->elements[index])
+                    ? emit_load(element_address, tuple->elements[index])
+                    : element_address;
+                if(not payload.valid()) {
+                    return false;
+                }
+                emit_store(address, payload, type);
             } else {
                 auto element = emit_extract_value(initializer_value, tuple->elements[index], index);
-                emit_store(address, element, type);
-                register_cleanup(symbol, address, type);
+                if(not emit_store_range_binding(address, type, element, tuple->elements[index])) {
+                    return false;
+                }
+                if(not is_reference(type)) {
+                    register_cleanup(symbol, address, type);
+                }
             }
         }
         return true;
@@ -1478,21 +1611,33 @@ struct function_lowerer
             return emit_protocol_for_statement(node, id, metadata);
         }
 
-        auto range = emit_expression(node.range);
-        if(not range.valid()) {
-            return false;
-        }
         auto range_type = info_of(node.range).read_type;
         auto shape = aggregate_shape_of(range_type);
         if(not shape) {
             return fail("for range lowering requires array type");
         }
 
+        auto range_address = ir_value_id{};
+        if(info_of(node.range).is_lvalue) {
+            range_address = emit_address(node.range);
+        } else {
+            auto range = emit_expression(node.range);
+            if(not range.valid()) {
+                return false;
+            }
+            range_address = emit_alloca(range_type, "for.range.tmp");
+            emit_store(range_address, range, range_type);
+        }
+        if(not range_address.valid()) {
+            return false;
+        }
+
         auto symbol = binding_of(id);
         if(not symbol.valid()) {
             return fail("for binding is missing semantic binding");
         }
-        auto address = emit_alloca(shape->element, std::string{ ast_source.slice(node.name) });
+        auto binding_type = semantics.symbols[symbol.value].type;
+        auto address = emit_alloca(binding_type, std::string{ ast_source.slice(node.name) });
         bind(symbol, address);
 
         auto end_block = add_block("for.end");
@@ -1518,10 +1663,15 @@ struct function_lowerer
             auto next_block = index + 1uz < iteration_blocks.size()
                 ? iteration_blocks[index + 1uz]
                 : end_block;
-            auto value = emit_extract_value(range, shape->element, index);
-            emit_store(address, value, shape->element);
+            auto index_value = emit_integer_literal(semantic_type_ids::builtin(builtin_type_kind::usize), index);
+            auto value = emit_element_address(range_address, index_value, range_type, shape->element);
+            if(not emit_store_range_binding(address, binding_type, value, metadata.element_type)) {
+                return false;
+            }
             auto depth = cleanup_depth();
-            register_cleanup(symbol, address, shape->element);
+            if(not is_reference(binding_type)) {
+                register_cleanup(symbol, address, binding_type);
+            }
             loop_targets.emplace_back(end_block, next_block, depth, label);
             if(not emit_statement(node.body)) {
                 return false;
@@ -1593,7 +1743,8 @@ struct function_lowerer
         if(not symbol.valid()) {
             return fail("for binding is missing semantic binding");
         }
-        auto value_address = emit_alloca(metadata.element_type, std::string{ ast_source.slice(node.name) });
+        auto binding_type = semantics.symbols[symbol.value].type;
+        auto value_address = emit_alloca(binding_type, std::string{ ast_source.slice(node.name) });
         bind(symbol, value_address);
 
         auto condition_block = add_block("for.next");
@@ -1630,12 +1781,16 @@ struct function_lowerer
             metadata.element_type,
             std::vector<std::uint64_t>{ metadata.some_case_index + 1uz, 0uz }
         );
-        emit_store(value_address, payload, metadata.element_type);
+        if(not emit_store_range_binding(value_address, binding_type, payload, metadata.element_type)) {
+            return false;
+        }
         auto label = node.label
             ? std::optional<std::string>{ std::string{ ast_source.slice(*node.label) } }
             : std::nullopt;
         auto depth = cleanup_depth();
-        register_cleanup(symbol, value_address, metadata.element_type);
+        if(not is_reference(binding_type)) {
+            register_cleanup(symbol, value_address, binding_type);
+        }
         loop_targets.emplace_back(end_block, condition_block, depth, label);
         if(not emit_statement(node.body)) {
             return false;
@@ -2187,6 +2342,244 @@ struct function_lowerer
         return emit(std::move(instruction));
     }
 
+    auto weak_ordering_type() const -> semantic_type_id
+    {
+        for(auto const& variant : module.variants) {
+            if(variant.name == "weak_ordering") {
+                return variant.type;
+            }
+        }
+        return {};
+    }
+
+    auto weak_ordering_case_index(std::string_view name) const -> std::optional<std::uint32_t>
+    {
+        auto type = weak_ordering_type();
+        auto variant_index = variant_index_of(type);
+        if(not variant_index) {
+            return std::nullopt;
+        }
+        auto found = module.variants[*variant_index].case_indices.find(std::string{ name });
+        if(found == module.variants[*variant_index].case_indices.end()) {
+            return std::nullopt;
+        }
+        return found->second;
+    }
+
+    auto emit_weak_ordering_case(std::string_view name) -> ir_value_id
+    {
+        auto type = weak_ordering_type();
+        auto case_index = weak_ordering_case_index(name);
+        if(not type.valid() or not case_index) {
+            return unsupported_expression("weak_ordering case is missing");
+        }
+        auto aggregate = emit_aggregate_undef(type);
+        auto tag = emit_integer_literal(semantic_type_ids::i32, *case_index);
+        return emit_insert_value(aggregate, tag, type, 0uz);
+    }
+
+    auto emit_return_value(ir_value_id value, semantic_type_id type) -> void
+    {
+        emit_void(ir_instruction {
+            .opcode = ir_opcode::return_,
+            .type = type,
+            .operands = { value },
+        });
+    }
+
+    auto emit_enum_spaceship_value(ir_value_id left, ir_value_id right) -> ir_value_id
+    {
+        auto result_type = weak_ordering_type();
+        if(not result_type.valid()) {
+            return unsupported_expression("enum comparison requires weak_ordering");
+        }
+        auto result_address = emit_alloca(result_type, "enum.compare");
+
+        auto less_instruction = emit_value_instruction(ir_opcode::binary, semantic_type_ids::bool_);
+        less_instruction.operator_kind = token_kind::less;
+        less_instruction.operands = { left, right };
+        auto less = emit(std::move(less_instruction));
+
+        auto less_block = add_block("enum.compare.less");
+        auto greater_check_block = add_block("enum.compare.greater.check");
+        auto greater_block = add_block("enum.compare.greater");
+        auto equivalent_block = add_block("enum.compare.equivalent");
+        auto end_block = add_block("enum.compare.end");
+        emit_void(ir_instruction {
+            .opcode = ir_opcode::cond_branch,
+            .operands = { less },
+            .targets = { less_block, greater_check_block },
+        });
+
+        current = less_block;
+        auto less_value = emit_weak_ordering_case("less");
+        if(not less_value.valid()) {
+            return {};
+        }
+        emit_store(result_address, less_value, result_type);
+        emit_void(ir_instruction{ .opcode = ir_opcode::branch, .targets = { end_block } });
+
+        current = greater_check_block;
+        auto greater_instruction = emit_value_instruction(ir_opcode::binary, semantic_type_ids::bool_);
+        greater_instruction.operator_kind = token_kind::greater;
+        greater_instruction.operands = { left, right };
+        auto greater = emit(std::move(greater_instruction));
+        emit_void(ir_instruction {
+            .opcode = ir_opcode::cond_branch,
+            .operands = { greater },
+            .targets = { greater_block, equivalent_block },
+        });
+
+        current = greater_block;
+        auto greater_value = emit_weak_ordering_case("greater");
+        if(not greater_value.valid()) {
+            return {};
+        }
+        emit_store(result_address, greater_value, result_type);
+        emit_void(ir_instruction{ .opcode = ir_opcode::branch, .targets = { end_block } });
+
+        current = equivalent_block;
+        auto equivalent_value = emit_weak_ordering_case("equivalent");
+        if(not equivalent_value.valid()) {
+            return {};
+        }
+        emit_store(result_address, equivalent_value, result_type);
+        emit_void(ir_instruction{ .opcode = ir_opcode::branch, .targets = { end_block } });
+
+        current = end_block;
+        return emit_load(result_address, result_type);
+    }
+
+    auto emit_call_value(symbol_id symbol, std::vector<ir_value_id> operands, semantic_type_id return_type) -> ir_value_id
+    {
+        auto instruction = emit_value_instruction(ir_opcode::call, return_type);
+        instruction.symbol = symbol;
+        instruction.operands = std::move(operands);
+        return emit(std::move(instruction));
+    }
+
+    auto emit_argument_from_address(ir_value_id address, semantic_type_id value_type, semantic_type_id parameter) -> ir_value_id
+    {
+        if(std::holds_alternative<reference_type>(module.types.get(parameter))) {
+            return address;
+        }
+        auto value = emit_load(address, read_type(value_type));
+        return cast_to(value, read_type(value_type), parameter);
+    }
+
+    auto emit_argument_from_value(ir_value_id value, semantic_type_id value_type, semantic_type_id parameter, std::string_view name) -> ir_value_id
+    {
+        if(auto const* reference = std::get_if<reference_type>(&module.types.get(parameter))) {
+            auto address = emit_alloca(reference->pointee, std::string{ name });
+            emit_store(address, cast_to(value, value_type, reference->pointee), reference->pointee);
+            return address;
+        }
+        return cast_to(value, value_type, parameter);
+    }
+
+    auto emit_default_compare_field_value(semantic_default_compare_field const& descriptor, ir_value_id self_address, ir_value_id rhs_address, semantic_type_id self_type) -> ir_value_id
+    {
+        auto struct_index = struct_index_of(self_type);
+        if(not struct_index) {
+            return unsupported_expression("defaulted comparison owner is not a struct");
+        }
+        auto field = semantic_field_access {
+            .struct_index = *struct_index,
+            .field_index = descriptor.field_index,
+        };
+        auto field_type = struct_field_type(self_type, field);
+        auto left_address = emit_field_value_address(self_address, self_type, field);
+        auto right_address = emit_field_value_address(rhs_address, self_type, field);
+        if(not left_address.valid() or not right_address.valid()) {
+            return {};
+        }
+
+        if(descriptor.enum_builtin) {
+            auto left = emit_load(left_address, read_type(field_type));
+            auto right = emit_load(right_address, read_type(field_type));
+            if(not left.valid() or not right.valid()) {
+                return {};
+            }
+            return emit_enum_spaceship_value(left, right);
+        }
+
+        auto const* callable = std::get_if<function_type>(&module.types.get(semantics.symbols[descriptor.compare_operator.value].type));
+        if(callable == nullptr or callable->parameters.size() != 2uz) {
+            return unsupported_expression("defaulted comparison field operator is missing function type");
+        }
+        auto operands = std::vector<ir_value_id> {
+            emit_argument_from_address(left_address, field_type, callable->parameters[0uz]),
+            emit_argument_from_address(right_address, field_type, callable->parameters[1uz]),
+        };
+        if(not operands[0uz].valid() or not operands[1uz].valid()) {
+            return {};
+        }
+        auto value = emit_call_value(descriptor.compare_operator, std::move(operands), callable->returns);
+        if(not value.valid() or not descriptor.to_weak_method.valid()) {
+            return value;
+        }
+
+        auto const* to_weak = std::get_if<function_type>(&module.types.get(semantics.symbols[descriptor.to_weak_method.value].type));
+        if(to_weak == nullptr or to_weak->parameters.size() != 1uz) {
+            return unsupported_expression("defaulted comparison to_weak method is missing function type");
+        }
+        auto argument = emit_argument_from_value(value, callable->returns, to_weak->parameters.front(), "to.weak");
+        if(not argument.valid()) {
+            return {};
+        }
+        return emit_call_value(descriptor.to_weak_method, { argument }, to_weak->returns);
+    }
+
+    auto emit_default_compare_body(symbol_id symbol, function_signature const& signature) -> bool
+    {
+        auto found = semantics.default_compare_fields.find(symbol);
+        if(found == semantics.default_compare_fields.end()) {
+            return fail("defaulted comparison is missing field metadata");
+        }
+        if(function->parameters.size() < 2uz or signature.parameters.size() < 2uz) {
+            return fail("defaulted comparison is missing parameters");
+        }
+
+        auto self_address = function->parameters[0uz].value;
+        auto rhs_address = function->parameters[1uz].value;
+        auto self_type = read_type(signature.parameters[0uz]);
+        auto equivalent_index = weak_ordering_case_index("equivalent");
+        if(not equivalent_index) {
+            return fail("weak_ordering equivalent case is missing");
+        }
+
+        for(auto const& field : found->second) {
+            auto relation = emit_default_compare_field_value(field, self_address, rhs_address, self_type);
+            if(not relation.valid()) {
+                return false;
+            }
+            auto tag = emit_extract_value(relation, semantic_type_ids::i32, 0uz);
+            auto equivalent = emit_integer_literal(semantic_type_ids::i32, *equivalent_index);
+            auto different_instruction = emit_value_instruction(ir_opcode::binary, semantic_type_ids::bool_);
+            different_instruction.operator_kind = token_kind::bang_equal;
+            different_instruction.operands = { tag, equivalent };
+            auto different = emit(std::move(different_instruction));
+            auto return_block = add_block("default.compare.return");
+            auto next_block = add_block("default.compare.next");
+            emit_void(ir_instruction {
+                .opcode = ir_opcode::cond_branch,
+                .operands = { different },
+                .targets = { return_block, next_block },
+            });
+
+            current = return_block;
+            emit_return_value(relation, signature.returns);
+            current = next_block;
+        }
+
+        auto equivalent = emit_weak_ordering_case("equivalent");
+        if(not equivalent.valid()) {
+            return false;
+        }
+        emit_return_value(equivalent, signature.returns);
+        return true;
+    }
+
     auto emit_block_expression(block_expr_syntax const& node, expr_id id) -> ir_value_id
     {
         auto depth = cleanup_depth();
@@ -2245,14 +2638,26 @@ struct function_lowerer
 
     auto emit_match_expression(match_expr_syntax const& node, expr_id id) -> ir_value_id
     {
-        auto matched = emit_expression(node.value);
-        if(not matched.valid()) {
-            return {};
-        }
         auto matched_type = info_of(node.value).read_type;
         auto variant_index = variant_index_of(matched_type);
         if(not variant_index) {
             return unsupported_expression("match expression is missing variant type");
+        }
+        auto matched_address = ir_value_id{};
+        auto matched = ir_value_id{};
+        if(info_of(node.value).is_lvalue) {
+            matched_address = emit_address(node.value);
+            if(not matched_address.valid()) {
+                return {};
+            }
+            matched = emit_load(matched_address, matched_type);
+        } else {
+            matched = emit_expression(node.value);
+            if(not matched.valid()) {
+                return {};
+            }
+            matched_address = emit_alloca(matched_type, "match.value");
+            emit_store(matched_address, matched, matched_type);
         }
 
         auto result_type = info_of(id).type;
@@ -2312,7 +2717,7 @@ struct function_lowerer
         auto reaches_end = false;
         for(auto index = 0uz; index < node.arms.size(); ++index) {
             current = arm_blocks[index];
-            bind_match_pattern(node.arms[index].pattern, matched, matched_type);
+            bind_match_pattern(node.arms[index].pattern, matched, matched_address, matched_type);
             auto value = emit_expression(node.arms[index].value);
             if(value.valid() and result_address.valid()) {
                 emit_store(result_address, value, result_type);
@@ -2340,7 +2745,7 @@ struct function_lowerer
         return emit_default_value(result_type);
     }
 
-    auto bind_match_pattern(match_pattern_syntax const& pattern, ir_value_id matched, semantic_type_id matched_type) -> void
+    auto bind_match_pattern(match_pattern_syntax const& pattern, ir_value_id matched, ir_value_id matched_address, semantic_type_id matched_type) -> void
     {
         auto const* case_pattern = std::get_if<match_case_pattern_syntax>(&pattern);
         if(case_pattern == nullptr) {
@@ -2359,13 +2764,23 @@ struct function_lowerer
             if(not symbol.valid()) {
                 continue;
             }
-            auto value = emit_extract_value(
-                matched,
-                payloads[index],
-                std::vector<std::uint64_t>{ case_index + 1uz, index }
-            );
-            auto address = emit_alloca(payloads[index], std::string{ ast_source.identifier(case_pattern->bindings[index]) });
-            emit_store(address, value, payloads[index]);
+            auto address = matched_address.valid()
+                ? emit_field_address(
+                    matched_address,
+                    matched_type,
+                    payloads[index],
+                    std::vector<std::uint64_t>{ case_index + 1uz, index }
+                )
+                : ir_value_id{};
+            if(not address.valid()) {
+                auto value = emit_extract_value(
+                    matched,
+                    payloads[index],
+                    std::vector<std::uint64_t>{ case_index + 1uz, index }
+                );
+                address = emit_alloca(payloads[index], std::string{ ast_source.identifier(case_pattern->bindings[index]) });
+                emit_store(address, value, payloads[index]);
+            }
             bind(symbol, address);
         }
     }
@@ -2535,6 +2950,19 @@ struct function_lowerer
     {
         if(node.operator_kind == token_kind::kw_and or node.operator_kind == token_kind::kw_or) {
             return emit_short_circuit_binary_expression(node, id);
+        }
+
+        if(
+            node.operator_kind == token_kind::spaceship
+            and enum_index_of(info_of(node.left).read_type)
+            and info_of(node.left).read_type == info_of(node.right).read_type
+        ) {
+            auto left = emit_expression(node.left);
+            auto right = emit_expression(node.right);
+            if(not left.valid() or not right.valid()) {
+                return {};
+            }
+            return emit_enum_spaceship_value(left, right);
         }
 
         auto left = emit_expression(node.left);
@@ -3436,6 +3864,15 @@ struct function_lowerer
         return std::nullopt;
     }
 
+    auto enum_index_of(semantic_type_id type) const -> std::optional<std::uint32_t>
+    {
+        auto const& kind = module.types.get(read_type(type));
+        if(auto const* value = std::get_if<enum_type>(&kind)) {
+            return value->index;
+        }
+        return std::nullopt;
+    }
+
     auto struct_field_type(semantic_type_id object_type, semantic_field_access field) -> semantic_type_id
     {
         if(field.owner_type == semantic_type_ids::str) {
@@ -3845,7 +4282,7 @@ export auto emit_ir(source_manager const& sources, std::span<parse_result const>
                 auto symbol = semantics.function_symbol_of(unit_index, function_id);
                 if(
                     not symbol.valid()
-                    or not semantic_function_body_has_source(semantics.symbols[symbol.value].body_kind)
+                    or not semantic_function_body_needs_ir_entry(semantics.symbols[symbol.value].body_kind)
                     or semantics.generic_parameter_count_of(unit_index, function_id) != 0uz
                 ) {
                     continue;
@@ -3879,7 +4316,7 @@ export auto emit_ir(source_manager const& sources, std::span<parse_result const>
 
     for(auto const& instance : semantics.function_instances) {
         auto const& parsed = units[instance.key.unit_index];
-        if(not semantic_function_body_has_source(semantics.symbols[instance.symbol.value].body_kind)) {
+        if(not semantic_function_body_needs_ir_entry(semantics.symbols[instance.symbol.value].body_kind)) {
             continue;
         }
         auto lowerer = function_lowerer{

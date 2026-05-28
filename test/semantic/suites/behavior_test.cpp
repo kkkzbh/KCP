@@ -97,12 +97,6 @@ auto constexpr std_io_modules = {
     std::string_view{ "memory.cp" },
     std::string_view{ "collections.cp" },
     std::string_view{ "text.cp" },
-    std::string_view{ "meta.cp" },
-    std::string_view{ "ranges/iota.cp" },
-    std::string_view{ "ranges/sources.cp" },
-    std::string_view{ "ranges/adapters.cp" },
-    std::string_view{ "ranges/terminals.cp" },
-    std::string_view{ "ranges.cp" },
     std::string_view{ "compare.cp" },
     std::string_view{ "algorithm/sort.cp" },
     std::string_view{ "algorithm.cp" },
@@ -111,6 +105,12 @@ auto constexpr std_io_modules = {
     std::string_view{ "io.cp" },
     std::string_view{ "fs/file.cp" },
     std::string_view{ "fs.cp" },
+    std::string_view{ "meta.cp" },
+    std::string_view{ "ranges/sources.cp" },
+    std::string_view{ "ranges/iota.cp" },
+    std::string_view{ "ranges/terminals.cp" },
+    std::string_view{ "ranges/adapters.cp" },
+    std::string_view{ "ranges.cp" },
     std::string_view{ "std.cp" },
 };
 
@@ -344,6 +344,125 @@ main() -> i32
         has_diagnostic(flat_import, diagnostic_kind::unknown_module),
         "std.vector should not remain as a flat compatibility module"
     );
+}
+
+auto check_range_for_binding_semantics() -> void
+{
+    auto bindings = analyze_with_std_io(
+        "range_for_bindings.cp",
+        R"(import std;
+
+main() -> i32
+{
+    let values = vector<i32>{};
+    values.push_back(1);
+    for(const range_for_value_marker : values) {
+        let copy: i32 = range_for_value_marker;
+    }
+    for(let ref range_for_ref_marker : values) {
+        range_for_ref_marker += 1;
+    }
+    for(const ref range_for_const_ref_marker : values) {
+        let copy: i32 = range_for_const_ref_marker;
+    }
+    const fixed = values;
+    for(const ref range_for_fixed_marker : fixed) {
+        let copy: i32 = range_for_fixed_marker;
+    }
+    return values[0];
+})"
+    );
+    test_parser::assert_true(bindings.accepted(), "range-for should accept value, ref, const-ref, and const iterable bindings");
+
+    auto value_binding = std::ranges::find_if(bindings.symbols, [](semantic_symbol const& symbol) {
+        return symbol.name == "range_for_value_marker";
+    });
+    test_parser::assert_true(value_binding != bindings.symbols.end(), "range-for value binding should create a local symbol");
+    test_parser::assert_true(
+        not std::holds_alternative<reference_type>(bindings.types.get(value_binding->type)),
+        "for(const x : vector) should bind x by value");
+    test_parser::assert_true(value_binding->is_const, "for(const x : vector) should create a const binding");
+
+    auto ref_binding = std::ranges::find_if(bindings.symbols, [](semantic_symbol const& symbol) {
+        return symbol.name == "range_for_ref_marker";
+    });
+    test_parser::assert_true(ref_binding != bindings.symbols.end(), "range-for ref binding should create a local symbol");
+    auto const* ref_type = std::get_if<reference_type>(&bindings.types.get(ref_binding->type));
+    test_parser::assert_true(ref_type != nullptr and not ref_type->is_const, "for(let ref x : vector) should bind a mutable reference");
+
+    auto const_ref_binding = std::ranges::find_if(bindings.symbols, [](semantic_symbol const& symbol) {
+        return symbol.name == "range_for_const_ref_marker";
+    });
+    test_parser::assert_true(const_ref_binding != bindings.symbols.end(), "range-for const ref binding should create a local symbol");
+    auto const* const_ref_type = std::get_if<reference_type>(&bindings.types.get(const_ref_binding->type));
+    test_parser::assert_true(const_ref_type != nullptr and const_ref_type->is_const, "for(const ref x : vector) should bind a readonly reference");
+
+    auto const_ref_assign = analyze_with_std_io(
+        "range_for_const_ref_assign_rejected.cp",
+        R"(import std;
+
+main()
+{
+    let values = vector<i32>{};
+    values.push_back(1);
+    for(const ref item : values) {
+        item = 2;
+    }
+})"
+    );
+    test_parser::assert_true(has_diagnostic(const_ref_assign, diagnostic_kind::assign_to_const), "const ref range binding should reject writes");
+
+    auto value_iterator_ref = analyze_with_std_io(
+        "range_for_iterator_rejected.cp",
+        R"(import std;
+
+struct count_iter {
+    value: i32;
+}
+
+impl iterator for count_iter {
+    type iter_item = i32;
+
+    next(self&) -> optional<i32>
+    {
+        return optional<i32>::none;
+    }
+}
+
+main()
+{
+    let iter = count_iter{ .value = 0 };
+    for(let ref item : iter) {
+    }
+})"
+    );
+    test_parser::assert_true(has_diagnostic(value_iterator_ref, diagnostic_kind::invalid_range), "range-for should reject naked iterators");
+
+    auto source_iterator = analyze_with_std_io(
+        "range_for_source_iterator_rejected.cp",
+        R"(import std;
+
+main()
+{
+    for(let item : iota(0, 3).iter()) {
+    }
+})"
+    );
+    test_parser::assert_true(has_diagnostic(source_iterator, diagnostic_kind::invalid_range), "range-for should reject iter() cursors");
+
+    auto mutable_ref_const_vector = analyze_with_std_io(
+        "range_for_const_vector_mut_ref_rejected.cp",
+        R"(import std;
+
+main()
+{
+    let source = vector<i32>{};
+    const values = source;
+    for(let ref item : values) {
+    }
+})"
+    );
+    test_parser::assert_true(has_diagnostic(mutable_ref_const_vector, diagnostic_kind::invalid_assignment_target), "let ref should reject const vector iteration items");
 }
 
 auto check_sort_and_callable_semantics() -> void
@@ -624,6 +743,14 @@ main() -> i32
         "std_ranges_pipeline_semantics.cp",
         R"(import std;
 
+make_values() -> vector<i32>
+{
+    let values = vector<i32>{};
+    values.push_back(1);
+    values.push_back(2);
+    return move values;
+}
+
 main() -> i32
 {
     let values: [i32; 3] = [1, 2, 3];
@@ -634,10 +761,13 @@ main() -> i32
         .count();
     let repeated = repeat(1).take(5 as usize).count();
     let indexed = repeat(0).enumerate().take(3 as usize).count();
-    let borrowed = all(ref values).filter(f(value: i32&) -> bool { return value > 1; }).count();
+    let borrowed = values.filter(f(value: i32&) -> bool { return value > 1; }).count();
+    const fixed = values;
+    let const_borrowed = fixed.enumerate().count();
+    let owned = make_values().enumerate().count();
     let direct = iota(0, 3);
     let direct_count = direct.count();
-    return count as i32 + repeated as i32 + indexed as i32 + borrowed as i32 + direct_count as i32;
+    return count as i32 + repeated as i32 + indexed as i32 + borrowed as i32 + const_borrowed as i32 + owned as i32 + direct_count as i32;
 })"
     );
     test_parser::assert_true(ranges.accepted(), "std.ranges adapters and terminals should compose through UFCS");
@@ -645,6 +775,13 @@ main() -> i32
     auto full_surface = analyze_with_std_io(
         "std_ranges_full_surface_semantics.cp",
         R"(import std;
+
+first_two<R>(source: R forward&)
+{
+    let view = to_view(forward source);
+    type V = decltype(view);
+    return take_view<V>{ .source = move view, .count = 2 as usize };
+}
 
 main() -> i32
 {
@@ -659,8 +796,9 @@ main() -> i32
     let transformed = iota(0, 4)
         .transform(f(value: i32) -> bool { return value == 2; })
         .any(f(value: bool) -> bool { return value; });
+    let custom = iota(0, 4).first_two().count();
     if(any_ok and all_ok and found.has_value() and transformed) {
-        return empty_count as i32 + single_count as i32 + dropped as i32 + zipped as i32 + concatenated as i32;
+        return empty_count as i32 + single_count as i32 + dropped as i32 + zipped as i32 + concatenated as i32 + custom as i32;
     }
     return 1;
 })"
@@ -1645,6 +1783,12 @@ main() -> i32
         inferred_parameter_result.function_instances.size() == 4,
         "inferred parameter generic calls should create concrete function instances");
 
+    auto generic_inferred_return = analyze_one(
+        "generic_function_inferred_return.cp",
+        "id<T>(input: T) { return input; } main() -> i32 { return id(1); }"
+    );
+    test_parser::assert_true(generic_inferred_return.accepted(), "generic functions should infer return types per concrete instance");
+
     using enum diagnostic_kind;
     expect_diagnostic(
         "generic_function_too_many_type_args.cp",
@@ -1665,11 +1809,6 @@ main() -> i32
         "generic_function_missing_bound.cp",
         "concept marker { } accept<T: marker>(input: T) -> i32 { return 1; } main() -> i32 { return accept(1); }",
         missing_concept_item
-    );
-    expect_diagnostic(
-        "generic_function_inferred_return.cp",
-        "id<T>(input: T) { return input; } main() -> i32 { return id(1); }",
-        cannot_infer_return_type
     );
     expect_diagnostic(
         "inferred_parameter_default_value.cp",
@@ -1701,7 +1840,7 @@ sum<T...: mark>(values: T...) -> i32
 requires T...: mark
 {
     let total = 0;
-    template fo)" "r" R"( (let value : values...) {
+    template fo)" "r" R"( (const ref value : values...) {
         total = total + value.item;
     }
     return total;
@@ -1765,6 +1904,53 @@ main() -> i32
         "template_for_break_outer_loop.cp",
         "bad<T...>(values: T...) -> i32 { while(true) { template fo" "r (let value : values...) { break; } } return 0; } main() -> i32 { return bad(1); }",
         invalid_break
+    );
+}
+
+auto check_template_if_semantics() -> void
+{
+    auto result = analyze_one(
+        "template_if_type_selection.cp",
+        R"(select<T>(value: T) -> i32
+{
+    template if(T == i32) {
+        return 1;
+    } else template if(T == bool) {
+        return 2;
+    } else {
+        return missing_name;
+    }
+}
+
+main() -> i32
+{
+    return select(1) + select(true);
+})"
+    );
+    test_parser::assert_true(result.accepted(), "template if should select per-instantiation type branches");
+    test_parser::assert_true(result.template_if_selections.size() == 2, "template if should record selected bodies");
+    test_parser::assert_true(
+        std::ranges::all_of(result.template_if_selections, [](auto const& entry) {
+            return entry.second.has_body;
+        }),
+        "template if selections should point at a concrete body");
+
+    auto inferred_result = analyze_one(
+        "template_if_inferred_return.cp",
+        "select() { template if(true) { return 1; } else { return true; } } main() -> i32 { return select(); }"
+    );
+    test_parser::assert_true(inferred_result.accepted(), "template if should exclude unselected branches from return inference");
+
+    using enum diagnostic_kind;
+    expect_diagnostic(
+        "template_if_non_bool.cp",
+        "main() -> i32 { template if(1) { return 1; } return 0; }",
+        condition_not_bool
+    );
+    expect_diagnostic(
+        "template_if_non_constexpr.cp",
+        "main() -> i32 { let flag = true; template if(flag) { return 1; } return 0; }",
+        invalid_operator
     );
 }
 
@@ -2392,6 +2578,11 @@ read(value: i32 const&) -> i32
     return value;
 }
 
+relay_read<T>(value: T forward&) -> i32
+{
+    return read(forward value);
+}
+
 copy_value(value: i32) -> i32
 {
     return value;
@@ -2404,6 +2595,8 @@ main() -> i32
     relay_move(2);
     let second = 3;
     relay_move(move second);
+    const third = 4;
+    relay_read(third);
     read(const first);
     copy_value(const first);
     return 0;
@@ -2413,7 +2606,11 @@ main() -> i32
 
     using enum diagnostic_kind;
     expect_diagnostic("forward_non_parameter.cp", "main() { let value = 1; let other = forward value; }", invalid_operator);
-    expect_diagnostic("forward_const_lvalue.cp", "relay<T>(value: T forward&) -> void { } main() { const value = 1; relay(value); }", type_mismatch);
+    expect_diagnostic(
+        "forward_const_lvalue_to_mutable_rejected.cp",
+        "take(value: i32&) -> void { } relay<T>(value: T forward&) -> void { take(forward value); } main() { const value = 1; relay(value); }",
+        type_mismatch
+    );
     expect_diagnostic("const_move_operand.cp", "main() { let value = 1; let other = const (move value); }", invalid_assignment_target);
     expect_diagnostic("move_const_operand.cp", "main() { let value = 1; let other = move (const value); }", invalid_assignment_target);
     expect_diagnostic("concrete_forward_ref.cp", "take(value: i32 forward&) { } main() { let value = 1; take(value); }", invalid_type_argument);
@@ -2551,6 +2748,116 @@ impl box {
     test_parser::assert_true(
         checked.symbols[source_body.value].body_kind == semantic_function_body_kind::source_body,
         "ordinary method should be classified as source body");
+}
+
+auto check_default_compare_semantics() -> void
+{
+    auto checked = analyze_with_std_io(
+        "default_compare.cp",
+        R"(import std;
+
+enum mark : u8 {
+    first = 1;
+    second = 2;
+}
+
+struct item {
+    production: usize;
+    dot: usize;
+    lookahead: mark;
+}
+
+impl item {
+    operator <=>(self const&, rhs: this const&) -> weak_ordering = default;
+}
+
+accepts_three_way<T: three_way_comparable<T, weak_ordering>>(value: T) -> T
+{
+    return value;
+}
+
+main()
+{
+    let one = accepts_three_way<mark>(mark::first);
+    let two = accepts_three_way<item>(item{ .production = 1 as usize, .dot = 0 as usize, .lookahead = mark::second });
+    let relation = one <=> mark::second;
+    let item_relation = two <=> two;
+})"
+    );
+    test_parser::assert_true(checked.accepted(), "defaulted comparison should pass semantic analysis");
+    auto compare_symbol = symbol_id{};
+    for(auto index = 0uz; index < checked.symbols.size(); ++index) {
+        auto const& symbol = checked.symbols[index];
+        if(symbol.body_kind == semantic_function_body_kind::defaulted_compare) {
+            compare_symbol = symbol_id{ static_cast<std::uint32_t>(index) };
+            break;
+        }
+    }
+    test_parser::assert_true(compare_symbol.valid(), "defaulted comparison should be classified separately");
+    auto found = checked.default_compare_fields.find(compare_symbol);
+    test_parser::assert_true(found != checked.default_compare_fields.end(), "defaulted comparison should record fields");
+    test_parser::assert_true(found->second.size() == 3uz, "defaulted comparison should record each struct field");
+    test_parser::assert_true(found->second[2].enum_builtin, "enum fields should use builtin enum comparison");
+
+    auto bad_field = analyze_with_std_io(
+        "bad_default_compare_field.cp",
+        R"(import std;
+
+struct payload {
+    value: i32;
+}
+
+struct item {
+    payload: payload;
+}
+
+impl item {
+    operator <=>(self const&, rhs: this const&) -> weak_ordering = default;
+})"
+    );
+    test_parser::assert_true(has_diagnostic(bad_field, diagnostic_kind::invalid_operator), "field without <=> should reject defaulted comparison");
+
+    auto bad_rhs = analyze_with_std_io(
+        "bad_default_compare_rhs.cp",
+        R"(import std;
+
+struct item {
+    value: i32;
+}
+
+impl item {
+    operator <=>(self const&, rhs: i32 const&) -> weak_ordering = default;
+})"
+    );
+    test_parser::assert_true(has_diagnostic(bad_rhs, diagnostic_kind::invalid_operator), "rhs must be this const&");
+
+    auto bad_return = analyze_with_std_io(
+        "bad_default_compare_return.cp",
+        R"(import std;
+
+struct item {
+    value: i32;
+}
+
+impl item {
+    operator <=>(self const&, rhs: this const&) -> i32 = default;
+})"
+    );
+    test_parser::assert_true(has_diagnostic(bad_return, diagnostic_kind::invalid_operator), "return type must be weak_ordering");
+
+    auto bad_target = analyze_with_std_io(
+        "bad_default_compare_target.cp",
+        R"(import std;
+
+variant optional {
+    none;
+}
+
+impl optional {
+    operator <=>(self const&, rhs: this const&) -> weak_ordering = default;
+})"
+    );
+    test_parser::assert_true(has_diagnostic(bad_target, diagnostic_kind::invalid_operator), "non-struct target should reject defaulted comparison");
 }
 
 auto check_lambda_semantics() -> void
@@ -3159,6 +3466,7 @@ auto main() -> int
     check_fixture_examples();
     check_io_semantics();
     check_std_layered_imports();
+    check_range_for_binding_semantics();
     check_sort_and_callable_semantics();
     check_iota_semantics();
     check_meta_and_ranges_semantics();
@@ -3180,11 +3488,13 @@ auto main() -> int
     check_generic_struct_semantics();
     check_generic_function_semantics();
     check_parameter_pack_semantics();
+    check_template_if_semantics();
     check_concept_semantics();
     check_function_type_and_memory_semantics();
     check_extern_c_semantics();
     check_enum_opaque_and_fs_semantics();
     check_function_body_kind_semantics();
+    check_default_compare_semantics();
     check_string_index_semantics();
     check_decltype_ref_and_destructuring_semantics();
     check_ownership_frontend_semantics();

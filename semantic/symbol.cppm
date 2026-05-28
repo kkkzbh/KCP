@@ -67,6 +67,7 @@ export enum class semantic_function_body_kind : std::uint8_t
 {
     source_body,
     defaulted,
+    defaulted_compare,
     deleted,
     extern_declaration,
     synthesized,
@@ -82,6 +83,11 @@ export auto constexpr semantic_function_body_is_defaulted(semantic_function_body
     return kind == semantic_function_body_kind::defaulted;
 }
 
+export auto constexpr semantic_function_body_is_defaulted_compare(semantic_function_body_kind kind) -> bool
+{
+    return kind == semantic_function_body_kind::defaulted_compare;
+}
+
 export auto constexpr semantic_function_body_is_deleted(semantic_function_body_kind kind) -> bool
 {
     return kind == semantic_function_body_kind::deleted;
@@ -95,6 +101,7 @@ export auto constexpr semantic_function_body_is_extern_declaration(semantic_func
 export auto constexpr semantic_function_body_needs_ir_entry(semantic_function_body_kind kind) -> bool
 {
     return kind == semantic_function_body_kind::source_body
+           or kind == semantic_function_body_kind::defaulted_compare
            or kind == semantic_function_body_kind::extern_declaration;
 }
 
@@ -188,7 +195,7 @@ export struct semantic_struct
     std::vector<semantic_struct_field> fields{};
     std::vector<symbol_id> constructors{};
     symbol_id destructor{};
-    std::map<std::string, symbol_id> methods{};
+    std::map<std::string, std::vector<symbol_id>> methods{};
     std::map<std::string, symbol_id> associated_functions{};
     std::map<overload_operator_kind, std::vector<symbol_id>> operators{};
 };
@@ -258,7 +265,7 @@ export struct semantic_opaque_alias
     bool exported{};
     std::size_t unit_index{};
     symbol_id symbol{};
-    std::map<std::string, symbol_id> methods{};
+    std::map<std::string, std::vector<symbol_id>> methods{};
     std::map<std::string, symbol_id> associated_functions{};
 };
 
@@ -303,7 +310,7 @@ export struct semantic_variant
     std::vector<semantic_generic_parameter> generic_parameters{};
     std::vector<semantic_variant_case> cases{};
     std::map<std::string, std::uint32_t> case_indices{};
-    std::map<std::string, symbol_id> methods{};
+    std::map<std::string, std::vector<symbol_id>> methods{};
     std::map<std::string, symbol_id> associated_functions{};
     std::map<overload_operator_kind, std::vector<symbol_id>> operators{};
 };
@@ -404,5 +411,5 @@ export struct semantic_concept_impl
     std::size_t unit_index{};
     concept_impl_id syntax{};
     std::map<std::string, semantic_type_id> associated_types{};
-    std::map<std::string, symbol_id> functions{};
+    std::map<std::string, std::vector<symbol_id>> functions{};
 };

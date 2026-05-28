@@ -147,8 +147,14 @@ auto semantic_analyzer::resolve_imports() -> void
                 if(auto found_methods = module_extension_method_exports.find(module_name); found_methods != module_extension_method_exports.end()) {
                     auto& exports = module_extension_method_exports[state.module_name];
                     for(auto const& [type, methods] : found_methods->second) {
-                        for(auto const& [name, symbol] : methods) {
-                            changed = exports[type].emplace(name, symbol).second or changed;
+                        for(auto const& [name, symbols] : methods) {
+                            auto& target = exports[type][name];
+                            for(auto symbol : symbols) {
+                                if(not std::ranges::contains(target, symbol)) {
+                                    target.emplace_back(symbol);
+                                    changed = true;
+                                }
+                            }
                         }
                     }
                 }
@@ -198,7 +204,11 @@ auto semantic_analyzer::resolve_imports() -> void
         }
         if(auto local = module_extension_methods.find(state.module_key); local != module_extension_methods.end()) {
             for(auto const& [type, methods] : local->second) {
-                state.visible_extension_methods[type].insert_range(methods);
+                auto& visible_methods = state.visible_extension_methods[type];
+                for(auto const& [name, symbols] : methods) {
+                    auto& target = visible_methods[name];
+                    target.insert(target.end(), symbols.begin(), symbols.end());
+                }
             }
         }
         if(auto local = module_extension_operators.find(state.module_key); local != module_extension_operators.end()) {
@@ -284,25 +294,21 @@ auto semantic_analyzer::resolve_imports() -> void
 
             if(found_methods != module_extension_method_exports.end()) {
                 for(auto const& [type, methods] : found_methods->second) {
-                    for(auto const& [name, symbol] : methods) {
+                    for(auto const& [name, symbols] : methods) {
                         auto& visible_methods = state.visible_extension_methods[type];
-                        if(auto existing = visible_methods.find(name); existing != visible_methods.end()) {
-                            if(existing->second == symbol) {
-                                if(import.exported and state.named_module) {
-                                    module_extension_method_exports[state.module_name][type].emplace(name, symbol);
-                                }
-                                continue;
+                        auto& target = visible_methods[name];
+                        for(auto symbol : symbols) {
+                            if(not std::ranges::contains(target, symbol)) {
+                                target.emplace_back(symbol);
                             }
-                            report(
-                                diagnostic_kind::import_conflict,
-                                import.full_span,
-                                std::format("imported builtin extension method '{}' conflicts with an existing visible method", name)
-                            );
-                            continue;
                         }
-                        visible_methods.emplace(name, symbol);
                         if(import.exported and state.named_module) {
-                            module_extension_method_exports[state.module_name][type].emplace(name, symbol);
+                            auto& exported = module_extension_method_exports[state.module_name][type][name];
+                            for(auto symbol : symbols) {
+                                if(not std::ranges::contains(exported, symbol)) {
+                                    exported.emplace_back(symbol);
+                                }
+                            }
                         }
                     }
                 }
@@ -1117,20 +1123,7 @@ auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena 
                     "self parameter must be the current impl type or reference"
                 );
             }
-            auto duplicate = false;
-            if(struct_index) {
-                duplicate = result.structs[*struct_index].methods.contains(name);
-            } else if(variant_index) {
-                duplicate = result.variants[*variant_index].methods.contains(name);
-            } else if(opaque_index) {
-                duplicate = result.opaque_aliases[*opaque_index].methods.contains(name);
-            } else {
-                auto const& state = units[unit_index];
-                if(auto found_type = module_extension_methods[state.module_key].find(impl_type); found_type != module_extension_methods[state.module_key].end()) {
-                    duplicate = found_type->second.contains(name);
-                }
-            }
-            duplicate = duplicate or associated_types[impl_type].contains(name);
+            auto duplicate = associated_types[impl_type].contains(name);
             if(duplicate) {
                 report(diagnostic_kind::duplicate_symbol, function.name, std::format("duplicate member '{}'", name));
             }
@@ -1210,16 +1203,16 @@ auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena 
         result.structs[*struct_index].destructor = symbol;
     } else if(function_kind == semantic_function_kind::member_function) {
         if(struct_index) {
-            result.structs[*struct_index].methods.emplace(name, symbol);
+            result.structs[*struct_index].methods[name].emplace_back(symbol);
         } else if(variant_index) {
-            result.variants[*variant_index].methods.emplace(name, symbol);
+            result.variants[*variant_index].methods[name].emplace_back(symbol);
         } else if(opaque_index) {
-            result.opaque_aliases[*opaque_index].methods.emplace(name, symbol);
+            result.opaque_aliases[*opaque_index].methods[name].emplace_back(symbol);
         } else {
             auto const& state = units[unit_index];
-            module_extension_methods[state.module_key][impl_type].emplace(name, symbol);
+            module_extension_methods[state.module_key][impl_type][name].emplace_back(symbol);
             if(state.named_module) {
-                module_extension_method_exports[state.module_name][impl_type].emplace(name, symbol);
+                module_extension_method_exports[state.module_name][impl_type][name].emplace_back(symbol);
             }
         }
     } else {
@@ -1229,6 +1222,219 @@ auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena 
             result.variants[*variant_index].associated_functions.emplace(name, symbol);
         } else {
             result.opaque_aliases[*opaque_index].associated_functions.emplace(name, symbol);
+        }
+    }
+}
+
+auto semantic_analyzer::default_compare_to_weak_method(semantic_type_id result_type, semantic_type_id weak_type, source_span span) -> std::optional<symbol_id>
+{
+    if(can_implicitly_convert(result_type, weak_type)) {
+        return symbol_id{};
+    }
+
+    auto method = method_symbol(result_type, "to_weak");
+    if(not method) {
+        report(diagnostic_kind::invalid_operator, span, "field comparison result must provide to_weak()");
+        return std::nullopt;
+    }
+
+    auto argument = expression_info{ .type = result_type };
+    auto concrete = concrete_method_symbol(*method, result_type, { argument }, span);
+    if(not concrete) {
+        return std::nullopt;
+    }
+
+    auto const* callable = std::get_if<function_type>(&result.types.get(result.symbols[concrete->value].type));
+    if(
+        callable == nullptr
+        or callable->parameters.size() != 1uz
+        or not can_implicitly_convert(argument, callable->parameters.front())
+        or not can_implicitly_convert(callable->returns, weak_type)
+    ) {
+        report(diagnostic_kind::invalid_operator, span, "field comparison to_weak() must return weak_ordering");
+        return std::nullopt;
+    }
+    return *concrete;
+}
+
+auto semantic_analyzer::default_compare_field(std::uint32_t field_index, semantic_type_id field_type, source_span span) -> std::optional<semantic_default_compare_field>
+{
+    auto weak_type = weak_ordering_type();
+    if(not weak_type) {
+        report(diagnostic_kind::invalid_operator, span, "defaulted comparison requires weak_ordering");
+        return std::nullopt;
+    }
+
+    auto field_value = read_type(field_type);
+    if(enum_index_of(field_value)) {
+        return semantic_default_compare_field {
+            .field_index = field_index,
+            .enum_builtin = true,
+        };
+    }
+
+    auto argument_type = result.types.intern(reference_type{ field_value, true });
+    auto arguments = std::vector<expression_info> {
+        expression_info {
+            .type = argument_type,
+            .is_lvalue = true,
+            .is_const = true,
+        },
+        expression_info {
+            .type = argument_type,
+            .is_lvalue = true,
+            .is_const = true,
+        },
+    };
+    auto owners = std::array{ field_value, field_value };
+    auto compare = resolve_operator(overload_operator_kind::spaceship, owners, arguments, span);
+    if(not compare) {
+        report(diagnostic_kind::invalid_operator, span, "defaulted comparison field does not support operator <=>");
+        return std::nullopt;
+    }
+    if(function_is_deleted(*compare)) {
+        report(diagnostic_kind::invalid_operator, span, "defaulted comparison field uses a deleted operator <=>");
+        return std::nullopt;
+    }
+
+    auto const* callable = std::get_if<function_type>(&result.types.get(result.symbols[compare->value].type));
+    if(callable == nullptr or callable->parameters.size() != 2uz) {
+        report(diagnostic_kind::invalid_operator, span, "field comparison operator has an invalid signature");
+        return std::nullopt;
+    }
+
+    auto to_weak = default_compare_to_weak_method(callable->returns, *weak_type, span);
+    if(not to_weak) {
+        return std::nullopt;
+    }
+    return semantic_default_compare_field {
+        .field_index = field_index,
+        .compare_operator = *compare,
+        .to_weak_method = *to_weak,
+    };
+}
+
+auto semantic_analyzer::validate_default_compare_operator(function_syntax const& function, semantic_type_id impl_type, std::optional<std::uint32_t> struct_index, std::span<semantic_type_id const> parameter_types, semantic_type_id return_type, bool is_generic) -> std::optional<std::vector<semantic_default_compare_field>>
+{
+    auto valid = true;
+    auto expect = [&](bool condition, diagnostic_kind kind, source_span span, std::string message) {
+        if(condition) {
+            return;
+        }
+        valid = false;
+        report(kind, span, std::move(message));
+    };
+    auto is_const_reference_to_impl = [&](semantic_type_id type) {
+        auto const* reference = std::get_if<reference_type>(&result.types.get(type));
+        return reference != nullptr
+            and reference->reference_kind == reference_type::kind::regular
+            and reference->is_const
+            and read_type(reference->pointee) == read_type(impl_type);
+    };
+
+    expect(
+        function.default_marker and ast_source.slice(*function.default_marker) == "default",
+        diagnostic_kind::invalid_operator,
+        function.full_span,
+        "expected '= default;' operator declaration"
+    );
+    expect(
+        function.overload_operator == overload_operator_kind::spaceship,
+        diagnostic_kind::invalid_operator,
+        function.full_span,
+        "only operator <=> can be defaulted"
+    );
+    expect(
+        static_cast<bool>(struct_index),
+        diagnostic_kind::invalid_operator,
+        function.full_span,
+        "defaulted comparison is only valid in a struct impl"
+    );
+    expect(
+        not is_generic and not is_dependent_type(impl_type),
+        diagnostic_kind::invalid_operator,
+        function.full_span,
+        "defaulted comparison is not supported for generic impls"
+    );
+    expect(
+        function.parameters.size() == 2uz and parameter_types.size() == 2uz,
+        diagnostic_kind::invalid_operator,
+        function.full_span,
+        "defaulted comparison requires self const& and rhs: this const&"
+    );
+    if(function.parameters.size() >= 1uz and parameter_types.size() >= 1uz) {
+        auto const& self = function.parameters.front();
+        expect(
+            self.is_self_receiver
+                and self.self_is_reference
+                and self.is_const
+                and is_const_reference_to_impl(parameter_types.front()),
+            diagnostic_kind::invalid_self_parameter,
+            self.full_span,
+            "defaulted comparison must start with self const&"
+        );
+    }
+    if(function.parameters.size() >= 2uz and parameter_types.size() >= 2uz) {
+        expect(
+            is_const_reference_to_impl(parameter_types[1uz]),
+            diagnostic_kind::invalid_operator,
+            function.parameters[1uz].full_span,
+            "defaulted comparison rhs must be this const&"
+        );
+    }
+
+    auto weak_type = weak_ordering_type();
+    expect(
+        static_cast<bool>(weak_type),
+        diagnostic_kind::invalid_operator,
+        function.full_span,
+        "defaulted comparison requires weak_ordering"
+    );
+    expect(
+        function.return_type and weak_type and can_implicitly_convert(return_type, *weak_type),
+        diagnostic_kind::invalid_operator,
+        function.full_span,
+        "defaulted comparison must return weak_ordering"
+    );
+    if(not valid or not struct_index) {
+        return std::nullopt;
+    }
+
+    return std::vector<semantic_default_compare_field>{};
+}
+
+auto semantic_analyzer::check_default_compare_operators() -> void
+{
+    for(auto index = 0uz; index < result.symbols.size(); ++index) {
+        auto const& symbol = result.symbols[index];
+        if(not semantic_function_body_is_defaulted_compare(symbol.body_kind)) {
+            continue;
+        }
+        if(symbol.struct_index == std::numeric_limits<std::uint32_t>::max()) {
+            continue;
+        }
+
+        auto old_unit = active_unit_index;
+        active_unit_index = symbol.unit_index;
+        auto fields = std::vector<semantic_default_compare_field>{};
+        auto valid = true;
+        auto const& item = result.structs[symbol.struct_index];
+        fields.reserve(item.fields.size());
+        for(auto field_index = 0uz; field_index < item.fields.size(); ++field_index) {
+            auto field = default_compare_field(
+                static_cast<std::uint32_t>(field_index),
+                item.fields[field_index].type,
+                item.fields[field_index].span
+            );
+            if(not field) {
+                valid = false;
+                continue;
+            }
+            fields.emplace_back(*field);
+        }
+        active_unit_index = old_unit;
+        if(valid) {
+            result.default_compare_fields[symbol_id{ static_cast<std::uint32_t>(index) }] = std::move(fields);
         }
     }
 }
@@ -1304,6 +1510,22 @@ auto semantic_analyzer::collect_impl_operator(std::size_t unit_index, ast_arena 
     }
     if(not has_current_type_parameter) {
         report(diagnostic_kind::invalid_operator, function.full_span, "impl operator requires a self or this parameter");
+    }
+
+    auto default_compare_fields = std::optional<std::vector<semantic_default_compare_field>>{};
+    if(function.defaulted) {
+        default_compare_fields = validate_default_compare_operator(
+            function,
+            impl_type,
+            struct_index,
+            parameter_types,
+            return_type,
+            not all_generic_parameters.empty()
+        );
+        if(not default_compare_fields) {
+            return;
+        }
+        body_kind = semantic_function_body_kind::defaulted_compare;
     }
 
     auto is_assignment = (
@@ -1473,7 +1695,7 @@ auto semantic_analyzer::collect_concept_impl_declarations(std::size_t unit_index
         if(not symbol) {
             continue;
         }
-        concept_impl.functions.emplace(std::string{ ast_source.identifier(function.name) }, *symbol);
+        concept_impl.functions[std::string{ ast_source.identifier(function.name) }].emplace_back(*symbol);
     }
 
     auto index = result.concept_impls.size();
@@ -1529,18 +1751,7 @@ auto semantic_analyzer::collect_concept_impl_function(std::size_t unit_index, as
                 "self parameter must be the concept impl target type or reference"
             );
         }
-        auto duplicate = false;
-        if(struct_index) {
-            duplicate = result.structs[*struct_index].methods.contains(name);
-        } else if(variant_index) {
-            duplicate = result.variants[*variant_index].methods.contains(name);
-        } else {
-            auto const& state = units[unit_index];
-            if(auto found_type = module_extension_methods[state.module_key].find(target_type); found_type != module_extension_methods[state.module_key].end()) {
-                duplicate = found_type->second.contains(name);
-            }
-        }
-        duplicate = duplicate or associated_types[target_type].contains(name);
+        auto duplicate = associated_types[target_type].contains(name);
         if(duplicate) {
             report(diagnostic_kind::duplicate_symbol, function.name, std::format("duplicate member '{}'", name));
             return std::nullopt;
@@ -1615,14 +1826,14 @@ auto semantic_analyzer::collect_concept_impl_function(std::size_t unit_index, as
 
     if(function_kind == semantic_function_kind::member_function) {
         if(struct_index) {
-            result.structs[*struct_index].methods.emplace(name, symbol);
+            result.structs[*struct_index].methods[name].emplace_back(symbol);
         } else if(variant_index) {
-            result.variants[*variant_index].methods.emplace(name, symbol);
+            result.variants[*variant_index].methods[name].emplace_back(symbol);
         } else {
             auto const& state = units[unit_index];
-            module_extension_methods[state.module_key][target_type].emplace(name, symbol);
+            module_extension_methods[state.module_key][target_type][name].emplace_back(symbol);
             if(state.named_module) {
-                module_extension_method_exports[state.module_name][target_type].emplace(name, symbol);
+                module_extension_method_exports[state.module_name][target_type][name].emplace_back(symbol);
             }
         }
     } else {
@@ -1699,19 +1910,19 @@ auto semantic_analyzer::validate_concept_impl(semantic_concept_impl const& impl,
     }
 
     for(auto const& [name, requirement] : concept_value.functions) {
-        auto actual_symbol = std::optional<symbol_id>{};
+        auto actual_symbols = std::vector<symbol_id>{};
         if(auto found = impl.functions.find(name); found != impl.functions.end()) {
-            actual_symbol = found->second;
+            actual_symbols.insert(actual_symbols.end(), found->second.begin(), found->second.end());
         } else if(auto struct_index = struct_index_of(impl.target_type)) {
             auto const& target = result.structs[*struct_index];
             if(auto method = target.methods.find(name); method != target.methods.end()) {
-                actual_symbol = method->second;
+                actual_symbols.insert(actual_symbols.end(), method->second.begin(), method->second.end());
             } else if(auto function = target.associated_functions.find(name); function != target.associated_functions.end()) {
-                actual_symbol = function->second;
+                actual_symbols.emplace_back(function->second);
             }
         }
 
-        if(not actual_symbol) {
+        if(actual_symbols.empty()) {
             if(not requirement.default_function) {
                 report(
                     diagnostic_kind::missing_concept_item,
@@ -1722,15 +1933,21 @@ auto semantic_analyzer::validate_concept_impl(semantic_concept_impl const& impl,
             continue;
         }
 
-        auto const* actual = std::get_if<function_type>(&result.types.get(result.symbols[actual_symbol->value].type));
-        if(not actual) {
-            report(diagnostic_kind::type_mismatch, result.symbols[actual_symbol->value].span, "concept function type mismatch");
-            continue;
+        auto matched = false;
+        for(auto actual_symbol : actual_symbols) {
+            auto const* actual = std::get_if<function_type>(&result.types.get(result.symbols[actual_symbol.value].type));
+            if(actual == nullptr) {
+                continue;
+            }
+            matched = signatures_match(function_signature{ .parameters = actual->parameters, .returns = actual->returns }, requirement, impl.target_type);
+            if(matched) {
+                break;
+            }
         }
-        if(not signatures_match(function_signature{ .parameters = actual->parameters, .returns = actual->returns }, requirement, impl.target_type)) {
+        if(not matched) {
             report(
                 diagnostic_kind::type_mismatch,
-                result.symbols[actual_symbol->value].span,
+                result.symbols[actual_symbols.front().value].span,
                 std::format("concept function '{}' signature does not match requirement", name)
             );
         }
@@ -1951,6 +2168,26 @@ auto semantic_analyzer::target_implements_builtin_concept(symbol_id concept_symb
         }
         return is_callable_type(target_type, concept_arguments, source_span{});
     }
+    if(
+        concept_name == "is_lvalue_reference"
+        or concept_name == "is_const_lvalue_reference"
+        or concept_name == "is_move_reference"
+    ) {
+        if(concept_value.unit_index >= units.size() or units[concept_value.unit_index].module_name != "std.meta") {
+            return std::nullopt;
+        }
+        if(not concept_arguments.empty()) {
+            return false;
+        }
+        auto const* reference = std::get_if<reference_type>(&result.types.get(target_type));
+        if(concept_name == "is_lvalue_reference") {
+            return reference != nullptr and reference->reference_kind == reference_type::kind::regular;
+        }
+        if(concept_name == "is_const_lvalue_reference") {
+            return reference != nullptr and reference->reference_kind == reference_type::kind::regular and reference->is_const;
+        }
+        return reference != nullptr and reference->reference_kind == reference_type::kind::move;
+    }
     return std::nullopt;
 }
 
@@ -2103,6 +2340,9 @@ auto semantic_analyzer::is_three_way_comparable_type(semantic_type_id type, sema
 {
     auto left_value = read_type(type);
     auto right_value = read_type(rhs_type);
+    if(auto builtin = try_builtin_binary_operator(token_kind::spaceship, left_value, right_value)) {
+        return can_implicitly_convert(builtin->type, category_type);
+    }
     auto left_argument = result.types.intern(reference_type{ left_value, true });
     auto right_argument = result.types.intern(reference_type{ right_value, true });
     auto arguments = std::vector<expression_info> {
@@ -2260,6 +2500,8 @@ auto semantic_analyzer::requires_clause_satisfied(std::size_t unit_index, ast_ar
 auto semantic_analyzer::validate_requires_clauses() -> void
 {
     for(auto unit_index : std::views::iota(0uz, units.size())) {
+        auto old_unit_index = active_unit_index;
+        active_unit_index = unit_index;
         auto const& unit = units[unit_index];
         auto const& ast = unit.ast;
         auto const& syntax = unit.root;
@@ -2308,6 +2550,7 @@ auto semantic_analyzer::validate_requires_clauses() -> void
             active_generic_parameters = std::move(old_parameters);
             active_generic_parameter_packs = std::move(old_packs);
         }
+        active_unit_index = old_unit_index;
     }
 }
 

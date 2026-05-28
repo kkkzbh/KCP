@@ -286,21 +286,21 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
             if(
                 reference != nullptr
                 and instance != nullptr
-                and index < instance->key.forward_rvalues.size()
+                and index < instance->key.forward_bindings.size()
                 and function.parameters[index].type
                 and std::holds_alternative<reference_type>(result.types.get(lower_type(*active_ast, *function.parameters[index].type)))
             ) {
                 auto source_reference = std::get_if<reference_type>(&result.types.get(lower_type(*active_ast, *function.parameters[index].type)));
                 if(source_reference != nullptr and source_reference->reference_kind == reference_type::kind::forward) {
-                    active_forward_parameters.emplace(symbol, instance->key.forward_rvalues[index]);
+                    active_forward_parameters.emplace(symbol, instance->key.forward_bindings[index]);
                 }
             } else if(
                 reference != nullptr
                 and instance != nullptr
-                and index < instance->key.forward_rvalues.size()
+                and index < instance->key.forward_bindings.size()
                 and function.parameters[index].inferred_reference_is_forward
             ) {
-                active_forward_parameters.emplace(symbol, instance->key.forward_rvalues[index]);
+                active_forward_parameters.emplace(symbol, instance->key.forward_bindings[index]);
             }
             if(name == "self") {
                 active_self = symbol;
@@ -622,12 +622,14 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                     for(auto index = 0uz; index < count; ++index) {
                         auto binding = node.binding_names[index];
                         auto element = elements[index];
+                        auto element_value = read_type(element);
+                        auto element_const = target_const(element, target_const(initializer.type, initializer.is_const));
                         auto binding_type = node.is_ref
                             ? result.types.intern(reference_type {
-                                element,
-                                node.is_const or target_const(initializer.type, initializer.is_const),
+                                element_value,
+                                node.is_const or element_const,
                             })
-                            : element;
+                            : element_value;
                         auto symbol = (
                         bind_symbol (semantic_symbol {
                             .kind = symbol_kind::local,
@@ -736,11 +738,35 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                     report(
                         diagnostic_kind::invalid_range,
                         node.full_span,
-                        "for range must be [T; N], iterable, or iterator"
+                        "for range must be [T; N], iterable, or const_iterable"
                     );
                     element = semantic_type_ids::error;
                 }
                 result.for_ranges[node_key(id)] = range_metadata;
+                auto binding_type = read_type(element);
+                if(node.is_ref) {
+                    auto const* reference = std::get_if<reference_type>(&result.types.get(element));
+                    if(reference == nullptr) {
+                        report(
+                            diagnostic_kind::invalid_assignment_target,
+                            node.full_span,
+                            "ref for binding requires a reference iterator item"
+                        );
+                        binding_type = semantic_type_ids::error;
+                    } else {
+                        if(not node.is_const and reference->is_const) {
+                            report(
+                                diagnostic_kind::invalid_assignment_target,
+                                node.full_span,
+                                "let ref for binding requires a mutable iterator item"
+                            );
+                        }
+                        binding_type = result.types.intern(reference_type {
+                            read_type(reference->pointee),
+                            node.is_const or reference->is_const,
+                        });
+                    }
+                }
 
                 auto label = loop_label{};
                 if(node.label) {
@@ -757,12 +783,12 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                         .kind = symbol_kind::local,
                         .name = std::string{ ast_source.slice(node.name) },
                         .span = node.name,
-                    .type = element,
-                    .is_const = node.is_const,
-                    .unit_index = active_unit_index,
-                    .function = active_function,
-                })
-            );
+                        .type = binding_type,
+                        .is_const = node.is_const,
+                        .unit_index = active_unit_index,
+                        .function = active_function,
+                    })
+                );
                 if(symbol.valid()) {
                     result.statement_bindings[node_key(id)] = symbol;
                 }
@@ -772,6 +798,9 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
             },
             [&](template_for_statement_syntax const& node) {
                 check_template_for_statement(node, id, returns);
+            },
+            [&](template_if_statement_syntax const& node) {
+                check_template_if_statement(node, id, returns);
             },
             [&](break_statement_syntax const& node) {
                 check_loop_jump(node.full_span, node.label, true);
@@ -804,7 +833,7 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                     if(not returns.observed_return) {
                         returns.observed_return = returned.type;
                         returns.declared_return = returned.type;
-                        update_inferred_function_return(active_unit_index, active_function, returned.type);
+                        update_inferred_function_return(active_context_index, active_unit_index, active_function, returned.type);
                     } else if(not can_implicitly_convert(returned, *returns.observed_return)) {
                         report(
                             diagnostic_kind::return_type_mismatch,
@@ -865,6 +894,10 @@ auto semantic_analyzer::statement_can_complete_normally(stmt_id id) const -> boo
             },
             [](template_for_statement_syntax const&) {
                 return true;
+            },
+            [&](template_if_statement_syntax const& node) {
+                auto selection = result.template_if_selection_of(active_context_index, active_unit_index, id);
+                return not selection.has_body or statement_can_complete_normally(selection.body);
             },
             [](break_statement_syntax const&) {
                 return false;
@@ -969,11 +1002,19 @@ auto semantic_analyzer::check_template_for_statement(template_for_statement_synt
         ++active_template_for_depth;
         push_scope();
         auto const& source_symbol = result.symbols[pack_symbol.value];
+        auto binding_type = source_symbol.type;
+        if(node.is_ref) {
+            binding_type = result.types.intern(reference_type {
+                read_type(source_symbol.type),
+                node.binding_kind == template_for_binding_kind::const_binding
+                    or target_const(source_symbol.type, source_symbol.is_const),
+            });
+        }
         auto binding_symbol = bind_symbol(semantic_symbol {
             .kind = symbol_kind::local,
             .name = binding_name,
             .span = node.name,
-            .type = source_symbol.type,
+            .type = binding_type,
             .is_const = node.binding_kind == template_for_binding_kind::const_binding or source_symbol.is_const,
             .unit_index = active_unit_index,
             .function = active_function,
@@ -994,6 +1035,281 @@ auto semantic_analyzer::check_template_for_statement(template_for_statement_synt
     }
     active_context_index = parent_context;
     result.template_for_expansions[semantic_node_key{parent_context, active_unit_index, id}] = std::move(expansions);
+}
+
+auto semantic_analyzer::check_template_if_statement(template_if_statement_syntax const& node, stmt_id id, return_state& returns) -> void
+{
+    auto selection = semantic_template_if_selection {
+        .context_index = active_context_index,
+    };
+
+    for(auto const& branch : node.branches) {
+        auto value = evaluate_template_if_condition(node, branch.condition);
+        if(value == template_if_condition_value::error) {
+            return;
+        }
+        if(value == template_if_condition_value::dependent) {
+            report(
+                diagnostic_kind::invalid_operator,
+                node.conditions[branch.condition].full_span,
+                "template if condition is dependent in this context"
+            );
+            return;
+        }
+        if(value == template_if_condition_value::false_) {
+            continue;
+        }
+
+        selection.body = branch.body;
+        selection.has_body = true;
+        result.template_if_selections[node_key(id)] = selection;
+        check_statement(branch.body, returns);
+        return;
+    }
+
+    if(node.else_branch) {
+        selection.body = *node.else_branch;
+        selection.has_body = true;
+        result.template_if_selections[node_key(id)] = selection;
+        check_statement(*node.else_branch, returns);
+        return;
+    }
+
+    result.template_if_selections[node_key(id)] = selection;
+}
+
+auto semantic_analyzer::evaluate_template_if_condition(template_if_statement_syntax const& statement, std::uint32_t condition_id)
+    -> template_if_condition_value
+{
+    auto const& condition = statement.conditions[condition_id];
+    using enum template_if_condition_kind;
+    switch(condition.kind) {
+        case expression:
+            return evaluate_template_if_expression_condition(*condition.expression);
+        case type_equality: {
+            auto left = lower_type(*active_ast, *condition.left_type);
+            auto right = lower_type(*active_ast, *condition.right_type);
+            if(is_error(left) or is_error(right)) {
+                return template_if_condition_value::error;
+            }
+            if(is_dependent_type(left) or is_dependent_type(right)) {
+                return template_if_condition_value::dependent;
+            }
+            return read_type(left) == read_type(right)
+                ? template_if_condition_value::true_
+                : template_if_condition_value::false_;
+        }
+        case concept_bound: {
+            auto target = lower_type(*active_ast, *condition.left_type);
+            if(is_error(target)) {
+                return template_if_condition_value::error;
+            }
+            if(is_dependent_type(target)) {
+                return template_if_condition_value::dependent;
+            }
+            auto concept_name = ast_source.identifier(condition.concept_bound->name);
+            auto concept_symbol = resolve_concept_symbol(active_unit_index, concept_name);
+            if(not concept_symbol) {
+                report(
+                    diagnostic_kind::unknown_concept,
+                    condition.concept_bound->name,
+                    std::format("unknown concept '{}'", concept_name)
+                );
+                return template_if_condition_value::error;
+            }
+            return target_implements(active_unit_index, *active_ast, *condition.concept_bound, target)
+                ? template_if_condition_value::true_
+                : template_if_condition_value::false_;
+        }
+        case not_: {
+            auto value = evaluate_template_if_condition(statement, condition.left_condition);
+            if(value == template_if_condition_value::true_) {
+                return template_if_condition_value::false_;
+            }
+            if(value == template_if_condition_value::false_) {
+                return template_if_condition_value::true_;
+            }
+            return value;
+        }
+        case and_: {
+            auto left = evaluate_template_if_condition(statement, condition.left_condition);
+            if(left == template_if_condition_value::false_ or left == template_if_condition_value::error) {
+                return left;
+            }
+            auto right = evaluate_template_if_condition(statement, condition.right_condition);
+            if(left == template_if_condition_value::true_) {
+                return right;
+            }
+            if(right == template_if_condition_value::false_ or right == template_if_condition_value::error) {
+                return right;
+            }
+            return template_if_condition_value::dependent;
+        }
+        case or_: {
+            auto left = evaluate_template_if_condition(statement, condition.left_condition);
+            if(left == template_if_condition_value::true_ or left == template_if_condition_value::error) {
+                return left;
+            }
+            auto right = evaluate_template_if_condition(statement, condition.right_condition);
+            if(left == template_if_condition_value::false_) {
+                return right;
+            }
+            if(right == template_if_condition_value::true_ or right == template_if_condition_value::error) {
+                return right;
+            }
+            return template_if_condition_value::dependent;
+        }
+    }
+    std::unreachable();
+}
+
+auto semantic_analyzer::evaluate_template_if_expression_condition(expr_id id) -> template_if_condition_value
+{
+    auto checked = check_expression(*active_ast, id, semantic_type_ids::bool_);
+    if(not can_implicitly_convert(checked, semantic_type_ids::bool_)) {
+        report(
+            diagnostic_kind::condition_not_bool,
+            active_ast->span(id),
+            "template if condition expression must be bool"
+        );
+        return template_if_condition_value::error;
+    }
+
+    auto value = constexpr_condition_bool(id);
+    if(not value) {
+        report(
+            diagnostic_kind::invalid_operator,
+            active_ast->span(id),
+            "template if condition must be a constexpr bool expression"
+        );
+        return template_if_condition_value::error;
+    }
+    return *value ? template_if_condition_value::true_ : template_if_condition_value::false_;
+}
+
+auto semantic_analyzer::constexpr_expression_value(expr_id id) -> std::optional<semantic_literal_value>
+{
+    auto key = node_key(id);
+    if(auto found = result.literal_values.find(key); found != result.literal_values.end()) {
+        return found->second;
+    }
+
+    if(auto found = result.expression_enum_cases.find(key); found != result.expression_enum_cases.end()) {
+        auto const& enum_value = result.enums[found->second.enum_index];
+        auto const& enum_case = enum_value.cases[found->second.case_index];
+        return semantic_literal_value {
+            .value = enum_case.value,
+        };
+    }
+
+    return std::visit (
+        overloaded {
+            [&](grouped_expr_syntax const& node) -> std::optional<semantic_literal_value> {
+                return constexpr_expression_value(node.expression);
+            },
+            [&](unary_expr_syntax const& node) -> std::optional<semantic_literal_value> {
+                auto operand = constexpr_expression_value(node.operand);
+                if(not operand) {
+                    return std::nullopt;
+                }
+                if(node.operator_kind == token_kind::kw_not) {
+                    auto value = std::get_if<bool>(&operand->value);
+                    if(value == nullptr) {
+                        return std::nullopt;
+                    }
+                    return semantic_literal_value {
+                        .value = not *value,
+                    };
+                }
+                if(node.operator_kind == token_kind::minus) {
+                    auto value = std::get_if<std::int64_t>(&operand->value);
+                    if(value == nullptr) {
+                        return std::nullopt;
+                    }
+                    return semantic_literal_value {
+                        .value = -*value,
+                    };
+                }
+                return std::nullopt;
+            },
+            [&](binary_expr_syntax const& node) -> std::optional<semantic_literal_value> {
+                if(node.operator_kind == token_kind::kw_and) {
+                    auto left = constexpr_condition_bool(node.left);
+                    if(left and not *left) {
+                        return semantic_literal_value { .value = false };
+                    }
+                    auto right = constexpr_condition_bool(node.right);
+                    if(left and right) {
+                        return semantic_literal_value { .value = *left and *right };
+                    }
+                    return std::nullopt;
+                }
+                if(node.operator_kind == token_kind::kw_or) {
+                    auto left = constexpr_condition_bool(node.left);
+                    if(left and *left) {
+                        return semantic_literal_value { .value = true };
+                    }
+                    auto right = constexpr_condition_bool(node.right);
+                    if(left and right) {
+                        return semantic_literal_value { .value = *left or *right };
+                    }
+                    return std::nullopt;
+                }
+
+                auto left = constexpr_expression_value(node.left);
+                auto right = constexpr_expression_value(node.right);
+                if(not left or not right) {
+                    return std::nullopt;
+                }
+                auto equal = left->value == right->value;
+                switch(node.operator_kind) {
+                    case token_kind::equal_equal:
+                        return semantic_literal_value { .value = equal };
+                    case token_kind::bang_equal:
+                        return semantic_literal_value { .value = not equal };
+                    case token_kind::less:
+                    case token_kind::less_equal:
+                    case token_kind::greater:
+                    case token_kind::greater_equal: {
+                        auto left_int = std::get_if<std::int64_t>(&left->value);
+                        auto right_int = std::get_if<std::int64_t>(&right->value);
+                        if(left_int == nullptr or right_int == nullptr) {
+                            return std::nullopt;
+                        }
+                        if(node.operator_kind == token_kind::less) {
+                            return semantic_literal_value { .value = *left_int < *right_int };
+                        }
+                        if(node.operator_kind == token_kind::less_equal) {
+                            return semantic_literal_value { .value = *left_int <= *right_int };
+                        }
+                        if(node.operator_kind == token_kind::greater) {
+                            return semantic_literal_value { .value = *left_int > *right_int };
+                        }
+                        return semantic_literal_value { .value = *left_int >= *right_int };
+                    }
+                    default:
+                        return std::nullopt;
+                }
+            },
+            [](auto const&) -> std::optional<semantic_literal_value> {
+                return std::nullopt;
+            },
+        },
+        active_ast->node(id)
+    );
+}
+
+auto semantic_analyzer::constexpr_condition_bool(expr_id id) -> std::optional<bool>
+{
+    auto value = constexpr_expression_value(id);
+    if(not value) {
+        return std::nullopt;
+    }
+    auto bool_value = std::get_if<bool>(&value->value);
+    if(bool_value == nullptr) {
+        return std::nullopt;
+    }
+    return *bool_value;
 }
 
 auto semantic_analyzer::check_condition(expr_id condition) -> void

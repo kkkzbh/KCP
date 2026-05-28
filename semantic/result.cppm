@@ -108,6 +108,14 @@ export struct semantic_expression_info
     semantic_type_id read_type{};
     bool is_lvalue{};
     bool is_const{};
+    bool is_move{};
+};
+
+export enum class semantic_forward_binding_kind : std::uint8_t
+{
+    lvalue,
+    const_lvalue,
+    rvalue,
 };
 
 export struct semantic_field_access
@@ -162,6 +170,16 @@ export struct semantic_literal_value
     auto constexpr operator==(semantic_literal_value const&) const -> bool = default;
 
     std::variant<std::monostate, bool, std::int64_t, double, char, std::string> value{};
+};
+
+export struct semantic_default_compare_field
+{
+    auto constexpr operator==(semantic_default_compare_field const&) const -> bool = default;
+
+    std::uint32_t field_index{};
+    symbol_id compare_operator{};
+    symbol_id to_weak_method{};
+    bool enum_builtin{};
 };
 
 export enum class semantic_builtin_call_kind : std::uint8_t
@@ -332,11 +350,11 @@ export struct semantic_function_instance_key
 {
     constexpr semantic_function_instance_key() = default;
 
-    semantic_function_instance_key(std::size_t source_unit, function_id source_function, std::vector<semantic_type_id> instance_type_arguments, std::vector<bool> instance_forward_rvalues = {}) :
+    semantic_function_instance_key(std::size_t source_unit, function_id source_function, std::vector<semantic_type_id> instance_type_arguments, std::vector<semantic_forward_binding_kind> instance_forward_bindings = {}) :
         unit_index(source_unit),
         function_id_value(source_function.value),
         type_arguments(std::move(instance_type_arguments)),
-        forward_rvalues(std::move(instance_forward_rvalues)) {}
+        forward_bindings(std::move(instance_forward_bindings)) {}
 
     auto constexpr operator==(semantic_function_instance_key const&) const -> bool = default;
     auto constexpr operator<=>(semantic_function_instance_key const&) const = default;
@@ -344,7 +362,7 @@ export struct semantic_function_instance_key
     std::size_t unit_index{};
     std::uint32_t function_id_value{};
     std::vector<semantic_type_id> type_arguments{};
-    std::vector<bool> forward_rvalues{};
+    std::vector<semantic_forward_binding_kind> forward_bindings{};
 };
 
 export struct semantic_function_instance
@@ -384,6 +402,15 @@ export struct semantic_template_for_expansion
     symbol_id binding_symbol{};
     symbol_id pack_symbol{};
     semantic_type_id bound_type{};
+};
+
+export struct semantic_template_if_selection
+{
+    auto constexpr operator==(semantic_template_if_selection const&) const -> bool = default;
+
+    std::size_t context_index{};
+    stmt_id body{};
+    bool has_body{};
 };
 
 export struct semantic_result
@@ -752,6 +779,12 @@ export struct semantic_result
         return lookup_result_entry(template_for_expansions, context, unit, id);
     }
 
+    auto template_if_selection_of(std::size_t context, std::size_t unit, stmt_id id) const
+        -> semantic_template_if_selection
+    {
+        return lookup_result_entry(template_if_selections, context, unit, id);
+    }
+
     auto generic_parameter_count_of(std::size_t unit, function_id id) const -> std::size_t
     {
         auto found = function_generic_parameter_counts.find(semantic_node_key{unit, id});
@@ -817,6 +850,7 @@ export struct semantic_result
     std::map<semantic_node_key, semantic_field_access> expression_fields{};
     std::map<semantic_node_key, semantic_variant_case_access> expression_variant_cases{};
     std::map<semantic_node_key, semantic_enum_case_access> expression_enum_cases{};
+    std::map<symbol_id, std::vector<semantic_default_compare_field>> default_compare_fields{};
     std::map<semantic_node_key, semantic_lambda_info> lambda_infos{};
     std::map<semantic_node_key, semantic_lambda_info> lambda_call_infos{};
     std::map<std::uint32_t, semantic_node_key> closure_lambda_infos{};
@@ -824,4 +858,5 @@ export struct semantic_result
     std::map<semantic_parameter_key, symbol_id> pattern_bindings{};
     std::map<semantic_node_key, semantic_for_range_info> for_ranges{};
     std::map<semantic_node_key, std::vector<semantic_template_for_expansion>> template_for_expansions{};
+    std::map<semantic_node_key, semantic_template_if_selection> template_if_selections{};
 };

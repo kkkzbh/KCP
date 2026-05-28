@@ -28,6 +28,14 @@ struct return_state
     std::vector<stmt_id> nrvo_return_statements{};
 };
 
+enum class template_if_condition_value : std::uint8_t
+{
+    false_,
+    true_,
+    dependent,
+    error,
+};
+
 struct expression_info
 {
     semantic_type_id type{};
@@ -100,7 +108,7 @@ struct semantic_unit_state
     bool named_module{};
     std::map<std::string, symbol_id> visible_functions{};
     std::map<overload_operator_kind, std::vector<symbol_id>> visible_operators{};
-    std::map<semantic_type_id, std::map<std::string, symbol_id>> visible_extension_methods{};
+    std::map<semantic_type_id, std::map<std::string, std::vector<symbol_id>>> visible_extension_methods{};
     std::map<semantic_type_id, std::map<overload_operator_kind, std::vector<symbol_id>>> visible_extension_operators{};
     std::map<std::string, symbol_id> visible_types{};
     std::map<std::string, symbol_id> visible_concepts{};
@@ -155,6 +163,7 @@ struct semantic_analyzer
     auto analyze() -> semantic_result
     {
         build_module_index();
+        check_default_compare_operators();
         infer_return_types();
         check_struct_field_defaults();
         check_bodies();
@@ -237,6 +246,10 @@ private:
     auto collect_impl_declarations(std::size_t unit_index, ast_arena const& ast, impl_id id) -> void;
     auto collect_impl_function(std::size_t unit_index, ast_arena const& ast, impl_syntax const& impl, semantic_type_id impl_type, std::vector<std::string> const& impl_generic_parameters, function_id id) -> void;
     auto collect_impl_operator(std::size_t unit_index, ast_arena const& ast, impl_syntax const& impl, semantic_type_id impl_type, std::vector<std::string> const& impl_generic_parameters, function_id id) -> void;
+    auto validate_default_compare_operator(function_syntax const& function, semantic_type_id impl_type, std::optional<std::uint32_t> struct_index, std::span<semantic_type_id const> parameter_types, semantic_type_id return_type, bool is_generic) -> std::optional<std::vector<semantic_default_compare_field>>;
+    auto default_compare_field(std::uint32_t field_index, semantic_type_id field_type, source_span span) -> std::optional<semantic_default_compare_field>;
+    auto default_compare_to_weak_method(semantic_type_id result_type, semantic_type_id weak_type, source_span span) -> std::optional<symbol_id>;
+    auto check_default_compare_operators() -> void;
     auto collect_concept_impl_declarations(std::size_t unit_index, ast_arena const& ast, concept_impl_id id) -> void;
     auto collect_concept_impl_function(std::size_t unit_index, ast_arena const& ast, concept_impl_syntax const& impl, semantic_type_id target_type, function_id id) -> std::optional<symbol_id>;
     auto validate_concept_impl(semantic_concept_impl const& impl, source_span span) -> void;
@@ -286,6 +299,7 @@ private:
     auto validate_function_pack_shape(std::size_t unit_index, function_id id) -> void;
     auto validate_function_type_arguments(std::size_t unit_index, function_id id, std::vector<semantic_type_id> const& type_arguments, source_span span) -> bool;
     auto infer_function_type_arguments_for_call(symbol_id symbol, std::optional<semantic_type_id> receiver_type, std::vector<expression_info> const& arguments, std::vector<semantic_type_id> const& explicit_arguments, source_span span) -> std::optional<std::vector<semantic_type_id>>;
+    auto instantiate_function_symbol_for_receiver(symbol_id symbol, semantic_type_id receiver_type, source_span span) -> semantic_function_instance const*;
     auto instantiate_function_symbol(symbol_id symbol, std::optional<semantic_type_id> receiver_type, std::vector<expression_info> const& arguments, std::vector<semantic_type_id> explicit_arguments, source_span span) -> semantic_function_instance const*;
     auto concrete_destructor_symbol(semantic_type_id type, source_span span) -> symbol_id;
     auto function_has_source_body(symbol_id symbol) const -> bool;
@@ -326,7 +340,9 @@ private:
     auto is_dependent_type(semantic_type_id type) const -> bool;
     auto range_element_type(semantic_type_id type) -> semantic_type_id;
     auto range_info(expression_info range, source_span span) -> semantic_for_range_info;
+    auto method_symbols(semantic_type_id owner, std::string_view name) -> std::vector<symbol_id>;
     auto method_symbol(semantic_type_id owner, std::string_view name) -> std::optional<symbol_id>;
+    auto choose_method(std::span<symbol_id const> candidates, expression_info receiver, source_span span, bool report_no_match = true) -> std::optional<symbol_id>;
     auto concrete_method_symbol(symbol_id symbol, semantic_type_id receiver_type, std::vector<expression_info> const& arguments, source_span span) -> std::optional<symbol_id>;
     auto resolve_operator(overload_operator_kind kind, std::span<semantic_type_id const> owner_types, std::vector<expression_info> const& arguments, source_span span) -> std::optional<symbol_id>;
     auto choose_operator(std::span<symbol_id const> candidates, std::vector<expression_info> const& arguments, std::optional<semantic_type_id> receiver_type, source_span span, bool report_no_match = true) -> std::optional<symbol_id>;
@@ -373,10 +389,10 @@ private:
     auto infer_type_argument(semantic_type_id pattern, semantic_type_id argument, std::map<std::uint32_t, semantic_type_id>& inferred) -> bool;
     auto generic_substitution_map(function_syntax const& function, std::vector<semantic_type_id> const& type_arguments)
         -> std::map<std::string, semantic_type_id>;
-    auto instantiate_function(std::size_t unit_index, function_id id, std::vector<semantic_type_id> type_arguments, std::vector<bool> forward_rvalues, source_span span) -> semantic_function_instance const*;
+    auto instantiate_function(std::size_t unit_index, function_id id, std::vector<semantic_type_id> type_arguments, std::vector<semantic_forward_binding_kind> forward_bindings, source_span span) -> semantic_function_instance const*;
     auto instantiate_lambda(semantic_lambda_info const& lambda, std::vector<expression_info> const& arguments, std::vector<semantic_type_id> explicit_arguments, source_span span) -> semantic_lambda_info;
     auto substitute_signature(function_signature const& signature, std::vector<semantic_type_id> const& type_arguments) -> function_signature;
-    auto substitute_signature_for_instance(std::size_t unit_index, function_id id, function_signature const& signature, std::vector<semantic_type_id> const& type_arguments, std::vector<bool> const& forward_rvalues, source_span span) -> function_signature;
+    auto substitute_signature_for_instance(std::size_t unit_index, function_id id, function_signature const& signature, std::vector<semantic_type_id> const& type_arguments, std::vector<semantic_forward_binding_kind> const& forward_bindings, source_span span) -> function_signature;
     auto substitute_type_for_instance(semantic_type_id type, std::optional<std::size_t> pack_index, std::vector<semantic_type_id> const& type_arguments, std::optional<semantic_type_id> pack_element, source_span span) -> semantic_type_id;
     auto infer_type_argument_with_pack(semantic_type_id pattern, semantic_type_id argument, std::optional<std::size_t> pack_index, std::map<std::uint32_t, semantic_type_id>& inferred, std::optional<semantic_type_id>& pack_element) -> bool;
     auto callable_type(semantic_type_id type) const -> function_type const*;
@@ -394,6 +410,10 @@ private:
     auto ensure_function_return_inferred(std::size_t unit_index, function_id id) -> void;
     auto infer_function_body_return(std::size_t unit_index, function_id id) -> semantic_type_id;
     auto infer_statement_returns(ast_arena const& ast, stmt_id id, std::vector<semantic_type_id>& observed) -> void;
+    auto infer_template_if_condition(ast_arena const& ast, template_if_statement_syntax const& statement, std::uint32_t condition_id)
+        -> template_if_condition_value;
+    auto infer_template_if_expression_value(ast_arena const& ast, expr_id id) -> std::optional<semantic_literal_value>;
+    auto infer_template_if_expression_bool(ast_arena const& ast, expr_id id) -> std::optional<bool>;
     auto infer_expression_type(ast_arena const& ast, expr_id id, std::optional<semantic_type_id> expected)
         -> expression_info;
     auto infer_lambda_return_from_current_return_scope(std::size_t unit_index, function_id id) -> void;
@@ -410,7 +430,7 @@ private:
     auto callee_function_symbol(ast_arena const& ast, expr_id id) -> std::optional<symbol_id>;
     auto resolve_binding(std::string_view name) const -> std::optional<return_inference_binding>;
     auto resolve_visible_function(std::string_view name) const -> std::optional<symbol_id>;
-    auto update_inferred_function_return(std::size_t unit_index, function_id id, semantic_type_id type) -> void;
+    auto update_inferred_function_return(std::size_t context_index, std::size_t unit_index, function_id id, semantic_type_id type) -> void;
     auto report_cannot_infer_return_type(std::size_t unit_index, function_id id) -> void;
 
     auto check_bodies() -> void;
@@ -433,6 +453,13 @@ private:
     auto expression_can_complete_normally(expr_id id) const -> bool;
     auto check_template_for_statement(template_for_statement_syntax const& node, stmt_id id, return_state& returns)
         -> void;
+    auto check_template_if_statement(template_if_statement_syntax const& node, stmt_id id, return_state& returns)
+        -> void;
+    auto evaluate_template_if_condition(template_if_statement_syntax const& statement, std::uint32_t condition_id)
+        -> template_if_condition_value;
+    auto evaluate_template_if_expression_condition(expr_id id) -> template_if_condition_value;
+    auto constexpr_expression_value(expr_id id) -> std::optional<semantic_literal_value>;
+    auto constexpr_condition_bool(expr_id id) -> std::optional<bool>;
     auto stripped_expression(expr_id id) const -> expr_id;
     auto direct_initializer_expression(expr_id id) const -> bool;
     auto nrvo_candidate_for_return(expr_id value, expression_info const& returned, return_state const& returns) -> symbol_id;
@@ -448,7 +475,7 @@ private:
     auto check_name_expression(name_expr_syntax const& node, expr_id id) -> expression_info;
     auto check_literal_expression(literal_expr_syntax const& node, expr_id id) -> expression_info;
     auto check_unary_expression(ast_arena const& ast, unary_expr_syntax const& node) -> expression_info;
-    auto check_unary_expression(ast_arena const& ast, unary_expr_syntax const& node, expr_id id) -> expression_info;
+    auto check_unary_expression(ast_arena const& ast, unary_expr_syntax const& node, expr_id id, std::optional<semantic_type_id> expected = std::nullopt) -> expression_info;
     auto check_new_expression(ast_arena const& ast, new_expr_syntax const& node, expr_id id) -> expression_info;
     auto check_binary_expression(ast_arena const& ast, binary_expr_syntax const& node) -> expression_info;
     auto check_binary_expression(ast_arena const& ast, binary_expr_syntax const& node, expr_id id) -> expression_info;
@@ -478,7 +505,7 @@ private:
     auto check_array_initializer(ast_arena const& ast, struct_init_expr_syntax const& node, semantic_type_id type, array_type const& array) -> expression_info;
     auto check_str_initializer(ast_arena const& ast, struct_init_expr_syntax const& node) -> expression_info;
     auto check_block_expression(ast_arena const& ast, block_expr_syntax const& node) -> expression_info;
-    auto check_match_expression(ast_arena const& ast, match_expr_syntax const& node) -> expression_info;
+    auto check_match_expression(ast_arena const& ast, match_expr_syntax const& node, std::optional<semantic_type_id> expected) -> expression_info;
     auto check_lambda_expression(lambda_expr_syntax const& node, expr_id id, std::optional<semantic_type_id> expected)
         -> expression_info;
     auto apply_lambda_parameter_context(lambda_expr_syntax const& node, std::optional<semantic_type_id> expected) -> void;
@@ -519,8 +546,8 @@ private:
     std::map<std::string, std::map<std::string, symbol_id>> module_concepts{}; ///< 按内部模块 key 索引的本模块 concept 符号表。
     std::map<std::string, std::map<std::string, symbol_id>> module_concept_exports{}; ///< 按模块名索引的导出 concept 符号表。
     std::map<semantic_type_id, std::map<std::string, semantic_type_id>> associated_types{}; ///< 类型的扁平关联类型命名空间。
-    std::map<std::string, std::map<semantic_type_id, std::map<std::string, symbol_id>>> module_extension_methods{}; ///< 按模块 key 索引的内建类型扩展成员函数。
-    std::map<std::string, std::map<semantic_type_id, std::map<std::string, symbol_id>>> module_extension_method_exports{}; ///< 按模块名索引的导出内建类型扩展成员函数。
+    std::map<std::string, std::map<semantic_type_id, std::map<std::string, std::vector<symbol_id>>>> module_extension_methods{}; ///< 按模块 key 索引的内建类型扩展成员函数。
+    std::map<std::string, std::map<semantic_type_id, std::map<std::string, std::vector<symbol_id>>>> module_extension_method_exports{}; ///< 按模块名索引的导出内建类型扩展成员函数。
     std::map<std::string, std::map<semantic_type_id, std::map<overload_operator_kind, std::vector<symbol_id>>>> module_extension_operators{}; ///< 按模块 key 索引的内建类型扩展 operator。
     std::map<std::string, std::map<semantic_type_id, std::map<overload_operator_kind, std::vector<symbol_id>>>> module_extension_operator_exports{}; ///< 按模块名索引的导出内建类型扩展 operator。
     std::map<std::tuple<symbol_id, std::vector<semantic_type_id>, semantic_type_id>, std::size_t> concept_impl_index{}; ///< concept + concept arguments + concrete type 的实现事实索引。
@@ -547,7 +574,7 @@ private:
     std::vector<std::map<std::string, symbol_id>> scopes{}; ///< 函数体检查阶段的词法作用域栈。
     std::vector<std::map<std::string, semantic_type_id>> type_scopes{}; ///< 函数体内 type alias 的词法作用域栈。
     std::map<std::string, std::vector<symbol_id>> active_value_packs{}; ///< 当前函数实例中可展开的值参数包。
-    std::map<symbol_id, bool> active_forward_parameters{}; ///< 当前函数实例中 forward& 参数是否按 rvalue 绑定。
+    std::map<symbol_id, semantic_forward_binding_kind> active_forward_parameters{}; ///< 当前函数实例中 forward& 参数的调用点值类别。
     std::vector<loop_label> loops{}; ///< 当前嵌套循环标签栈，用于校验跳转语句。
     std::size_t active_template_for_depth{}; ///< 当前 template for 展开深度，用于限制 break/continue 穿透。
     std::vector<lambda_capture_context> lambda_capture_stack{}; ///< 当前正在语义检查的嵌套 lambda 捕获上下文。

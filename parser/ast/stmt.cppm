@@ -3,6 +3,7 @@ export module parser.ast.stmt;
 import std;
 import source;
 import parser.ast.ids;
+import parser.ast.item;
 
 export struct block_statement_syntax
 {
@@ -69,6 +70,7 @@ export struct for_statement_syntax
 
     source_span full_span{};
     bool is_const{};
+    bool is_ref{};
     source_span name{};
     std::optional<source_span> label{};
     expr_id range{};
@@ -88,9 +90,53 @@ export struct template_for_statement_syntax
 
     source_span full_span{};
     template_for_binding_kind binding_kind{};
+    bool is_ref{};
     source_span name{};
     source_span pack_name{};
     stmt_id body{};
+};
+
+export enum class template_if_condition_kind : std::uint8_t
+{
+    expression,
+    type_equality,
+    concept_bound,
+    not_,
+    and_,
+    or_,
+};
+
+export struct template_if_condition_syntax
+{
+    auto constexpr operator==(template_if_condition_syntax const& other) const -> bool = default;
+
+    source_span full_span{};
+    template_if_condition_kind kind{};
+    std::optional<expr_id> expression{};
+    std::optional<type_id> left_type{};
+    std::optional<type_id> right_type{};
+    std::optional<concept_id_syntax> concept_bound{};
+    std::uint32_t left_condition{};
+    std::uint32_t right_condition{};
+};
+
+export struct template_if_branch_syntax
+{
+    auto constexpr operator==(template_if_branch_syntax const& other) const -> bool = default;
+
+    source_span full_span{};
+    std::uint32_t condition{};
+    stmt_id body{};
+};
+
+export struct template_if_statement_syntax
+{
+    auto constexpr operator==(template_if_statement_syntax const& other) const -> bool = default;
+
+    source_span full_span{};
+    std::vector<template_if_condition_syntax> conditions{};
+    std::vector<template_if_branch_syntax> branches{};
+    std::optional<stmt_id> else_branch{};
 };
 
 export struct break_statement_syntax
@@ -134,6 +180,7 @@ export using statement_syntax = std::variant<
     do_while_statement_syntax,
     for_statement_syntax,
     template_for_statement_syntax,
+    template_if_statement_syntax,
     break_statement_syntax,
     continue_statement_syntax,
     return_statement_syntax,

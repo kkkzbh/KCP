@@ -1091,6 +1091,28 @@ auto parser::parse_block_expression() -> std::optional<expr_id>
         return std::nullopt;
     }
 
+    auto looks_like_declaration = [&]() {
+        if(check(token_kind::kw_let)) {
+            return true;
+        }
+        if(not check(token_kind::kw_const)) {
+            return false;
+        }
+
+        auto lookahead = 1uz;
+        if(peek(lookahead).kind == token_kind::kw_ref) {
+            ++lookahead;
+        }
+        if(peek(lookahead).kind == token_kind::l_paren) {
+            return true;
+        }
+        if(peek(lookahead).kind != token_kind::identifier) {
+            return false;
+        }
+        auto const after_name = peek(lookahead + 1uz).kind;
+        return after_name == token_kind::equal or after_name == token_kind::colon;
+    };
+
     auto statements = std::vector<stmt_id>{};
     auto tail = std::optional<expr_id>{};
     while(not check_any({ token_kind::r_brace, token_kind::eof })) {
@@ -1103,6 +1125,16 @@ auto parser::parse_block_expression() -> std::optional<expr_id>
             and peek(1uz).kind == token_kind::identifier
             and peek(2uz).kind == token_kind::equal
         ) {
+            auto statement = parse_statement();
+            if(not statement) {
+                synchronize_statement();
+                continue;
+            }
+            statements.emplace_back(*statement);
+            continue;
+        }
+
+        if(looks_like_declaration()) {
             auto statement = parse_statement();
             if(not statement) {
                 synchronize_statement();

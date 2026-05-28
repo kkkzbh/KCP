@@ -11,11 +11,6 @@ export struct string {
     len: usize;
 }
 
-export struct string_iter {
-    current: char*;
-    end: char*;
-}
-
 impl string {
     string()
     {
@@ -216,28 +211,23 @@ impl string {
     }
 }
 
-impl iterator for string_iter {
+impl iterable for string {
+    type iter_type = ptr_iter<char>;
     type iter_item = char&;
 
-    next(self&) -> optional<char&>
+    iter(self&) -> ptr_iter<char>
     {
-        if(current >= end) {
-            return optional<char&>::none;
-        }
-
-        let ch = current;
-        current = current + 1;
-        return optional<char&>::some(ref *ch);
+        return ptr_iter<char>{ .current = data(), .end = data() + len };
     }
 }
 
-impl iterable for string {
-    type iter_type = string_iter;
-    type iter_item = char&;
+impl const_iterable for string {
+    type const_iter_type = const_ptr_iter<char>;
+    type const_iter_item = char const&;
 
-    iter(self&) -> string_iter
+    iter(self const&) -> const_ptr_iter<char>
     {
-        return string_iter{ .current = data(), .end = data() + len };
+        return const_ptr_iter<char>{ .current = data(), .end = data() + len };
     }
 }
 

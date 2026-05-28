@@ -1,12 +1,11 @@
 export module std.ranges.terminals;
 
-export import std.core.iter;
-export import std.core.option;
-export import std.meta;
+export import std.ranges.sources;
 
-export count<I: iterator>(source: I) -> usize
+export count<R>(source: R forward&) -> usize
 {
-    let iter = move source;
+    let view = to_view(forward source);
+    let iter = view.iter();
     let total: usize = 0;
     while(iter.next().has_value()) {
         total += 1;
@@ -14,11 +13,10 @@ export count<I: iterator>(source: I) -> usize
     return total;
 }
 
-export fold<I: iterator, Acc, F>(source: I, init: Acc, op: F) -> Acc
-requires
-    F: callable<Acc, I::iter_item> and call_result<F, Acc, I::iter_item> == Acc
+export fold<R, Acc, F>(source: R forward&, init: Acc, op: F) -> Acc
 {
-    let iter = move source;
+    let view = to_view(forward source);
+    let iter = view.iter();
     let state = move init;
     while(true) {
         let item = iter.next();
@@ -30,11 +28,10 @@ requires
     unreachable();
 }
 
-export any<I: iterator, P>(source: I, predicate: P) -> bool
-requires
-    P: callable<I::iter_item> and call_result<P, I::iter_item> == bool
+export any<R, P>(source: R forward&, predicate: P) -> bool
 {
-    let iter = move source;
+    let view = to_view(forward source);
+    let iter = view.iter();
     while(true) {
         let item = iter.next();
         if(not item.has_value()) {
@@ -47,11 +44,10 @@ requires
     unreachable();
 }
 
-export all_of<I: iterator, P>(source: I, predicate: P) -> bool
-requires
-    P: callable<I::iter_item> and call_result<P, I::iter_item> == bool
+export all_of<R, P>(source: R forward&, predicate: P) -> bool
 {
-    let iter = move source;
+    let view = to_view(forward source);
+    let iter = view.iter();
     while(true) {
         let item = iter.next();
         if(not item.has_value()) {
@@ -64,11 +60,10 @@ requires
     unreachable();
 }
 
-export find<I: iterator, P>(source: I, predicate: P) -> optional<I::iter_item>
-requires
-    P: callable<I::iter_item> and call_result<P, I::iter_item> == bool
+export find<R, P>(source: R forward&, predicate: P)
 {
-    let iter = move source;
+    let view = to_view(forward source);
+    let iter = view.iter();
     while(true) {
         let item = iter.next();
         if(not item.has_value()) {

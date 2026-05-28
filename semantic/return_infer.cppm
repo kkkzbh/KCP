@@ -106,7 +106,7 @@ auto semantic_analyzer::ensure_function_return_inferred(std::size_t unit_index, 
         state = return_inference_state::resolved;
     }
 
-    update_inferred_function_return(unit_index, id, inferred);
+    update_inferred_function_return(0uz, unit_index, id, inferred);
 }
 
 auto semantic_analyzer::infer_function_body_return(std::size_t unit_index, function_id id) -> semantic_type_id
@@ -177,12 +177,14 @@ auto semantic_analyzer::infer_statement_returns(ast_arena const& ast, stmt_id id
                     auto count = std::min(elements.size(), node.binding_names.size());
                     for(auto index = 0uz; index < count; ++index) {
                         auto element = elements[index];
+                        auto element_value = read_type(element);
+                        auto element_const = target_const(element, target_const(initializer.type, initializer.is_const));
                         auto binding_type = node.is_ref
                             ? result.types.intern(reference_type {
-                                element,
-                                node.is_const or target_const(initializer.type, initializer.is_const),
+                                element_value,
+                                node.is_const or element_const,
                             })
-                            : element;
+                            : element_value;
                         return_scopes.back().emplace (
                             std::string{ ast_source.slice(node.binding_names[index]) },
                             return_inference_binding {
@@ -232,12 +234,22 @@ auto semantic_analyzer::infer_statement_returns(ast_arena const& ast, stmt_id id
                 if(not element.valid()) {
                     element = semantic_type_ids::error;
                 }
+                auto binding_type = read_type(element);
+                if(node.is_ref) {
+                    auto const* reference = std::get_if<reference_type>(&result.types.get(element));
+                    binding_type = reference == nullptr
+                        ? semantic_type_ids::error
+                        : result.types.intern(reference_type {
+                            read_type(reference->pointee),
+                            node.is_const or reference->is_const,
+                        });
+                }
                 return_scopes.emplace_back();
                 type_scopes.emplace_back();
                 return_scopes.back().emplace (
                     std::string{ ast_source.slice(node.name) },
                     return_inference_binding {
-                        .type = element,
+                        .type = binding_type,
                         .is_const = node.is_const,
                     }
                 );
@@ -247,6 +259,40 @@ auto semantic_analyzer::infer_statement_returns(ast_arena const& ast, stmt_id id
             },
             [&](template_for_statement_syntax const& node) {
                 infer_statement_returns(ast, node.body, observed);
+            },
+            [&](template_if_statement_syntax const& node) {
+                auto fallback = false;
+                for(auto const& branch : node.branches) {
+                    auto value = infer_template_if_condition(ast, node, branch.condition);
+                    if(value == template_if_condition_value::true_) {
+                        infer_statement_returns(ast, branch.body, observed);
+                        return;
+                    }
+                    if(value == template_if_condition_value::false_) {
+                        continue;
+                    }
+                    fallback = true;
+                    break;
+                }
+                if(not fallback and node.else_branch) {
+                    infer_statement_returns(ast, *node.else_branch, observed);
+                    return;
+                }
+                if(not fallback) {
+                    return;
+                }
+
+                for(auto const& condition : node.conditions) {
+                    if(condition.expression) {
+                        infer_expression_type(ast, *condition.expression, semantic_type_ids::bool_);
+                    }
+                }
+                for(auto const& branch : node.branches) {
+                    infer_statement_returns(ast, branch.body, observed);
+                }
+                if(node.else_branch) {
+                    infer_statement_returns(ast, *node.else_branch, observed);
+                }
             },
             [&](return_statement_syntax const& node) {
                 observed.emplace_back (
@@ -263,6 +309,207 @@ auto semantic_analyzer::infer_statement_returns(ast_arena const& ast, stmt_id id
         },
         statement
     );
+}
+
+auto semantic_analyzer::infer_template_if_condition(ast_arena const& ast, template_if_statement_syntax const& statement, std::uint32_t condition_id)
+    -> template_if_condition_value
+{
+    auto const& condition = statement.conditions[condition_id];
+    using enum template_if_condition_kind;
+    switch(condition.kind) {
+        case expression: {
+            auto value = infer_template_if_expression_bool(ast, *condition.expression);
+            if(not value) {
+                return template_if_condition_value::dependent;
+            }
+            return *value ? template_if_condition_value::true_ : template_if_condition_value::false_;
+        }
+        case type_equality: {
+            auto left = lower_type(ast, *condition.left_type);
+            auto right = lower_type(ast, *condition.right_type);
+            if(is_error(left) or is_error(right)) {
+                return template_if_condition_value::error;
+            }
+            if(is_dependent_type(left) or is_dependent_type(right)) {
+                return template_if_condition_value::dependent;
+            }
+            return read_type(left) == read_type(right)
+                ? template_if_condition_value::true_
+                : template_if_condition_value::false_;
+        }
+        case concept_bound: {
+            auto target = lower_type(ast, *condition.left_type);
+            if(is_error(target)) {
+                return template_if_condition_value::error;
+            }
+            if(is_dependent_type(target)) {
+                return template_if_condition_value::dependent;
+            }
+            return target_implements(active_unit_index, ast, *condition.concept_bound, target)
+                ? template_if_condition_value::true_
+                : template_if_condition_value::false_;
+        }
+        case not_: {
+            auto value = infer_template_if_condition(ast, statement, condition.left_condition);
+            if(value == template_if_condition_value::true_) {
+                return template_if_condition_value::false_;
+            }
+            if(value == template_if_condition_value::false_) {
+                return template_if_condition_value::true_;
+            }
+            return value;
+        }
+        case and_: {
+            auto left = infer_template_if_condition(ast, statement, condition.left_condition);
+            if(left == template_if_condition_value::false_ or left == template_if_condition_value::error) {
+                return left;
+            }
+            auto right = infer_template_if_condition(ast, statement, condition.right_condition);
+            if(left == template_if_condition_value::true_) {
+                return right;
+            }
+            if(right == template_if_condition_value::false_ or right == template_if_condition_value::error) {
+                return right;
+            }
+            return template_if_condition_value::dependent;
+        }
+        case or_: {
+            auto left = infer_template_if_condition(ast, statement, condition.left_condition);
+            if(left == template_if_condition_value::true_ or left == template_if_condition_value::error) {
+                return left;
+            }
+            auto right = infer_template_if_condition(ast, statement, condition.right_condition);
+            if(left == template_if_condition_value::false_) {
+                return right;
+            }
+            if(right == template_if_condition_value::true_ or right == template_if_condition_value::error) {
+                return right;
+            }
+            return template_if_condition_value::dependent;
+        }
+    }
+    std::unreachable();
+}
+
+auto semantic_analyzer::infer_template_if_expression_value(ast_arena const& ast, expr_id id) -> std::optional<semantic_literal_value>
+{
+    return std::visit (
+        overloaded {
+            [&](literal_expr_syntax const& node) -> std::optional<semantic_literal_value> {
+                auto text = ast_source.slice(node.full_span);
+                if(text == "true" or text == "false") {
+                    return semantic_literal_value { .value = text == "true" };
+                }
+                if(text.starts_with("'")) {
+                    return semantic_literal_value { .value = parse_char_literal(text) };
+                }
+                if(not text.contains('.') and not text.contains('e') and not text.contains('E') and not text.starts_with("\"") and text != "nullptr") {
+                    return semantic_literal_value { .value = parse_integer_literal(text) };
+                }
+                return std::nullopt;
+            },
+            [&](grouped_expr_syntax const& node) -> std::optional<semantic_literal_value> {
+                return infer_template_if_expression_value(ast, node.expression);
+            },
+            [&](unary_expr_syntax const& node) -> std::optional<semantic_literal_value> {
+                auto operand = infer_template_if_expression_value(ast, node.operand);
+                if(not operand) {
+                    return std::nullopt;
+                }
+                if(node.operator_kind == token_kind::kw_not) {
+                    auto value = std::get_if<bool>(&operand->value);
+                    if(value == nullptr) {
+                        return std::nullopt;
+                    }
+                    return semantic_literal_value { .value = not *value };
+                }
+                if(node.operator_kind == token_kind::minus) {
+                    auto value = std::get_if<std::int64_t>(&operand->value);
+                    if(value == nullptr) {
+                        return std::nullopt;
+                    }
+                    return semantic_literal_value { .value = -*value };
+                }
+                return std::nullopt;
+            },
+            [&](binary_expr_syntax const& node) -> std::optional<semantic_literal_value> {
+                if(node.operator_kind == token_kind::kw_and) {
+                    auto left = infer_template_if_expression_bool(ast, node.left);
+                    if(left and not *left) {
+                        return semantic_literal_value { .value = false };
+                    }
+                    auto right = infer_template_if_expression_bool(ast, node.right);
+                    if(left and right) {
+                        return semantic_literal_value { .value = *left and *right };
+                    }
+                    return std::nullopt;
+                }
+                if(node.operator_kind == token_kind::kw_or) {
+                    auto left = infer_template_if_expression_bool(ast, node.left);
+                    if(left and *left) {
+                        return semantic_literal_value { .value = true };
+                    }
+                    auto right = infer_template_if_expression_bool(ast, node.right);
+                    if(left and right) {
+                        return semantic_literal_value { .value = *left or *right };
+                    }
+                    return std::nullopt;
+                }
+
+                auto left = infer_template_if_expression_value(ast, node.left);
+                auto right = infer_template_if_expression_value(ast, node.right);
+                if(not left or not right) {
+                    return std::nullopt;
+                }
+                auto equal = left->value == right->value;
+                switch(node.operator_kind) {
+                    case token_kind::equal_equal:
+                        return semantic_literal_value { .value = equal };
+                    case token_kind::bang_equal:
+                        return semantic_literal_value { .value = not equal };
+                    case token_kind::less:
+                    case token_kind::less_equal:
+                    case token_kind::greater:
+                    case token_kind::greater_equal: {
+                        auto left_int = std::get_if<std::int64_t>(&left->value);
+                        auto right_int = std::get_if<std::int64_t>(&right->value);
+                        if(left_int == nullptr or right_int == nullptr) {
+                            return std::nullopt;
+                        }
+                        if(node.operator_kind == token_kind::less) {
+                            return semantic_literal_value { .value = *left_int < *right_int };
+                        }
+                        if(node.operator_kind == token_kind::less_equal) {
+                            return semantic_literal_value { .value = *left_int <= *right_int };
+                        }
+                        if(node.operator_kind == token_kind::greater) {
+                            return semantic_literal_value { .value = *left_int > *right_int };
+                        }
+                        return semantic_literal_value { .value = *left_int >= *right_int };
+                    }
+                    default:
+                        return std::nullopt;
+                }
+            },
+            [](auto const&) -> std::optional<semantic_literal_value> {
+                return std::nullopt;
+            },
+        },
+        ast.node(id)
+    );
+}
+
+auto semantic_analyzer::infer_template_if_expression_bool(ast_arena const& ast, expr_id id) -> std::optional<bool>
+{
+    auto value = infer_template_if_expression_value(ast, id);
+    if(not value) {
+        return std::nullopt;
+    }
+    auto bool_value = std::get_if<bool>(&value->value);
+    if(bool_value == nullptr) {
+        return std::nullopt;
+    }
+    return *bool_value;
 }
 
 auto semantic_analyzer::infer_expression_type(ast_arena const& ast, expr_id id, std::optional<semantic_type_id> expected) -> expression_info
@@ -507,7 +754,7 @@ auto semantic_analyzer::infer_lambda_return_with_base_scopes(std::size_t unit_in
     type_scopes = std::move(old_type_scopes);
     return_scopes = std::move(old_return_scopes);
     return_unit = old_unit;
-    update_inferred_function_return(unit_index, id, inferred);
+    update_inferred_function_return(0uz, unit_index, id, inferred);
 }
 
 auto semantic_analyzer::infer_name_expression(name_expr_syntax const& node) -> expression_info
@@ -759,14 +1006,14 @@ auto semantic_analyzer::resolve_visible_function(std::string_view name) const ->
     return std::nullopt;
 }
 
-auto semantic_analyzer::update_inferred_function_return(std::size_t unit_index, function_id id, semantic_type_id type) -> void
+auto semantic_analyzer::update_inferred_function_return(std::size_t context_index, std::size_t unit_index, function_id id, semantic_type_id type) -> void
 {
-    auto signature_id = result.signature_of(unit_index, id);
+    auto signature_id = result.signature_of(context_index, unit_index, id);
     if(signature_id.valid()) {
         result.signatures[signature_id.value].returns = type;
     }
 
-    auto symbol_id = result.function_symbol_of(unit_index, id);
+    auto symbol_id = result.function_symbol_of(context_index, unit_index, id);
     if(not symbol_id.valid()) {
         return;
     }

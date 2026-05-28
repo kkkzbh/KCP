@@ -2,6 +2,17 @@ module semantic:generics;
 
 import semantic;
 
+auto forward_binding_for(expression_info const& argument) -> semantic_forward_binding_kind
+{
+    if(argument.is_move or not argument.is_lvalue) {
+        return semantic_forward_binding_kind::rvalue;
+    }
+    if(argument.is_const) {
+        return semantic_forward_binding_kind::const_lvalue;
+    }
+    return semantic_forward_binding_kind::lvalue;
+}
+
 auto semantic_analyzer::function_key(std::size_t unit_index, function_id id) const -> return_inference_key
 {
     return return_inference_key{ unit_index, id };
@@ -1001,17 +1012,21 @@ auto semantic_analyzer::substitute_type_for_instance(semantic_type_id type, std:
     );
 }
 
-auto semantic_analyzer::substitute_signature_for_instance(std::size_t unit_index, function_id id, function_signature const& signature, std::vector<semantic_type_id> const& type_arguments, std::vector<bool> const& forward_rvalues, source_span span) -> function_signature
+auto semantic_analyzer::substitute_signature_for_instance(std::size_t unit_index, function_id id, function_signature const& signature, std::vector<semantic_type_id> const& type_arguments, std::vector<semantic_forward_binding_kind> const& forward_bindings, source_span span) -> function_signature
 {
     auto materialize_forward = [&](semantic_type_id type, std::size_t index) {
         auto const* reference = std::get_if<reference_type>(&result.types.get(type));
         if(reference == nullptr or reference->reference_kind != reference_type::kind::forward) {
             return type;
         }
-        auto kind = index < forward_rvalues.size() and forward_rvalues[index]
+        auto binding = index < forward_bindings.size()
+            ? forward_bindings[index]
+            : semantic_forward_binding_kind::lvalue;
+        auto kind = binding == semantic_forward_binding_kind::rvalue
             ? reference_type::kind::move
             : reference_type::kind::regular;
-        return result.types.intern(reference_type{ reference->pointee, false, kind });
+        auto is_const = binding == semantic_forward_binding_kind::const_lvalue;
+        return result.types.intern(reference_type{ reference->pointee, is_const, kind });
     };
 
     auto pack_index = function_pack_generic_index(unit_index, id);
@@ -1024,7 +1039,7 @@ auto semantic_analyzer::substitute_signature_for_instance(std::size_t unit_index
         return function_signature {
             .parameters = std::move(parameters),
             .returns = substitute_type(signature.returns, type_arguments),
-            .inferred_return = false,
+            .inferred_return = signature.inferred_return,
         };
     }
 
@@ -1057,13 +1072,13 @@ auto semantic_analyzer::substitute_signature_for_instance(std::size_t unit_index
     return function_signature {
         .parameters = std::move(parameters),
         .returns = substitute_type_for_instance(signature.returns, pack_index, type_arguments, std::nullopt, span),
-        .inferred_return = false,
+        .inferred_return = signature.inferred_return,
     };
 }
 
-auto semantic_analyzer::instantiate_function(std::size_t unit_index, function_id id, std::vector<semantic_type_id> type_arguments, std::vector<bool> forward_rvalues, source_span span) -> semantic_function_instance const*
+auto semantic_analyzer::instantiate_function(std::size_t unit_index, function_id id, std::vector<semantic_type_id> type_arguments, std::vector<semantic_forward_binding_kind> forward_bindings, source_span span) -> semantic_function_instance const*
 {
-    auto key = semantic_function_instance_key{ unit_index, id, type_arguments, forward_rvalues };
+    auto key = semantic_function_instance_key{ unit_index, id, type_arguments, forward_bindings };
     if(auto found = result.function_instance_indices.find(key); found != result.function_instance_indices.end()) {
         return &result.function_instances[found->second];
     }
@@ -1081,16 +1096,8 @@ auto semantic_analyzer::instantiate_function(std::size_t unit_index, function_id
     }
 
     auto const& source_signature = result.signatures[source_signature_id.value];
-    if(source_signature.inferred_return) {
-        report(
-            diagnostic_kind::cannot_infer_return_type,
-            function.name,
-            "generic function return type must be explicit for monomorphization"
-        );
-        return nullptr;
-    }
 
-    auto signature = substitute_signature_for_instance(unit_index, id, source_signature, type_arguments, forward_rvalues, span);
+    auto signature = substitute_signature_for_instance(unit_index, id, source_signature, type_arguments, forward_bindings, span);
     auto signature_id = add_signature(signature);
     auto const& source = result.symbols[source_symbol.value];
     auto function_type_id = intern_type(function_type {
@@ -1289,6 +1296,47 @@ auto semantic_analyzer::infer_function_type_arguments_for_call(symbol_id symbol,
     return type_arguments;
 }
 
+auto semantic_analyzer::instantiate_function_symbol_for_receiver(symbol_id symbol, semantic_type_id receiver_type, source_span span) -> semantic_function_instance const*
+{
+    if(not symbol.valid()) {
+        return nullptr;
+    }
+
+    auto const& value = result.symbols[symbol.value];
+    if(not function_is_generic(value.unit_index, value.function)) {
+        return nullptr;
+    }
+
+    auto names = function_generic_parameter_names(value.unit_index, value.function);
+    if(names.empty() or function_pack_generic_index(value.unit_index, value.function)) {
+        return nullptr;
+    }
+
+    auto inferred = std::map<std::uint32_t, semantic_type_id>{};
+    auto pattern = function_impl_target_pattern(value.unit_index, value.function);
+    if(pattern.valid()) {
+        if(not infer_type_argument(pattern, receiver_type, inferred)) {
+            return nullptr;
+        }
+    } else if(auto const* signature = function_signature_for_symbol(symbol); signature != nullptr and not signature->parameters.empty()) {
+        if(not infer_type_argument(signature->parameters.front(), receiver_type, inferred)) {
+            return nullptr;
+        }
+    } else {
+        return nullptr;
+    }
+
+    auto type_arguments = std::vector<semantic_type_id>(names.size());
+    for(auto index = 0uz; index < type_arguments.size(); ++index) {
+        auto found = inferred.find(static_cast<std::uint32_t>(index));
+        if(found == inferred.end()) {
+            return nullptr;
+        }
+        type_arguments[index] = found->second;
+    }
+    return instantiate_function(value.unit_index, value.function, std::move(type_arguments), {}, span);
+}
+
 auto semantic_analyzer::instantiate_function_symbol(symbol_id symbol, std::optional<semantic_type_id> receiver_type, std::vector<expression_info> const& arguments, std::vector<semantic_type_id> explicit_arguments, source_span span) -> semantic_function_instance const*
 {
     if(not symbol.valid()) {
@@ -1309,7 +1357,7 @@ auto semantic_analyzer::instantiate_function_symbol(symbol_id symbol, std::optio
     if(not type_arguments) {
         return nullptr;
     }
-    auto forward_rvalues = std::vector<bool>{};
+    auto forward_bindings = std::vector<semantic_forward_binding_kind>{};
     if(auto signature_id = result.signature_of(value.unit_index, value.function); signature_id.valid()) {
         auto const& signature = result.signatures[signature_id.value];
         auto has_forward_parameter = std::ranges::any_of(signature.parameters, [&](semantic_type_id parameter) {
@@ -1317,16 +1365,16 @@ auto semantic_analyzer::instantiate_function_symbol(symbol_id symbol, std::optio
             return reference != nullptr and reference->reference_kind == reference_type::kind::forward;
         });
         if(has_forward_parameter) {
-            forward_rvalues.resize(signature.parameters.size());
+            forward_bindings.resize(signature.parameters.size());
         }
         for(auto index = 0uz; index < arguments.size() and index < signature.parameters.size(); ++index) {
             auto const* reference = std::get_if<reference_type>(&result.types.get(signature.parameters[index]));
             if(reference != nullptr and reference->reference_kind == reference_type::kind::forward) {
-                forward_rvalues[index] = arguments[index].is_move or not arguments[index].is_lvalue;
+                forward_bindings[index] = forward_binding_for(arguments[index]);
             }
         }
     }
-    return instantiate_function(value.unit_index, value.function, *type_arguments, std::move(forward_rvalues), span);
+    return instantiate_function(value.unit_index, value.function, *type_arguments, std::move(forward_bindings), span);
 }
 
 auto semantic_analyzer::concrete_destructor_symbol(semantic_type_id type, source_span span) -> symbol_id
@@ -1507,22 +1555,22 @@ auto semantic_analyzer::check_generic_function_call(ast_arena const& ast, call_e
             return reference != nullptr and reference->reference_kind == reference_type::kind::forward;
         });
         auto arguments = std::vector<expression_info>{};
-        auto forward_rvalues = std::vector<bool>{};
+        auto forward_bindings = std::vector<semantic_forward_binding_kind>{};
         if(has_forward_parameter) {
             arguments.reserve(node.arguments.size());
             for(auto argument : node.arguments) {
                 arguments.emplace_back(check_expression(ast, argument, std::nullopt));
             }
-            forward_rvalues.resize(template_signature.parameters.size());
+            forward_bindings.resize(template_signature.parameters.size());
             for(auto index = 0uz; index < arguments.size() and index < template_signature.parameters.size(); ++index) {
                 auto const* reference = std::get_if<reference_type>(&result.types.get(template_signature.parameters[index]));
                 if(reference != nullptr and reference->reference_kind == reference_type::kind::forward) {
-                    forward_rvalues[index] = arguments[index].is_move or not arguments[index].is_lvalue;
+                    forward_bindings[index] = forward_binding_for(arguments[index]);
                 }
             }
         }
 
-        auto const* instance = instantiate_function(source_unit, source_function, std::move(explicit_arguments), std::move(forward_rvalues), node.full_span);
+        auto const* instance = instantiate_function(source_unit, source_function, std::move(explicit_arguments), std::move(forward_bindings), node.full_span);
         if(instance == nullptr) {
             return expression_info{ .type = semantic_type_ids::error };
         }

@@ -119,7 +119,7 @@ main() -> i32
 
 ## ranges
 
-`std.ranges` 使用 UFCS 点调用组合。`iota(begin, end)` 产生半开范围；`repeat(value)` 是无限 range，有限重复写作 `repeat(value).take(count)`；`all(ref source)` 把 lvalue 容器或数组转成借用 view。
+`std.ranges` 使用 UFCS 点调用组合。`iota(begin, end)` 产生半开 view；`repeat(value)` 是无限 range，有限重复写作 `repeat(value).take(count)`；lvalue 容器或数组可以直接作为 adapter receiver，标准库会借用成 view。
 
 ```cp
 main() -> i32

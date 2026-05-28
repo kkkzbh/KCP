@@ -8,11 +8,6 @@ export struct span<T> {
     len: usize;
 }
 
-export struct span_iter<T> {
-    current: T*;
-    end: T*;
-}
-
 export concept contiguous_mutable_range {
     type item;
 
@@ -48,28 +43,23 @@ impl span<T> {
     }
 }
 
-impl iterator for span_iter<T> {
+impl iterable for span<T> {
+    type iter_type = ptr_iter<T>;
     type iter_item = T&;
 
-    next(self&) -> optional<T&>
+    iter(self&) -> ptr_iter<T>
     {
-        if(current >= end) {
-            return optional<T&>::none;
-        }
-
-        let item = current;
-        current = current + 1;
-        return optional<T&>::some(ref *item);
+        return ptr_iter<T>{ .current = data(), .end = data() + len };
     }
 }
 
-impl iterable for span<T> {
-    type iter_type = span_iter<T>;
-    type iter_item = T&;
+impl const_iterable for span<T> {
+    type const_iter_type = const_ptr_iter<T>;
+    type const_iter_item = T const&;
 
-    iter(self&) -> span_iter<T>
+    iter(self const&) -> const_ptr_iter<T>
     {
-        return span_iter<T>{ .current = ptr, .end = ptr + len };
+        return const_ptr_iter<T>{ .current = data(), .end = data() + len };
     }
 }
 

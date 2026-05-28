@@ -333,29 +333,34 @@ struct resolver
     {
         auto output = std::vector<source_file>{};
         auto loaded = std::set<std::string>{};
-        auto pending = entry_files();
+        auto visiting = std::set<std::string>{};
 
-        for(auto index = 0uz; index < pending.size(); ++index) {
-            auto const path = pending[index];
-            if(not loaded.emplace(path).second) {
-                continue;
+        auto visit = [&](this auto& self, std::string const& path) -> void {
+            if(loaded.contains(path) or visiting.contains(path)) {
+                return;
             }
             auto source = source_for(path);
             if(not source) {
-                continue;
+                return;
             }
 
-            output.emplace_back(source->file);
+            visiting.emplace(path);
             for(auto const& module_name : source->imported_modules) {
                 if(not request_.follow_stdlib_imports and is_stdlib_import(module_name)) {
                     continue;
                 }
                 if(auto resolved = resolve_import(path, module_name)) {
-                    if(not loaded.contains(*resolved)) {
-                        pending.emplace_back(std::move(*resolved));
-                    }
+                    self(*resolved);
                 }
             }
+            visiting.erase(path);
+
+            loaded.emplace(path);
+            output.emplace_back(source->file);
+        };
+
+        for(auto const& path : entry_files()) {
+            visit(path);
         }
 
         return resolve_result{

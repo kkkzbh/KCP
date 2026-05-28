@@ -15,7 +15,7 @@ auto semantic_analyzer::check_expression(ast_arena const& ast, expr_id id, std::
                     return check_literal_expression(node, id);
                 },
                 [&](unary_expr_syntax const& node) {
-                    return check_unary_expression(ast, node, id);
+                    return check_unary_expression(ast, node, id, expected);
                 },
                 [&](binary_expr_syntax const& node) {
                     return check_binary_expression(ast, node, id);
@@ -57,7 +57,7 @@ auto semantic_analyzer::check_expression(ast_arena const& ast, expr_id id, std::
                     return check_block_expression(ast, node);
                 },
                 [&](match_expr_syntax const& node) {
-                    return check_match_expression(ast, node);
+                    return check_match_expression(ast, node, expected);
                 },
                 [&](lambda_expr_syntax const& node) {
                     return check_lambda_expression(node, id, expected);
@@ -75,6 +75,7 @@ auto semantic_analyzer::check_expression(ast_arena const& ast, expr_id id, std::
             .read_type = read_type(info.type),
             .is_lvalue = info.is_lvalue,
             .is_const = info.is_const,
+            .is_move = info.is_move,
         }
     );
     if(expected and not can_implicitly_convert(info, *expected)) {
@@ -404,6 +405,71 @@ auto semantic_analyzer::choose_operator(std::span<symbol_id const> candidates, s
     return matches.front().symbol;
 }
 
+auto semantic_analyzer::choose_method(std::span<symbol_id const> candidates, expression_info receiver, source_span span, bool report_no_match) -> std::optional<symbol_id>
+{
+    auto matches = std::vector<operator_match>{};
+    auto arguments = std::vector<expression_info>{ receiver };
+    for(auto symbol : candidates) {
+        auto actual_symbol = symbol;
+        auto generic_score = 0;
+        auto const& value = result.symbols[symbol.value];
+        if(function_is_generic(value.unit_index, value.function)) {
+            auto const* instance = instantiate_function_symbol_for_receiver(symbol, read_type(receiver.type), span);
+            if(instance == nullptr) {
+                if(candidates.size() == 1uz) {
+                    return symbol;
+                }
+                continue;
+            }
+            actual_symbol = instance->symbol;
+            generic_score = 1;
+        }
+
+        auto const* callable = std::get_if<function_type>(&result.types.get(result.symbols[actual_symbol.value].type));
+        if(callable == nullptr or callable->parameters.empty()) {
+            continue;
+        }
+        auto parameter = callable->parameters.front();
+        auto score = parameter_conversion_score(receiver, parameter);
+        if(not score) {
+            continue;
+        }
+        if (
+            auto const* reference = std::get_if<reference_type>(&result.types.get(parameter));
+            reference != nullptr
+            and reference->reference_kind == reference_type::kind::regular
+            and reference->is_const
+            and receiver.is_lvalue
+            and not receiver.is_const
+        ) {
+            *score += 1;
+        }
+        matches.emplace_back(actual_symbol, *score, generic_score);
+    }
+
+    if(matches.empty()) {
+        if(report_no_match) {
+            report(diagnostic_kind::type_mismatch, span, "method receiver type mismatch");
+        }
+        return std::nullopt;
+    }
+
+    std::ranges::sort(matches, [](operator_match const& left, operator_match const& right) {
+        if(left.score != right.score) {
+            return left.score < right.score;
+        }
+        return left.generic_score < right.generic_score;
+    });
+    if (
+        matches.size() > 1uz
+        and matches[0].score == matches[1].score
+        and matches[0].generic_score == matches[1].generic_score
+    ) {
+        report(diagnostic_kind::type_mismatch, span, "method call is ambiguous");
+    }
+    return matches.front().symbol;
+}
+
 auto semantic_analyzer::resolve_operator(overload_operator_kind kind, std::span<semantic_type_id const> owner_types, std::vector<expression_info> const& arguments, source_span span) -> std::optional<symbol_id>
 {
     auto const* unit = active_unit_index < units.size() ? &units[active_unit_index] : active_unit;
@@ -457,10 +523,10 @@ auto semantic_analyzer::resolve_operator(overload_operator_kind kind, std::span<
 
 auto semantic_analyzer::check_unary_expression(ast_arena const& ast, unary_expr_syntax const& node) -> expression_info
 {
-    return check_unary_expression(ast, node, {});
+    return check_unary_expression(ast, node, {}, std::nullopt);
 }
 
-auto semantic_analyzer::check_unary_expression(ast_arena const& ast, unary_expr_syntax const& node, expr_id id) -> expression_info
+auto semantic_analyzer::check_unary_expression(ast_arena const& ast, unary_expr_syntax const& node, expr_id id, std::optional<semantic_type_id>) -> expression_info
 {
     auto operand = check_expression(ast, node.operand, std::nullopt);
     auto operand_value = read_type(operand.type);
@@ -480,13 +546,21 @@ auto semantic_analyzer::check_unary_expression(ast_arena const& ast, unary_expr_
             }
             return unary_type(node.operator_kind, node.position, operand);
         case kw_ref:
-            if(not operand.is_lvalue or operand.is_const) {
+            if(not operand.is_lvalue) {
                 report(
                     diagnostic_kind::invalid_assignment_target,
                     node.full_span,
-                    "ref operand must be a non-const lvalue"
+                    "ref operand must be an lvalue"
                 );
                 return expression_info{ .type = semantic_type_ids::error };
+            }
+            if(operand.is_const) {
+                return expression_info {
+                    .type = intern_type(reference_type { operand_value, true }),
+                    .is_lvalue = true,
+                    .is_const = true,
+                    .explicit_borrow = true,
+                };
             }
             mark_lambda_capture_mutated(node.operand);
             return unary_type(node.operator_kind, node.position, operand);
@@ -542,8 +616,15 @@ auto semantic_analyzer::check_unary_expression(ast_arena const& ast, unary_expr_
                 report(diagnostic_kind::invalid_operator, node.full_span, "forward operand must be a forward& parameter");
                 return expression_info{ .type = semantic_type_ids::error };
             }
-            if(forward->second) {
+            if(forward->second == semantic_forward_binding_kind::rvalue) {
                 return unary_type(node.operator_kind, node.position, operand);
+            }
+            if(forward->second == semantic_forward_binding_kind::const_lvalue) {
+                return expression_info {
+                    .type = intern_type(reference_type { operand_value, true }),
+                    .is_lvalue = true,
+                    .is_const = true,
+                };
             }
             return expression_info {
                 .type = intern_type(reference_type { operand_value }),
@@ -716,10 +797,21 @@ auto semantic_analyzer::try_builtin_binary_operator(token_kind operator_kind, se
         case bang_equal:
         case less:
         case less_equal:
+        case spaceship:
         case greater:
         case greater_equal:
             if((operator_kind == equal_equal or operator_kind == bang_equal) and enum_index_of(left_type) and left_type == right_type) {
                 return binary_type(operator_kind, left_type, right_type);
+            }
+            if(operator_kind == spaceship and enum_index_of(left_type) and left_type == right_type) {
+                auto result_type = weak_ordering_type();
+                if(result_type) {
+                    return expression_info{ .type = *result_type };
+                }
+                return std::nullopt;
+            }
+            if(operator_kind == spaceship) {
+                return std::nullopt;
             }
             if(pointer_value_pointee(left_type) and is_nullptr(right_type)) {
                 return binary_type(operator_kind, left_type, left_type);
@@ -801,10 +893,23 @@ auto semantic_analyzer::check_binary_operator(token_kind operator_kind, semantic
         case bang_equal:
         case less:
         case less_equal:
+        case spaceship:
         case greater:
         case greater_equal:
             if((operator_kind == equal_equal or operator_kind == bang_equal) and enum_index_of(left_type) and left_type == right_type) {
                 return binary_type(operator_kind, left_type, right_type);
+            }
+            if(operator_kind == spaceship and enum_index_of(left_type) and left_type == right_type) {
+                auto result_type = weak_ordering_type();
+                if(result_type) {
+                    return expression_info{ .type = *result_type };
+                }
+                report(diagnostic_kind::invalid_operator, span, "enum operator <=> requires weak_ordering");
+                return expression_info{ .type = semantic_type_ids::error };
+            }
+            if(operator_kind == spaceship) {
+                report(diagnostic_kind::invalid_operator, span, "comparison operands are incompatible");
+                return expression_info{ .type = semantic_type_ids::error };
             }
             if(pointer_value_pointee(left_type) and is_nullptr(right_type)) {
                 return binary_type(operator_kind, left_type, left_type);
@@ -1373,7 +1478,8 @@ auto semantic_analyzer::check_implicit_self_call(ast_arena const& ast, call_expr
                         and terminal_pointee_const(self_reference->pointee, self_reference->is_const)
                     ),
     };
-    auto method = method_symbol(object.type, name);
+    auto candidates = method_symbols(object.type, name);
+    auto method = choose_method(candidates, object, callee.full_span, false);
     if(not method) {
         return std::nullopt;
     }
@@ -1485,7 +1591,8 @@ auto semantic_analyzer::check_first_argument_ufcs_call(ast_arena const& ast, cal
 
     auto object = check_expression(ast, node.arguments.front(), std::nullopt);
     auto name = std::string{ ast_source.identifier(callee.name) };
-    if(not method_symbol(object.type, name)) {
+    auto candidates = method_symbols(object.type, name);
+    if(not choose_method(candidates, object, callee.full_span, false)) {
         return std::nullopt;
     }
 
@@ -1584,7 +1691,8 @@ auto semantic_analyzer::check_member_call(ast_arena const& ast, call_expr_syntax
             return check_storage_member_call(ast, node, callee, id, object, *storage);
         }
     }
-    auto method = method_symbol(object.type, name);
+    auto candidates = method_symbols(object.type, name);
+    auto method = choose_method(candidates, object, callee.full_span, false);
     if(not method) {
         auto function = active_unit == nullptr ? std::optional<symbol_id>{} : [&]() -> std::optional<symbol_id> {
             auto found = active_unit->visible_functions.find(name);
@@ -2514,7 +2622,7 @@ auto semantic_analyzer::check_block_expression(ast_arena const& ast, block_expr_
     return expression_info{ .type = type };
 }
 
-auto semantic_analyzer::check_match_expression(ast_arena const& ast, match_expr_syntax const& node) -> expression_info
+auto semantic_analyzer::check_match_expression(ast_arena const& ast, match_expr_syntax const& node, std::optional<semantic_type_id> expected) -> expression_info
 {
     auto value = check_expression(ast, node.value, std::nullopt);
     auto variant_index = variant_index_of(value.type);
@@ -2529,7 +2637,7 @@ auto semantic_analyzer::check_match_expression(ast_arena const& ast, match_expr_
     auto const& variant = result.variants[*variant_index];
     auto seen = std::set<std::uint32_t>{};
     auto wildcard = false;
-    auto result_type = std::optional<semantic_type_id>{};
+    auto result_type = expected;
     auto has_never_arm = false;
 
     for(auto const& arm : node.arms) {

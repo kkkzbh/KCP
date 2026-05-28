@@ -71,4 +71,12 @@ requires
 
 这些查询都是类型层工具，不能作为值表达式使用。它们服务于长期的泛型标准库能力，例如 `std.ranges.transform` 需要从任意 callable 提取输出元素类型。
 
+`std.meta` 还导出编译器识别的 reference 分类 concept：
+
+- `is_lvalue_reference<T>`
+- `is_const_lvalue_reference<T>`
+- `is_move_reference<T>`
+
+它们主要服务于 `template if` 分发。例如 `std.ranges.to_view(source: R forward&)` 会检查 `decltype(forward source)`，把可写左值转成 `ref_view`，把 const 左值转成 `const_ref_view`，把右值转成 `owning_view`。
+
 当前没有 CTAD，也没有类型构造器实参推导。因此容器构造类 terminal，例如 `to<Container>()`，暂不落地。

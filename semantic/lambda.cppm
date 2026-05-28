@@ -117,6 +117,19 @@ auto semantic_analyzer::collect_lambda_escapes_in_statement(ast_arena const& ast
                 collect_lambda_escapes_in_statement(ast, node.body, scopes);
                 scopes.pop_back();
             },
+            [&](template_if_statement_syntax const& node) {
+                for(auto const& condition : node.conditions) {
+                    if(condition.expression) {
+                        collect_lambda_escapes_in_expression(ast, *condition.expression, scopes);
+                    }
+                }
+                for(auto const& branch : node.branches) {
+                    collect_lambda_escapes_in_statement(ast, branch.body, scopes);
+                }
+                if(node.else_branch) {
+                    collect_lambda_escapes_in_statement(ast, *node.else_branch, scopes);
+                }
+            },
             [&](break_statement_syntax const&) {},
             [&](continue_statement_syntax const&) {},
             [&](return_statement_syntax const& node) {
@@ -600,6 +613,19 @@ auto semantic_analyzer::collect_generic_lambda_captures(function_id id) -> std::
                     add_local(node.name);
                     collect_statement(node.body);
                     pop_scope();
+                },
+                [&](template_if_statement_syntax const& node) {
+                    for(auto const& condition : node.conditions) {
+                        if(condition.expression) {
+                            collect_expression(*condition.expression);
+                        }
+                    }
+                    for(auto const& branch : node.branches) {
+                        collect_statement(branch.body);
+                    }
+                    if(node.else_branch) {
+                        collect_statement(*node.else_branch);
+                    }
                 },
                 [&](break_statement_syntax const&) {},
                 [&](continue_statement_syntax const&) {},

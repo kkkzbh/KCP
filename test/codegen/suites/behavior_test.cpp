@@ -255,11 +255,11 @@ auto check_range_for_control_flow() -> void
     test_parser::assert_true(ir.accepted, ir.error.empty() ? "IR emission should pass" : ir.error);
     auto text = dump_ir(ir.module);
     test_parser::assert_true(text.contains("for.iter.0"), "MIR dump should contain range-for iteration blocks");
-    test_parser::assert_true(text.contains("extract_value"), "MIR dump should contain range element extraction");
+    test_parser::assert_true(text.contains("element_address"), "MIR dump should address range elements for binding initialization");
 
     auto emitted = emit_llvm_ir(ir.module);
     test_parser::assert_true(emitted.verified, emitted.error.empty() ? "LLVM module should verify" : emitted.error);
-    test_parser::assert_true(emitted.ir.contains("extractvalue"), "LLVM IR should extract range elements");
+    test_parser::assert_true(emitted.ir.contains("getelementptr"), "LLVM IR should address range elements");
 }
 
 auto check_labeled_loop_jumps() -> void

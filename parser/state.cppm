@@ -122,7 +122,18 @@ struct parser
     auto parse_while_statement() -> std::optional<stmt_id>;
     auto parse_do_while_statement() -> std::optional<stmt_id>;
     auto parse_for_statement() -> std::optional<stmt_id>;
+    auto parse_template_statement() -> std::optional<stmt_id>;
     auto parse_template_for_statement() -> std::optional<stmt_id>;
+    auto parse_template_if_statement() -> std::optional<stmt_id>;
+    auto parse_template_if_branch(std::vector<template_if_condition_syntax>& conditions, source_span start)
+        -> std::optional<template_if_branch_syntax>;
+    auto parse_template_if_condition(std::vector<template_if_condition_syntax>& conditions) -> std::optional<std::uint32_t>;
+    auto parse_template_if_or_condition(std::vector<template_if_condition_syntax>& conditions) -> std::optional<std::uint32_t>;
+    auto parse_template_if_and_condition(std::vector<template_if_condition_syntax>& conditions) -> std::optional<std::uint32_t>;
+    auto parse_template_if_unary_condition(std::vector<template_if_condition_syntax>& conditions) -> std::optional<std::uint32_t>;
+    auto parse_template_if_primary_condition(std::vector<template_if_condition_syntax>& conditions) -> std::optional<std::uint32_t>;
+    auto add_template_if_condition(std::vector<template_if_condition_syntax>& conditions, template_if_condition_syntax condition) -> std::uint32_t;
+    auto looks_like_template_if_type_condition(std::size_t lookahead = 0uz) const -> bool;
     auto parse_break_continue_statement(bool is_break) -> std::optional<stmt_id>;
     auto parse_return_statement() -> std::optional<stmt_id>;
     auto parse_expression_statement() -> std::optional<stmt_id>;

@@ -9,8 +9,8 @@ import :state;
 
 auto parser::parse_statement() -> std::optional<stmt_id>
 {
-    if(check_contextual("template") and peek(1uz).kind == token_kind::kw_for) {
-        return parse_template_for_statement();
+    if(check_contextual("template")) {
+        return parse_template_statement();
     }
 
     if (
@@ -324,11 +324,16 @@ auto parser::parse_for_statement() -> std::optional<stmt_id>
     if(not check_any({ token_kind::kw_let, token_kind::kw_const })) {
         report_current(
             diagnostic_kind::expected_token,
-            "expected 'let' or 'const' in for binding"
+            "expected 'let' or 'const' optionally followed by 'ref' in for binding"
         );
         return std::nullopt;
     }
     auto binding_kw = consume();
+    auto is_ref = false;
+    if(check(token_kind::kw_ref)) {
+        consume();
+        is_ref = true;
+    }
     auto binding_name = expect_identifier("for binding name");
     auto colon = expect(token_kind::colon);
     auto range = parse_expected_expression();
@@ -344,12 +349,29 @@ auto parser::parse_for_statement() -> std::optional<stmt_id>
     auto statement = for_statement_syntax {
         .full_span = combine_spans(start->span, arena.span(*body)),
         .is_const = binding_kw.kind == token_kind::kw_const,
+        .is_ref = is_ref,
         .name = binding_name->span,
         .label = label,
         .range = *range,
         .body = *body,
     };
     return arena.add(statement_syntax{ std::move(statement) });
+}
+
+auto parser::parse_template_statement() -> std::optional<stmt_id>
+{
+    if(peek(1uz).kind == token_kind::kw_for) {
+        return parse_template_for_statement();
+    }
+    if(peek(1uz).kind == token_kind::kw_if) {
+        return parse_template_if_statement();
+    }
+
+    report_current(
+        diagnostic_kind::expected_token,
+        "expected 'for' or 'if' after 'template'"
+    );
+    return std::nullopt;
 }
 
 auto parser::parse_template_for_statement() -> std::optional<stmt_id>
@@ -362,18 +384,27 @@ auto parser::parse_template_for_statement() -> std::optional<stmt_id>
     }
 
     auto binding_kind = template_for_binding_kind::let_binding;
+    auto is_ref = false;
     if(check(token_kind::kw_let)) {
         consume();
+        if(check(token_kind::kw_ref)) {
+            consume();
+            is_ref = true;
+        }
     } else if(check(token_kind::kw_const)) {
         consume();
         binding_kind = template_for_binding_kind::const_binding;
+        if(check(token_kind::kw_ref)) {
+            consume();
+            is_ref = true;
+        }
     } else if(check_contextual("type")) {
         consume();
         binding_kind = template_for_binding_kind::type_binding;
     } else {
         report_current(
             diagnostic_kind::expected_token,
-            "expected 'let', 'const', or 'type' in template for binding"
+            "expected 'let'/'const' optionally followed by 'ref', or 'type' in template for binding"
         );
         return std::nullopt;
     }
@@ -395,11 +426,239 @@ auto parser::parse_template_for_statement() -> std::optional<stmt_id>
         template_for_statement_syntax {
             .full_span = combine_spans(start->span, arena.span(*body)),
             .binding_kind = binding_kind,
+            .is_ref = is_ref,
             .name = name->span,
             .pack_name = pack_name->span,
             .body = *body,
         }
     });
+}
+
+auto parser::parse_template_if_statement() -> std::optional<stmt_id>
+{
+    auto start = expect_identifier("template");
+    if(not start) {
+        return std::nullopt;
+    }
+
+    auto conditions = std::vector<template_if_condition_syntax>{};
+    auto branches = std::vector<template_if_branch_syntax>{};
+    auto first = parse_template_if_branch(conditions, start->span);
+    if(not first) {
+        return std::nullopt;
+    }
+    auto end = arena.span(first->body);
+    branches.emplace_back(std::move(*first));
+
+    auto else_branch = std::optional<stmt_id>{};
+    while(check(token_kind::kw_else)) {
+        auto else_kw = consume();
+        if(check_contextual("template")) {
+            auto template_kw = expect_identifier("template");
+            if(not template_kw) {
+                return std::nullopt;
+            }
+            if(not check(token_kind::kw_if)) {
+                report_current(
+                    diagnostic_kind::expected_token,
+                    "expected 'if' after 'else template'"
+                );
+                return std::nullopt;
+            }
+            auto branch = parse_template_if_branch(conditions, combine_spans(else_kw.span, template_kw->span));
+            if(not branch) {
+                return std::nullopt;
+            }
+            end = arena.span(branch->body);
+            branches.emplace_back(std::move(*branch));
+            continue;
+        }
+
+        auto body = parse_block_statement();
+        if(not body) {
+            return std::nullopt;
+        }
+        end = arena.span(*body);
+        else_branch = *body;
+        break;
+    }
+
+    return arena.add(statement_syntax {
+        template_if_statement_syntax {
+            .full_span = combine_spans(start->span, end),
+            .conditions = std::move(conditions),
+            .branches = std::move(branches),
+            .else_branch = else_branch,
+        }
+    });
+}
+
+auto parser::parse_template_if_branch(std::vector<template_if_condition_syntax>& conditions, source_span start)
+    -> std::optional<template_if_branch_syntax>
+{
+    auto if_kw = expect(token_kind::kw_if);
+    auto l_paren = expect(token_kind::l_paren);
+    if(not if_kw or not l_paren) {
+        return std::nullopt;
+    }
+
+    auto condition = parse_template_if_condition(conditions);
+    auto r_paren = expect(token_kind::r_paren);
+    auto body = parse_block_statement();
+    if(not condition or not r_paren or not body) {
+        return std::nullopt;
+    }
+
+    return template_if_branch_syntax {
+        .full_span = combine_spans(start, arena.span(*body)),
+        .condition = *condition,
+        .body = *body,
+    };
+}
+
+auto parser::parse_template_if_condition(std::vector<template_if_condition_syntax>& conditions) -> std::optional<std::uint32_t>
+{
+    return parse_template_if_or_condition(conditions);
+}
+
+auto parser::parse_template_if_or_condition(std::vector<template_if_condition_syntax>& conditions) -> std::optional<std::uint32_t>
+{
+    auto left = parse_template_if_and_condition(conditions);
+    if(not left) {
+        return std::nullopt;
+    }
+
+    while(check(token_kind::kw_or)) {
+        consume();
+        auto right = parse_template_if_and_condition(conditions);
+        if(not right) {
+            return std::nullopt;
+        }
+        auto span = combine_spans(conditions[*left].full_span, conditions[*right].full_span);
+        left = add_template_if_condition(conditions, template_if_condition_syntax {
+            .full_span = span,
+            .kind = template_if_condition_kind::or_,
+            .left_condition = *left,
+            .right_condition = *right,
+        });
+    }
+
+    return left;
+}
+
+auto parser::parse_template_if_and_condition(std::vector<template_if_condition_syntax>& conditions) -> std::optional<std::uint32_t>
+{
+    auto left = parse_template_if_unary_condition(conditions);
+    if(not left) {
+        return std::nullopt;
+    }
+
+    while(check(token_kind::kw_and)) {
+        consume();
+        auto right = parse_template_if_unary_condition(conditions);
+        if(not right) {
+            return std::nullopt;
+        }
+        auto span = combine_spans(conditions[*left].full_span, conditions[*right].full_span);
+        left = add_template_if_condition(conditions, template_if_condition_syntax {
+            .full_span = span,
+            .kind = template_if_condition_kind::and_,
+            .left_condition = *left,
+            .right_condition = *right,
+        });
+    }
+
+    return left;
+}
+
+auto parser::parse_template_if_unary_condition(std::vector<template_if_condition_syntax>& conditions) -> std::optional<std::uint32_t>
+{
+    if(check(token_kind::kw_not)) {
+        auto op = consume();
+        auto operand = parse_template_if_unary_condition(conditions);
+        if(not operand) {
+            return std::nullopt;
+        }
+        return add_template_if_condition(conditions, template_if_condition_syntax {
+            .full_span = combine_spans(op.span, conditions[*operand].full_span),
+            .kind = template_if_condition_kind::not_,
+            .left_condition = *operand,
+        });
+    }
+
+    return parse_template_if_primary_condition(conditions);
+}
+
+auto parser::parse_template_if_primary_condition(std::vector<template_if_condition_syntax>& conditions) -> std::optional<std::uint32_t>
+{
+    if(looks_like_template_if_type_condition()) {
+        auto left = parse_expected_type();
+        if(not left) {
+            return std::nullopt;
+        }
+
+        if(check(token_kind::colon)) {
+            consume();
+            auto concept_ref = parse_concept_id();
+            if(not concept_ref) {
+                return std::nullopt;
+            }
+            return add_template_if_condition(conditions, template_if_condition_syntax {
+                .full_span = combine_spans(arena.span(*left), concept_ref->full_span),
+                .kind = template_if_condition_kind::concept_bound,
+                .left_type = *left,
+                .concept_bound = std::move(*concept_ref),
+            });
+        }
+
+        auto equal = expect(token_kind::equal_equal);
+        auto right = parse_expected_type();
+        if(not equal or not right) {
+            return std::nullopt;
+        }
+        return add_template_if_condition(conditions, template_if_condition_syntax {
+            .full_span = combine_spans(arena.span(*left), arena.span(*right)),
+            .kind = template_if_condition_kind::type_equality,
+            .left_type = *left,
+            .right_type = *right,
+        });
+    }
+
+    if(check(token_kind::l_paren)) {
+        consume();
+        auto condition = parse_template_if_condition(conditions);
+        auto close = expect(token_kind::r_paren);
+        if(not condition or not close) {
+            return std::nullopt;
+        }
+        return condition;
+    }
+
+    if(not expect_expression_start()) {
+        return std::nullopt;
+    }
+    auto expression = parse_expression_pratt(50);
+    if(not expression) {
+        return std::nullopt;
+    }
+    return add_template_if_condition(conditions, template_if_condition_syntax {
+        .full_span = arena.span(*expression),
+        .kind = template_if_condition_kind::expression,
+        .expression = *expression,
+    });
+}
+
+auto parser::add_template_if_condition(std::vector<template_if_condition_syntax>& conditions, template_if_condition_syntax condition) -> std::uint32_t
+{
+    auto id = static_cast<std::uint32_t>(conditions.size());
+    conditions.emplace_back(std::move(condition));
+    return id;
+}
+
+auto parser::looks_like_template_if_type_condition(std::size_t lookahead) const -> bool
+{
+    auto type_end = skip_requires_type(lookahead);
+    return type_end and (peek(*type_end).kind == token_kind::equal_equal or peek(*type_end).kind == token_kind::colon);
 }
 
 auto parser::parse_break_continue_statement(bool is_break) -> std::optional<stmt_id>
