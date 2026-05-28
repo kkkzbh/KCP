@@ -45,6 +45,7 @@ object CpElements {
     @JvmField val DO_WHILE_STATEMENT = element("do_while_statement")
     @JvmField val FOR_STATEMENT = element("for_statement")
     @JvmField val TEMPLATE_FOR_STATEMENT = element("template_for_statement")
+    @JvmField val TEMPLATE_IF_STATEMENT = element("template_if_statement")
     @JvmField val LOOP_LABEL = element("loop_label")
     @JvmField val BREAK_STATEMENT = element("break_statement")
     @JvmField val CONTINUE_STATEMENT = element("continue_statement")

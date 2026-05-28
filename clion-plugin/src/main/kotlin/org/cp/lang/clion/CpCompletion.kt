@@ -63,6 +63,7 @@ object CpCompletionEngine {
         "impl",
         "concept",
         "operator",
+        "static",
         "forward",
         "builtin",
         "prefix",

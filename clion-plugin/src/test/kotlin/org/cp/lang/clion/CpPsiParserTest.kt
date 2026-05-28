@@ -114,6 +114,24 @@ class CpPsiParserTest : BasePlatformTestCase() {
         assertTrue(file.collectPsiErrors().isEmpty())
     }
 
+    fun testStaticDeclarationModifierDoesNotStealContextualName() {
+        val file = parse(
+            """
+            main() -> i32
+            {
+                const static answer: i32 = 42;
+                let static counter = 0;
+                let static = 1;
+                return answer + counter + static;
+            }
+            """.trimIndent(),
+        )
+
+        val declarations = file.descendants(CpElements.LOCAL_DECLARATION).map { it.text }
+        assertEquals(listOf("answer", "counter", "static"), declarations)
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
     fun testLambdaUsesFMarker() {
         val file = parse(
             """
@@ -334,6 +352,90 @@ class CpPsiParserTest : BasePlatformTestCase() {
         assertTrue(file.descendants(CpElements.LAMBDA_EXPRESSION).isNotEmpty())
         assertTrue(file.descendants(CpElements.TYPE_REFERENCE).any { it.text == "!" })
         assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
+    fun testTemplateIfTemplateForRefAndStorageSyntaxBuildStructuredPsi() {
+        val file = parse(
+            """
+            struct box<T, N> {
+                items: storage [T; N];
+                single: storage T;
+                count: usize = 0 as usize;
+            }
+
+            select<T>(value: T const&) -> i32
+            {
+                template if(read_type<decltype(value)> == i32) {
+                    return 1;
+                } else template if(read_type<decltype(value)> == bool) {
+                    return 2;
+                } else {
+                    return 3;
+                }
+            }
+
+            collect<T...>(values: T...) -> i32
+            {
+                let total = 0;
+                template for(const ref value : values...) {
+                    total += select(value);
+                }
+                let fixed = storage [i32; 4]{};
+                let one = storage i32{};
+                return total;
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(1, file.descendants(CpElements.TEMPLATE_IF_STATEMENT).size)
+        assertEquals(1, file.descendants(CpElements.TEMPLATE_FOR_STATEMENT).size)
+        assertTrue(file.descendants(CpElements.TYPE_REFERENCE).any { it.text == "storage [T; N]" })
+        assertTrue(file.descendants(CpElements.STRUCT_INIT_EXPRESSION).any { it.text == "storage [i32; 4]{}" })
+        assertTrue(file.descendants(CpElements.STRUCT_INIT_EXPRESSION).any { it.text == "storage i32{}" })
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
+    fun testRealLabAndStdCompilerSyntaxDoNotFlattenPsi() {
+        val repoRoot = repoRoot()
+        val grammar = parse(Files.readString(repoRoot.resolve("lab/parser/grammar.cp")))
+        assertTrue(grammar.descendants(CpElements.TEMPLATE_IF_STATEMENT).isNotEmpty())
+        assertTrue(grammar.descendants(CpElements.TEMPLATE_FOR_STATEMENT).isNotEmpty())
+        val grammarErrors = grammar.collectPsiErrors()
+        assertTrue("lab/parser/grammar.cp should not produce PSI errors: $grammarErrors", grammarErrors.isEmpty())
+
+        val btreeStorage = parse(Files.readString(repoRoot.resolve("std/collections/detail/btree_storage.cp")))
+        assertTrue(btreeStorage.descendants(CpElements.TYPE_REFERENCE).any { it.text == "storage [K; 39]" })
+        assertTrue(btreeStorage.descendants(CpElements.TYPE_REFERENCE).any { it.text == "storage [V; 39]" })
+        val btreeStorageErrors = btreeStorage.collectPsiErrors()
+        assertTrue(
+            "std/collections/detail/btree_storage.cp should not produce PSI errors: $btreeStorageErrors",
+            btreeStorageErrors.isEmpty(),
+        )
+    }
+
+    fun testRealLabAndStdSourcesDoNotProducePsiErrors() {
+        val repoRoot = repoRoot()
+        val failures = sequenceOf(repoRoot.resolve("lab"), repoRoot.resolve("std"))
+            .flatMap { root ->
+                Files.walk(root).use { stream ->
+                    stream
+                        .filter { it.isRegularFile() && it.toString().endsWith(".cp") }
+                        .toList()
+                        .asSequence()
+                }
+            }
+            .mapNotNull { path ->
+                val file = parse(Files.readString(path))
+                val errors = file.collectPsiErrors()
+                if (errors.isEmpty()) {
+                    null
+                } else {
+                    "${repoRoot.relativize(path)}: $errors"
+                }
+            }
+            .toList()
+
+        assertTrue("real lab/std sources should not produce PSI errors: $failures", failures.isEmpty())
     }
 
     fun testNestedGenericAssociatedConstructorParses() {

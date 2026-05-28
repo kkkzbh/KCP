@@ -68,8 +68,12 @@ import org.jetbrains.concurrency.resolvedPromise
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
 import java.io.File
+import java.io.IOException
+import java.nio.file.FileVisitResult
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.SimpleFileVisitor
+import java.nio.file.attribute.BasicFileAttributes
 import java.security.MessageDigest
 import java.util.HexFormat
 import javax.swing.JComponent
@@ -680,12 +684,11 @@ internal object CpRunPaths {
             .firstOrNull { Files.isDirectory(it) }
 
     private fun importRoots(project: Project, source: Path, compiler: Path): List<Path> =
-        source.parent.parentsFromSelf()
-            .plus(project.basePath?.let { sequenceOf(Path.of(it)) } ?: emptySequence())
-            .plus(resolveStdlibRoot(project, source, compiler)?.let { sequenceOf(it) } ?: emptySequence())
-            .map { it.toAbsolutePath().normalize() }
-            .distinct()
-            .toList()
+        cpSourceImportRoots(
+            source = source,
+            projectBasePath = project.basePath,
+            stdlibRoot = resolveStdlibRoot(project, source, compiler),
+        )
 
     private fun moduleSearchRoots(project: Project, source: Path, compiler: Path): List<Path> =
         sequenceOf(
@@ -772,12 +775,26 @@ internal object CpRunPaths {
         if (!Files.isDirectory(root)) {
             return
         }
-        Files.walk(root).use { stream ->
-            stream
-                .filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(".${CpFileType.INSTANCE.defaultExtension}") }
-                .sorted()
-                .forEach { collectCpFile(it.toAbsolutePath().normalize(), files) }
+        val sourcePaths = mutableListOf<Path>()
+        try {
+            Files.walkFileTree(
+                root,
+                object : SimpleFileVisitor<Path>() {
+                    override fun visitFile(file: Path, attrs: BasicFileAttributes): FileVisitResult {
+                        if (attrs.isRegularFile && file.fileName.toString().endsWith(".${CpFileType.INSTANCE.defaultExtension}")) {
+                            sourcePaths.add(file.toAbsolutePath().normalize())
+                        }
+                        return FileVisitResult.CONTINUE
+                    }
+
+                    override fun visitFileFailed(file: Path, exc: IOException): FileVisitResult =
+                        FileVisitResult.CONTINUE
+                },
+            )
+        } catch (_: IOException) {
+            return
         }
+        sourcePaths.sorted().forEach { collectCpFile(it, files) }
     }
 
     private fun collectCpFile(path: Path, files: MutableMap<String, CpInspectionFile>) {
@@ -785,9 +802,10 @@ internal object CpRunPaths {
             return
         }
         val normalized = path.toAbsolutePath().normalize().toString()
+        val text = runCatching { Files.readString(path) }.getOrNull() ?: return
         files[normalized] = CpInspectionFile(
             path = normalized,
-            text = Files.readString(path),
+            text = text,
         )
     }
 }

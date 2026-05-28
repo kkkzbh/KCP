@@ -226,6 +226,22 @@ auto in_file(source_manager const& sources, source_span span, file_id file) -> b
     return span_file(sources, span) == file;
 }
 
+auto highlight_priority(std::string_view category) -> int
+{
+    if(
+        category == "operator"
+        or category == "literal"
+        or category == "number.literal"
+        or category == "boolean.literal"
+        or category == "null.literal"
+        or category == "string.literal"
+        or category == "character.literal"
+    ) {
+        return 0;
+    }
+    return 1;
+}
+
 struct highlight_collector
 {
     highlight_collector(source_manager const& sources, file_id active_file) :
@@ -243,6 +259,22 @@ struct highlight_collector
             .start_offset = span_local_start(sources, span),
             .end_offset = span_local_end(sources, span),
         };
+        auto const range = std::pair{ item.start_offset, item.end_offset };
+        if(auto existing = range_categories.find(range); existing != range_categories.end()) {
+            if(existing->second == item.category) {
+                return;
+            }
+            if(highlight_priority(existing->second) >= highlight_priority(item.category)) {
+                return;
+            }
+            seen.erase(std::tuple{ existing->second, item.start_offset, item.end_offset });
+            std::erase_if(highlights, [&](highlight_record const& highlight) {
+                return highlight.start_offset == item.start_offset and highlight.end_offset == item.end_offset;
+            });
+            existing->second = item.category;
+        } else {
+            range_categories.emplace(range, item.category);
+        }
         auto const key = std::tuple{ item.category, item.start_offset, item.end_offset };
         if(seen.emplace(key).second) {
             highlights.emplace_back(item);
@@ -280,6 +312,7 @@ struct highlight_collector
     source_manager const& sources;
     file_id active_file{};
     std::set<std::tuple<std::string, std::size_t, std::size_t>> seen{};
+    std::map<std::pair<std::size_t, std::size_t>, std::string> range_categories{};
     std::vector<highlight_record> highlights{};
     std::vector<capture_record> captures{};
 };
@@ -866,6 +899,19 @@ auto collect_statement_highlights(highlight_collector& collector, ast_arena cons
             collector.add("parameter.pack.reference", node.pack_name);
             collect_statement_highlights(collector, ast, checked, unit_index, node.body);
         },
+        [&](template_if_statement_syntax const& node) {
+            for(auto const& condition : node.conditions) {
+                if(condition.expression) {
+                    collect_expression_highlights(collector, ast, checked, unit_index, *condition.expression);
+                }
+            }
+            for(auto const& branch : node.branches) {
+                collect_statement_highlights(collector, ast, checked, unit_index, branch.body);
+            }
+            if(node.else_branch) {
+                collect_statement_highlights(collector, ast, checked, unit_index, *node.else_branch);
+            }
+        },
         [&](break_statement_syntax const& node) {
             if(node.label) {
                 collector.add("loop.label.reference", *node.label);
@@ -1177,12 +1223,9 @@ auto add_symbol_navigation(navigation_collector& collector, semantic_result cons
     }
 }
 
-auto collect_concept_id_navigation(navigation_collector& collector, ast_arena const& ast, semantic_result const& checked, std::size_t unit_index, concept_id_syntax const& concept_id) -> void
+auto collect_type_arguments_navigation(navigation_collector& collector, ast_arena const& ast, semantic_result const& checked, std::size_t unit_index, std::vector<type_argument_syntax> const& arguments) -> void
 {
-    if(auto target = exact_symbol_span(checked, collector.sources.slice(concept_id.name), symbol_kind::concept_)) {
-        collector.add("concept.reference", concept_id.name, *target);
-    }
-    for(auto const& argument : concept_id.arguments) {
+    for(auto const& argument : arguments) {
         std::visit(overloaded {
             [&](type_argument_type_syntax const& node) {
                 collect_type_navigation(collector, ast, checked, unit_index, node.type);
@@ -1193,6 +1236,14 @@ auto collect_concept_id_navigation(navigation_collector& collector, ast_arena co
     }
 }
 
+auto collect_concept_id_navigation(navigation_collector& collector, ast_arena const& ast, semantic_result const& checked, std::size_t unit_index, concept_id_syntax const& concept_id) -> void
+{
+    if(auto target = exact_symbol_span(checked, collector.sources.slice(concept_id.name), symbol_kind::concept_)) {
+        collector.add("concept.reference", concept_id.name, *target);
+    }
+    collect_type_arguments_navigation(collector, ast, checked, unit_index, concept_id.arguments);
+}
+
 auto collect_type_navigation(navigation_collector& collector, ast_arena const& ast, semantic_result const& checked, std::size_t unit_index, type_id id) -> void
 {
     auto const& type = ast.node(id);
@@ -1201,15 +1252,7 @@ auto collect_type_navigation(navigation_collector& collector, ast_arena const& a
     } else if(auto concept_target = exact_symbol_span(checked, collector.sources.slice(type.name), symbol_kind::concept_)) {
         collector.add("concept.reference", type.name, *concept_target);
     }
-    for(auto const& argument : type.arguments) {
-        std::visit(overloaded {
-            [&](type_argument_type_syntax const& node) {
-                collect_type_navigation(collector, ast, checked, unit_index, node.type);
-            },
-            [](type_argument_literal_syntax const&) {},
-            [](type_argument_name_syntax const&) {},
-        }, argument);
-    }
+    collect_type_arguments_navigation(collector, ast, checked, unit_index, type.arguments);
 }
 
 auto collect_expression_navigation(navigation_collector& collector, ast_arena const& ast, semantic_result const& checked, std::size_t unit_index, expr_id id, bool call_callee) -> void
@@ -1301,6 +1344,7 @@ auto collect_expression_navigation(navigation_collector& collector, ast_arena co
         [&](struct_init_expr_syntax const& node) {
             if(auto target = type_declaration_span(checked, checked.type_of(unit_index, id))) {
                 collector.add("type.reference", ast.node(node.type).name, *target);
+                collect_type_arguments_navigation(collector, ast, checked, unit_index, ast.node(node.type).arguments);
             } else {
                 collect_type_navigation(collector, ast, checked, unit_index, node.type);
             }
@@ -1453,6 +1497,19 @@ auto collect_statement_navigation(navigation_collector& collector, ast_arena con
             collect_statement_navigation(collector, ast, checked, unit_index, node.body);
         },
         [&](template_for_statement_syntax const&) {},
+        [&](template_if_statement_syntax const& node) {
+            for(auto const& condition : node.conditions) {
+                if(condition.expression) {
+                    collect_expression_navigation(collector, ast, checked, unit_index, *condition.expression);
+                }
+            }
+            for(auto const& branch : node.branches) {
+                collect_statement_navigation(collector, ast, checked, unit_index, branch.body);
+            }
+            if(node.else_branch) {
+                collect_statement_navigation(collector, ast, checked, unit_index, *node.else_branch);
+            }
+        },
         [](break_statement_syntax const&) {},
         [](continue_statement_syntax const&) {},
         [&](return_statement_syntax const& node) {

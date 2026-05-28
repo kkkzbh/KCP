@@ -18,12 +18,12 @@ class CpFindUsagesProvider : FindUsagesProvider {
         )
 
     override fun canFindUsagesFor(psiElement: PsiElement): Boolean =
-        psiElement.cpUsageTargetElement() is CpNamedElement
+        psiElement.cpUsageSourceElement() is CpNamedElement
 
     override fun getHelpId(psiElement: PsiElement): String? = null
 
     override fun getType(element: PsiElement): String =
-        when (element.cpUsageTargetElement()?.cpElementType()) {
+        when (element.cpUsageSourceElement()?.cpElementType()) {
             CpElements.FUNCTION_NAME -> "函数"
             CpElements.PARAMETER_NAME -> "参数"
             CpElements.LOCAL_DECLARATION -> "局部变量"
@@ -34,21 +34,45 @@ class CpFindUsagesProvider : FindUsagesProvider {
         }
 
     override fun getDescriptiveName(element: PsiElement): String =
-        element.cpUsageTargetElement()?.text ?: element.text
+        element.cpUsageSourceElement()?.text ?: element.text
 
     override fun getNodeText(element: PsiElement, useFullName: Boolean): String =
-        element.cpUsageTargetElement()?.text ?: element.text
+        element.cpUsageSourceElement()?.text ?: element.text
 }
 
 class CpFindUsagesHandlerFactory : FindUsagesHandlerFactory() {
     override fun canFindUsages(element: PsiElement): Boolean =
-        element.cpUsageTargetElement() is CpNamedElement
+        element.cpUsageSourceElement() is CpNamedElement
 
     override fun createFindUsagesHandler(element: PsiElement, forHighlightUsages: Boolean): FindUsagesHandler? =
-        element.cpUsageTargetElement()?.let { CpFindUsagesHandler(it) }
+        element.cpResolvedUsageTargetElement()?.let { CpFindUsagesHandler(it) }
 }
 
 private class CpFindUsagesHandler(element: PsiElement) : FindUsagesHandler(element)
 
-private fun PsiElement.cpUsageTargetElement(): PsiElement? =
-    cpNavigationTargetElement()?.takeIf { it.cpElementType() in CpNavigationKinds.declarationTypes }
+private fun PsiElement.cpUsageSourceElement(): PsiElement? =
+    cpUsageDeclarationElement()
+        ?: cpNavigationElement()?.takeIf { it.cpElementType() in CpNavigationKinds.referenceTypes }
+
+private fun PsiElement.cpResolvedUsageTargetElement(): PsiElement? =
+    cpUsageDeclarationElement()
+        ?: cpNavigationElement()?.let { CpSemanticDeclarationResolver.resolveNow(it, null) }
+            ?.cpUsageDeclarationElement()
+
+private fun PsiElement.cpUsageDeclarationElement(): PsiElement? =
+    cpNavigationTargetElement()
+        ?.takeIf { it.cpElementType() in CpNavigationKinds.declarationTypes && it is CpNamedElement }
+        ?.takeIf { it.isUsageDeclarationElement() }
+
+private fun PsiElement.isUsageDeclarationElement(): Boolean =
+    when (cpElementType()) {
+        CpElements.TYPE_NAME -> isCpTypeDeclarationName()
+        CpElements.FIELD_DECLARATION ->
+            parent?.cpElementType() == CpElements.STRUCT_FIELD
+        CpElements.VARIANT_CASE_NAME ->
+            parent?.cpElementType() == CpElements.VARIANT_CASE
+        CpElements.LOOP_LABEL ->
+            parent?.cpElementType() == CpElements.FOR_STATEMENT ||
+                parent?.cpElementType() == CpElements.TEMPLATE_FOR_STATEMENT
+        else -> true
+    }

@@ -31,6 +31,8 @@ class CpReferencesSearch : QueryExecutor<PsiReference, ReferencesSearch.SearchPa
                 path = declaration.containingFile?.virtualFile?.path?.let(::normalizeSearchPath) ?: return@readAction null,
                 range = declaration.textRange.startOffset until declaration.textRange.endOffset,
                 text = declaration.text,
+                elementType = declaration.cpElementType(),
+                functionReceiverType = declaration.cpFunctionReceiverType(),
                 project = declaration.project,
                 virtualFile = declaration.containingFile?.virtualFile,
             )
@@ -55,7 +57,7 @@ class CpReferencesSearch : QueryExecutor<PsiReference, ReferencesSearch.SearchPa
 
         for (virtualFile in projectFiles) {
             ProgressManager.checkCanceled()
-            val candidateContext = readAction {
+            val candidateFile = readAction {
                 if (!virtualFile.isValid || virtualFile.isDirectory || !searchScope.contains(virtualFile)) {
                     return@readAction null
                 }
@@ -64,12 +66,32 @@ class CpReferencesSearch : QueryExecutor<PsiReference, ReferencesSearch.SearchPa
                 if (!activeText.contains(targetInfo.text)) {
                     return@readAction null
                 }
+                CpReferenceSearchStats.recordTextCandidateFile()
 
                 val sourceFile = psiManager.findFile(virtualFile) ?: return@readAction null
-                CpProjectSnapshotCollector.prepare(sourceFile, activeText)?.let { context ->
-                    SearchCandidateContext(virtualFile, sourceFile, context)
-                }
+                SearchCandidateFile(
+                    virtualFile = virtualFile,
+                    sourceFile = sourceFile,
+                    activeText = activeText,
+                    fastReferences = CpReferenceCandidateFilter.candidateReferences(sourceFile, targetInfo.referenceTarget()),
+                )
             } ?: continue
+            candidateFile.fastReferences?.let { references ->
+                when (processFastReferences(candidateFile.virtualFile, references, targetInfo, emitted, consumer)) {
+                    FastReferenceResult.Complete -> continue
+                    FastReferenceResult.NeedsSemantic -> {}
+                    FastReferenceResult.Stop -> {
+                        traceSearchDone(targetInfo, completed = false)
+                        return false
+                    }
+                }
+            }
+
+            CpReferenceSearchStats.recordSemanticCandidateFile()
+            val context = readAction {
+                CpProjectSnapshotCollector.prepare(candidateFile.sourceFile, candidateFile.activeText)
+            } ?: continue
+            val candidateContext = SearchCandidateContext(candidateFile.virtualFile, candidateFile.sourceFile, context)
             val request = candidateContext.context.resolve()
             if (request.files.none { normalizeSearchPath(it.path) == targetInfo.path }) {
                 continue
@@ -89,22 +111,59 @@ class CpReferencesSearch : QueryExecutor<PsiReference, ReferencesSearch.SearchPa
                     continue
                 }
 
-                val reference = readAction {
-                    psiManager.findFile(candidate.virtualFile)
+                val shouldContinue = readAction {
+                    val reference = psiManager.findFile(candidate.virtualFile)
                         ?.findElementAt(navigation.sourceStartOffset)
                         ?.cpNavigationElement()
                         ?.reference
+                        ?: return@readAction true
+                    val key = candidate.virtualFile.path to (navigation.sourceStartOffset until navigation.sourceEndOffset)
+                    !emitted.add(key) || consumer.process(reference)
                 }
-                    ?: continue
-                val key = candidate.virtualFile.path to (navigation.sourceStartOffset until navigation.sourceEndOffset)
-                if (emitted.add(key) && !consumer.process(reference)) {
+                if (!shouldContinue) {
+                    traceSearchDone(targetInfo, completed = false)
                     return false
                 }
             }
         }
 
+        traceSearchDone(targetInfo, completed = true)
         return true
     }
+
+    private fun processFastReferences(
+        virtualFile: VirtualFile,
+        references: List<PsiElement>,
+        targetInfo: SearchTarget,
+        emitted: MutableSet<Pair<String, IntRange>>,
+        consumer: Processor<in PsiReference>,
+    ): FastReferenceResult =
+        readAction {
+            var needsSemantic = false
+            for (referenceElement in references) {
+                val target = CpFastNavigationResolver.resolve(referenceElement)
+                if (target == null) {
+                    needsSemantic = true
+                    continue
+                }
+                if (!target.matches(targetInfo)) {
+                    continue
+                }
+                val reference = referenceElement.reference ?: continue
+                val key = virtualFile.path to (referenceElement.textRange.startOffset until referenceElement.textRange.endOffset)
+                if (emitted.add(key)) {
+                    CpReferenceSearchStats.recordFastReference()
+                    if (!consumer.process(reference)) {
+                        return@readAction FastReferenceResult.Stop
+                    }
+                }
+            }
+            if (needsSemantic) {
+                FastReferenceResult.NeedsSemantic
+            } else {
+                FastReferenceResult.Complete
+            }
+        }
 
     private fun loadSearchText(virtualFile: VirtualFile): String =
         FileDocumentManager.getInstance().getDocument(virtualFile)?.text
@@ -112,6 +171,15 @@ class CpReferencesSearch : QueryExecutor<PsiReference, ReferencesSearch.SearchPa
 
     private fun <T> readAction(block: () -> T): T =
         ApplicationManager.getApplication().runReadAction<T>(block)
+
+    private fun traceSearchDone(targetInfo: SearchTarget, completed: Boolean) {
+        val stats = CpReferenceSearchStats.snapshot()
+        CpDiagnosticsTrace.info("reference-search-done:${targetInfo.path}:${targetInfo.range}:${targetInfo.text}") {
+            "cp reference search done target=${targetInfo.text} completed=$completed " +
+                "textCandidateFiles=${stats.textCandidateFiles} " +
+                "semanticCandidateFiles=${stats.semanticCandidateFiles} fastReferences=${stats.fastReferences}"
+        }
+    }
 }
 
 private fun SearchCandidate.cachedOrInspect(project: com.intellij.openapi.project.Project): CpInspectionResult? {
@@ -120,9 +188,17 @@ private fun SearchCandidate.cachedOrInspect(project: com.intellij.openapi.projec
         return it.result
     }
 
-    val result = CpHelperRunner.inspectOrNull(request) ?: return null
+    val result = CpSemanticAnalysisService.get(project).inspect(request, reason = "references") ?: return null
     cache.store(request, result, cpModificationCount(project))
     return result
+}
+
+private fun PsiElement.matches(targetInfo: SearchTarget): Boolean {
+    val declaration = cpNavigationTargetElement() ?: return false
+    val path = declaration.containingFile?.virtualFile?.path?.let(::normalizeSearchPath) ?: return false
+    return path == targetInfo.path &&
+        declaration.textRange.startOffset == targetInfo.range.first &&
+        declaration.textRange.endOffset == targetInfo.range.last + 1
 }
 
 private fun CpInspectionRequest.sameInputAs(other: CpInspectionRequest): Boolean =
@@ -137,8 +213,26 @@ private data class SearchTarget(
     val path: String,
     val range: IntRange,
     val text: String,
+    val elementType: com.intellij.psi.tree.IElementType?,
+    val functionReceiverType: String?,
     val project: com.intellij.openapi.project.Project,
     val virtualFile: VirtualFile?,
+) {
+    fun referenceTarget(): CpReferenceSearchTarget =
+        CpReferenceSearchTarget(
+            path = path,
+            range = range,
+            text = text,
+            elementType = elementType,
+            functionReceiverType = functionReceiverType,
+        )
+}
+
+private data class SearchCandidateFile(
+    val virtualFile: VirtualFile,
+    val sourceFile: PsiFile,
+    val activeText: String,
+    val fastReferences: List<PsiElement>?,
 )
 
 private data class SearchCandidate(
@@ -151,4 +245,47 @@ private data class SearchCandidateContext(
     val virtualFile: VirtualFile,
     val sourceFile: PsiFile,
     val context: CpSnapshotContext,
+)
+
+private enum class FastReferenceResult {
+    Complete,
+    NeedsSemantic,
+    Stop,
+}
+
+internal object CpReferenceSearchStats {
+    private val textCandidateFiles = java.util.concurrent.atomic.AtomicInteger()
+    private val semanticCandidateFiles = java.util.concurrent.atomic.AtomicInteger()
+    private val fastReferences = java.util.concurrent.atomic.AtomicInteger()
+
+    fun recordTextCandidateFile() {
+        textCandidateFiles.incrementAndGet()
+    }
+
+    fun recordSemanticCandidateFile() {
+        semanticCandidateFiles.incrementAndGet()
+    }
+
+    fun recordFastReference() {
+        fastReferences.incrementAndGet()
+    }
+
+    fun reset() {
+        textCandidateFiles.set(0)
+        semanticCandidateFiles.set(0)
+        fastReferences.set(0)
+    }
+
+    fun snapshot(): CpReferenceSearchStatsSnapshot =
+        CpReferenceSearchStatsSnapshot(
+            textCandidateFiles = textCandidateFiles.get(),
+            semanticCandidateFiles = semanticCandidateFiles.get(),
+            fastReferences = fastReferences.get(),
+        )
+}
+
+internal data class CpReferenceSearchStatsSnapshot(
+    val textCandidateFiles: Int,
+    val semanticCandidateFiles: Int,
+    val fastReferences: Int,
 )

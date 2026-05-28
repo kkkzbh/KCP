@@ -60,7 +60,7 @@ class CpCompletionTest : BasePlatformTestCase() {
         val first = CpCompletionEngine.items(myFixture.file, myFixture.caretOffset).map { it.name }
         val second = CpCompletionEngine.items(myFixture.file, myFixture.caretOffset).map { it.name }
 
-        assertContainsElements(first, "let", "total", "helper", "box", "builtin")
+        assertContainsElements(first, "let", "static", "total", "helper", "box", "builtin")
         assertEquals(first, second)
     }
 

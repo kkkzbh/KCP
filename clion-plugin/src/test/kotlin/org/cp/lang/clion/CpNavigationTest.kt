@@ -4,14 +4,20 @@ import com.intellij.lang.LanguageParserDefinitions
 import com.intellij.codeInsight.navigation.actions.GotoDeclarationAction
 import com.intellij.codeInsight.navigation.actions.GotoDeclarationHandler
 import com.intellij.codeInsight.navigation.actions.GotoDeclarationOrUsageHandler2
+import com.intellij.find.findUsages.FindUsagesHandlerFactory
+import com.intellij.lang.findUsages.LanguageFindUsages
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.extensions.ExtensionPoint
+import com.intellij.openapi.extensions.Extensions
 import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.navigation.DirectNavigationProvider
 import com.intellij.psi.PsiElement
+import com.intellij.psi.search.CpReferenceSearchStackHarness
 import com.intellij.psi.search.searches.ReferencesSearch
 import com.intellij.testFramework.ExtensionTestUtil
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -20,12 +26,29 @@ class CpNavigationTest : BasePlatformTestCase() {
     private val parserDefinition = CpParserDefinition()
     private val handler = CpGotoDeclarationHandler()
     private val directNavigationProvider = CpDirectNavigationProvider()
+    private val findUsagesProvider = CpFindUsagesProvider()
+    private val findUsagesHandlerFactory = CpFindUsagesHandlerFactory()
 
     override fun setUp() {
         super.setUp()
         LanguageParserDefinitions.INSTANCE.addExplicitExtension(CpLanguage, parserDefinition)
+        LanguageFindUsages.INSTANCE.addExplicitExtension(CpLanguage, findUsagesProvider)
         ExtensionTestUtil.addExtensions(GotoDeclarationHandler.EP_NAME, listOf(handler), testRootDisposable)
         ExtensionTestUtil.addExtensions(DirectNavigationProvider.EP_NAME, listOf(directNavigationProvider), testRootDisposable)
+        val rootArea = Extensions.getRootArea()
+        if (!rootArea.hasExtensionPoint(FindUsagesHandlerFactory.EP_NAME)) {
+            rootArea.registerExtensionPoint(
+                FindUsagesHandlerFactory.EP_NAME.name,
+                FindUsagesHandlerFactory::class.java.name,
+                ExtensionPoint.Kind.INTERFACE,
+            )
+        }
+        ExtensionTestUtil.addExtensions(
+            FindUsagesHandlerFactory.EP_NAME,
+            listOf(findUsagesHandlerFactory),
+            testRootDisposable,
+        )
+        ExtensionTestUtil.addExtensions(ReferencesSearch.EP_NAME, listOf(CpReferencesSearch()), testRootDisposable)
         ApplicationManager.getApplication().runWriteAction {
             FileTypeManager.getInstance().associateExtension(CpFileType.INSTANCE, "cp")
         }
@@ -36,6 +59,7 @@ class CpNavigationTest : BasePlatformTestCase() {
             ApplicationManager.getApplication().runWriteAction {
                 FileTypeManager.getInstance().removeAssociatedExtension(CpFileType.INSTANCE, "cp")
             }
+            LanguageFindUsages.INSTANCE.removeExplicitExtension(CpLanguage, findUsagesProvider)
             LanguageParserDefinitions.INSTANCE.removeExplicitExtension(CpLanguage, parserDefinition)
         } finally {
             super.tearDown()
@@ -281,7 +305,7 @@ class CpNavigationTest : BasePlatformTestCase() {
         assertEquals(resolved, target)
     }
 
-    fun testColdReferenceResolveDoesNotComputeSemanticTarget() {
+    fun testColdReferenceResolveUsesFastFunctionTargetWithoutSemanticCompute() {
         myFixture.configureByText(
             CpFileType.INSTANCE,
             """
@@ -302,7 +326,35 @@ class CpNavigationTest : BasePlatformTestCase() {
         assertNotNull(reference)
         val target = reference!!.resolve()
 
-        assertNull(target)
+        assertNotNull(target)
+        assertEquals(CpElements.FUNCTION_NAME, target!!.cpElementType())
+        assertEquals("build_parser_tables", target.text)
+        assertNull(CpSemanticCache.get(project).current(myFixture.file))
+    }
+
+    fun testSearchReferenceCheckUsesFastFunctionTargetWithoutSemanticCompute() {
+        myFixture.configureByText(
+            CpFileType.INSTANCE,
+            """
+            build_parser_tables() -> parser_tables
+            {
+                return parser_tables{};
+            }
+
+            parse() -> parser_tables
+            {
+                let tables = <caret>build_parser_tables();
+                return tables;
+            }
+            """.trimIndent(),
+        )
+
+        val reference = myFixture.file.findReferenceAt(myFixture.caretOffset)
+        val declaration = myFixture.file.descendants(CpElements.FUNCTION_NAME)
+            .single { it.text == "build_parser_tables" }
+
+        assertNotNull(reference)
+        assertTrue(CpReferenceSearchStackHarness.isReferenceTo(reference!!, declaration))
         assertNull(CpSemanticCache.get(project).current(myFixture.file))
     }
 
@@ -576,6 +628,99 @@ class CpNavigationTest : BasePlatformTestCase() {
             .distinctBy { it.element.textRange }
 
         assertEquals(2, references.size)
+    }
+
+    fun testFindUsagesFromTypeReferenceUsesResolvedDeclarationTarget() {
+        val file = myFixture.addFileToProject(
+            "parser/grammar.cp",
+            """
+            struct production {
+                value: i32;
+            }
+
+            main() -> i32
+            {
+                let current: <caret>production = production{ .value = 1 };
+                return current.value;
+            }
+            """.trimIndent(),
+        )
+        myFixture.configureFromExistingVirtualFile(file.virtualFile)
+
+        val source = myFixture.file.descendants(CpElements.TYPE_NAME)
+            .filter { it.text == "production" }
+            .drop(1)
+            .first()
+        myFixture.editor.caretModel.moveToOffset(source.textRange.startOffset)
+        assertTrue(CpFindUsagesProvider().canFindUsagesFor(source))
+        val handler = CpFindUsagesHandlerFactory().createFindUsagesHandler(source, false)
+
+        assertNotNull(handler)
+        assertEquals(CpElements.TYPE_NAME, handler!!.psiElement.cpElementType())
+        assertEquals("production", handler.psiElement.text)
+
+        val references = ReferencesSearch.search(handler.psiElement).findAll()
+            .distinctBy { it.element.textRange }
+
+        assertEquals(2, references.size)
+    }
+
+    fun testFindUsagesActionFromGenericTypeReferenceUsesResolvedDeclarationTarget() {
+        myFixture.configureByText(
+            CpFileType.INSTANCE,
+            """
+            struct vector<T> {}
+
+            struct production {
+                lhs: i32;
+            }
+
+            struct grammar {
+                productions: vector<production>;
+            }
+
+            make_minic_grammar() -> grammar
+            {
+                let grammar = grammar{ .productions = vector<<caret>production>{} };
+                return grammar;
+            }
+
+            make_production() -> production
+            {
+                return production{ .lhs = 1 };
+            }
+            """.trimIndent(),
+        )
+
+        val usages = myFixture.testFindUsagesUsingAction()
+
+        assertEquals(4, usages.distinctBy { it.presentation.plainText }.size)
+    }
+
+    fun testGotoActionFromGenericTypeReferenceUsesResolvedDeclarationTarget() {
+        myFixture.configureByText(
+            CpFileType.INSTANCE,
+            """
+            struct vector<T> {}
+
+            struct production {
+                lhs: i32;
+            }
+
+            make_minic_grammar()
+            {
+                let grammar = vector<<caret>production>{};
+                return grammar;
+            }
+            """.trimIndent(),
+        )
+
+        val targets = GotoDeclarationAction.findAllTargetElements(project, myFixture.editor, myFixture.caretOffset)
+
+        assertEquals(1, targets.size)
+        val target = targets.single()
+        assertEquals(CpElements.TYPE_NAME, target.cpElementType())
+        assertEquals("production", target.text)
     }
 
     fun testCaretReferenceResolvesFunctionCallSemantically() {

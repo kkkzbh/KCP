@@ -153,16 +153,12 @@ object CpProjectSnapshotCollector {
         val source = Path.of(targetPath)
         val configuration = RunManager.getInstance(file.project).selectedConfiguration?.configuration as? CpRunConfiguration
         val compiler = configuration?.let { CpRunPaths.resolveCompiler(file.project, it.compilerPath, source) }
-        return source.parent.parentsFromSelf()
+        return cpSourceImportRoots(
+            source = source,
+            projectBasePath = file.project.basePath,
+            stdlibRoot = compiler?.let { CpRunPaths.resolveStdlibRoot(file.project, source, it) },
+        )
             .map { it.toString() }
-            .plus(
-                listOfNotNull(
-                    file.project.basePath,
-                    compiler?.let { CpRunPaths.resolveStdlibRoot(file.project, source, it)?.toString() },
-                ).asSequence(),
-            )
-            .distinct()
-            .toList()
     }
 
     private fun moduleSearchRoots(file: PsiFile, activePath: String, targetPath: String): List<String> {

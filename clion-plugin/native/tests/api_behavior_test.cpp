@@ -152,6 +152,32 @@ main() -> i32
     assert_true(has_navigation(multi_file, main_source, math_source, "import.name", "math", "math.cp", "math"),
         "inspect should navigate import names to module declarations");
 
+    auto constexpr generic_init_source = R"(struct vector<T> {}
+
+struct production {
+    lhs: i32;
+}
+
+main()
+{
+    let values = vector<production>{};
+    return;
+})"sv;
+    auto const generic_init = cp_lexer_helper::inspect(cp_lexer_helper::inspect_request {
+        .active_file = "generic.cp",
+        .files = {
+            cp_lexer_helper::source_file_record {
+                "generic.cp",
+                std::string{generic_init_source},
+            },
+        },
+    });
+    assert_true(generic_init.accepted, "generic struct initializer inspect should pass semantic analysis");
+    assert_true(has_navigation(generic_init, generic_init_source, generic_init_source, "type.reference", "vector", "generic.cp", "vector"),
+        "inspect should navigate generic struct initializer base types to their declarations");
+    assert_true(has_navigation(generic_init, generic_init_source, generic_init_source, "type.reference", "production", "generic.cp", "production"),
+        "inspect should navigate generic struct initializer type arguments to their declarations");
+
     auto constexpr forward_source = R"(sink_ref(value: i32&) -> i32
 {
     return value;

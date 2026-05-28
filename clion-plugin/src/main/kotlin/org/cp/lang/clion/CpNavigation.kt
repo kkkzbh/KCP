@@ -78,6 +78,7 @@ internal fun cpResolveDeclarationForReference(element: PsiElement): PsiElement? 
 
 object CpSemanticDeclarationResolver {
     fun resolve(element: PsiElement, editor: Editor?): PsiElement? {
+        CpFastNavigationResolver.resolve(element)?.let { return it }
         val file = element.containingFile ?: return null
         val cache = CpSemanticCache.get(file.project)
         cache.current(file)?.let { cached ->
@@ -97,6 +98,7 @@ object CpSemanticDeclarationResolver {
     }
 
     fun resolveNow(element: PsiElement, editor: Editor?): PsiElement? {
+        CpFastNavigationResolver.resolve(element)?.let { return it }
         val file = element.containingFile ?: return null
         CpNavigationLog.debug { "semantic compute start source=${element.cpDebug()}" }
         val cached = CpSemanticCache.get(file.project).computeNow(file, file.activeText(editor)) ?: run {
@@ -108,6 +110,7 @@ object CpSemanticDeclarationResolver {
     }
 
     fun resolveForAction(element: PsiElement, editor: Editor?): PsiElement? {
+        CpFastNavigationResolver.resolve(element)?.let { return it }
         val file = element.containingFile ?: return null
         val cache = CpSemanticCache.get(file.project)
         cache.current(file)?.let { cached ->

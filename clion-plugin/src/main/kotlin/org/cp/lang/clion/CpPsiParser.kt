@@ -145,6 +145,9 @@ private class CpBuilder(
         markIdentifier(CpElements.FIELD_DECLARATION, "expected field name")
         expect(CpTypes.COLON, "expected ':'")
         parseType()
+        if (consume(CpTypes.EQUAL)) {
+            parseExpression()
+        }
         expect(CpTypes.SEMICOLON, "expected ';'")
         marker.done(CpElements.STRUCT_FIELD)
     }
@@ -526,6 +529,9 @@ private class CpBuilder(
         if (contextual("decltype") && lookAhead(1) == CpTypes.L_PAREN) {
             return parseDecltype()
         }
+        if (contextual("storage") && startsTypeAt(1)) {
+            return parseStorageType()
+        }
         if (at(CpTypes.BANG)) {
             val marker = builder.mark()
             advance()
@@ -557,6 +563,27 @@ private class CpBuilder(
         }
         marker.done(CpElements.TYPE_REFERENCE)
         return true
+    }
+
+    private fun parseStorageType(): Boolean {
+        val marker = builder.mark()
+        expectIdentifier("expected storage")
+        if (at(CpTypes.L_BRACKET)) {
+            parseStorageArrayType()
+        } else {
+            parseType()
+        }
+        parseTypeSuffix()
+        marker.done(CpElements.TYPE_REFERENCE)
+        return true
+    }
+
+    private fun parseStorageArrayType() {
+        expect(CpTypes.L_BRACKET, "expected '['")
+        parseType()
+        expect(CpTypes.SEMICOLON, "expected ';'")
+        parseTypeLengthArgument()
+        expect(CpTypes.R_BRACKET, "expected ']'")
     }
 
     private fun parseArrayType(): Boolean {
@@ -719,6 +746,10 @@ private class CpBuilder(
                 parseTemplateForStatement()
                 true
             }
+            contextual("template") && lookAhead(1) == CpTypes.KW_IF -> {
+                parseTemplateIfStatement()
+                true
+            }
             contextual("type") && lookAhead(1) == CpTypes.IDENTIFIER && lookAhead(2) == CpTypes.EQUAL -> {
                 parseTypeAlias(CpElements.TYPE_ALIAS_STATEMENT)
                 true
@@ -785,6 +816,7 @@ private class CpBuilder(
     private fun parseDeclarationStatement() {
         val marker = builder.mark()
         advance()
+        consumeStaticDeclarationModifier()
         consume(CpTypes.KW_REF)
         if (consume(CpTypes.L_PAREN)) {
             markIdentifier(CpElements.LOCAL_DECLARATION, "expected declaration binding name")
@@ -802,6 +834,12 @@ private class CpBuilder(
         parseExpression()
         expect(CpTypes.SEMICOLON, "expected ';'")
         marker.done(CpElements.DECLARATION_STATEMENT)
+    }
+
+    private fun consumeStaticDeclarationModifier() {
+        if (contextual("static") && lookAhead(1) in STATIC_DECLARATION_FOLLOWERS) {
+            advance()
+        }
     }
 
     private fun parseIfStatement() {
@@ -849,6 +887,7 @@ private class CpBuilder(
         } else {
             builder.error("expected 'let' or 'const'")
         }
+        consume(CpTypes.KW_REF)
         markIdentifier(CpElements.LOCAL_DECLARATION, "expected for binding name")
         expect(CpTypes.COLON, "expected ':'")
         parseExpression()
@@ -863,7 +902,10 @@ private class CpBuilder(
         expect(CpTypes.KW_FOR, "expected 'for'")
         expect(CpTypes.L_PAREN, "expected '('")
         when {
-            at(CpTypes.KW_LET) || at(CpTypes.KW_CONST) -> advance()
+            at(CpTypes.KW_LET) || at(CpTypes.KW_CONST) -> {
+                advance()
+                consume(CpTypes.KW_REF)
+            }
             consumeContextual("type") -> Unit
             else -> builder.error("expected template binding kind")
         }
@@ -874,6 +916,76 @@ private class CpBuilder(
         expect(CpTypes.R_PAREN, "expected ')'")
         parseBlock()
         marker.done(CpElements.TEMPLATE_FOR_STATEMENT)
+    }
+
+    private fun parseTemplateIfStatement() {
+        val marker = builder.mark()
+        expectContextual("template")
+        parseTemplateIfBranch()
+        while (consume(CpTypes.KW_ELSE)) {
+            if (contextual("template") && lookAhead(1) == CpTypes.KW_IF) {
+                expectContextual("template")
+                parseTemplateIfBranch()
+            } else {
+                parseBlock()
+                break
+            }
+        }
+        marker.done(CpElements.TEMPLATE_IF_STATEMENT)
+    }
+
+    private fun parseTemplateIfBranch() {
+        expect(CpTypes.KW_IF, "expected 'if'")
+        expect(CpTypes.L_PAREN, "expected '('")
+        parseTemplateIfCondition()
+        expect(CpTypes.R_PAREN, "expected ')'")
+        parseBlock()
+    }
+
+    private fun parseTemplateIfCondition() {
+        parseTemplateIfOrCondition()
+    }
+
+    private fun parseTemplateIfOrCondition() {
+        parseTemplateIfAndCondition()
+        while (consume(CpTypes.KW_OR)) {
+            parseTemplateIfAndCondition()
+        }
+    }
+
+    private fun parseTemplateIfAndCondition() {
+        parseTemplateIfUnaryCondition()
+        while (consume(CpTypes.KW_AND)) {
+            parseTemplateIfUnaryCondition()
+        }
+    }
+
+    private fun parseTemplateIfUnaryCondition() {
+        if (consume(CpTypes.KW_NOT)) {
+            parseTemplateIfUnaryCondition()
+            return
+        }
+        parseTemplateIfPrimaryCondition()
+    }
+
+    private fun parseTemplateIfPrimaryCondition() {
+        when {
+            looksLikeTemplateIfTypeCondition() -> {
+                parseType()
+                if (consume(CpTypes.COLON)) {
+                    parseConceptId()
+                } else {
+                    expect(CpTypes.EQUAL_EQUAL, "expected '=='")
+                    parseType()
+                }
+            }
+            consume(CpTypes.L_PAREN) -> {
+                parseTemplateIfCondition()
+                expect(CpTypes.R_PAREN, "expected ')'")
+            }
+            startsExpression() -> parseExpressionPratt(50)
+            else -> builder.error("expected template if condition")
+        }
     }
 
     private fun parseLoopJump(type: IElementType) {
@@ -1272,10 +1384,13 @@ private class CpBuilder(
             isPrefixOperator(token())
 
     private fun startsType(): Boolean =
-        at(CpTypes.IDENTIFIER) ||
-            at(CpTypes.BANG) ||
-            at(CpTypes.L_BRACKET) ||
-            at(CpTypes.L_PAREN)
+        startsTypeAt(0)
+
+    private fun startsTypeAt(index: Int): Boolean =
+        lookAhead(index) == CpTypes.IDENTIFIER ||
+            lookAhead(index) == CpTypes.BANG ||
+            lookAhead(index) == CpTypes.L_BRACKET ||
+            lookAhead(index) == CpTypes.L_PAREN
 
     private fun looksLikeFunctionType(): Boolean =
         contextual("f") && (lookAhead(1) == CpTypes.L_PAREN || (lookAhead(1) == CpTypes.STAR && lookAhead(2) == CpTypes.L_PAREN))
@@ -1316,6 +1431,9 @@ private class CpBuilder(
     private fun looksLikeTypeInitializer(): Boolean =
         scanTypeSuffixFor(CpTypes.L_BRACE)
 
+    private fun looksLikeTemplateIfTypeCondition(): Boolean =
+        scanTypeSuffixFor(CpTypes.EQUAL_EQUAL) || scanTypeSuffixFor(CpTypes.COLON)
+
     private fun looksLikeGenericCallSuffix(): Boolean =
         looksLikeTypeArgumentSuffixBefore(CpTypes.L_PAREN)
 
@@ -1327,21 +1445,16 @@ private class CpBuilder(
         return lookAhead(index) == nextType
     }
 
-    private fun scanTypeSuffixFor(nextType: IElementType): Boolean {
-        if (!at(CpTypes.IDENTIFIER)) {
-            return false
-        }
-        var index = 1
-        if (lookAhead(index) == CpTypes.LESS) {
-            index = scanAngleArgumentListEnd(index) ?: return false
-        }
-        while (lookAhead(index) == CpTypes.COLON_COLON && lookAhead(index + 1) == CpTypes.IDENTIFIER) {
-            index += 2
-            if (lookAhead(index) == CpTypes.LESS) {
-                return false
-            }
-        }
-        if (lookAhead(index) == CpTypes.KW_CONST || lookAhead(index) == CpTypes.KW_LIKE || lookAhead(index) == CpTypes.KW_FORWARD) {
+    private fun scanTypeSuffixFor(nextType: IElementType): Boolean =
+        scanTypeEnd()?.let { index -> lookAhead(index) == nextType } == true
+
+    private fun scanTypeEnd(start: Int = 0, allowAssociatedNames: Boolean = true): Int? {
+        var index = scanTypeHeadEnd(start, allowAssociatedNames) ?: return null
+        if (
+            lookAhead(index) == CpTypes.KW_CONST ||
+            lookAhead(index) == CpTypes.KW_LIKE ||
+            lookAhead(index) == CpTypes.KW_FORWARD
+        ) {
             index += 1
         }
         while (lookAhead(index) == CpTypes.STAR) {
@@ -1355,7 +1468,95 @@ private class CpBuilder(
         ) {
             index += 2
         }
-        return lookAhead(index) == nextType
+        return index
+    }
+
+    private fun scanTypeHeadEnd(start: Int, allowAssociatedNames: Boolean): Int? {
+        var index = start
+        when {
+            contextualAt("decltype", index) && lookAhead(index + 1) == CpTypes.L_PAREN -> {
+                index = scanBalancedEnd(index + 1, CpTypes.L_PAREN, CpTypes.R_PAREN) ?: return null
+            }
+            contextualAt("f", index) &&
+                (lookAhead(index + 1) == CpTypes.L_PAREN || (lookAhead(index + 1) == CpTypes.STAR && lookAhead(index + 2) == CpTypes.L_PAREN)) -> {
+                index += 1
+                if (lookAhead(index) == CpTypes.STAR) {
+                    index += 1
+                }
+                index = scanBalancedEnd(index, CpTypes.L_PAREN, CpTypes.R_PAREN) ?: return null
+                if (lookAhead(index) != CpTypes.ARROW) {
+                    return null
+                }
+                index = scanTypeEnd(index + 1) ?: return null
+            }
+            contextualAt("storage", index) && startsTypeAt(index + 1) -> {
+                index = scanTypeEnd(index + 1) ?: return null
+            }
+            lookAhead(index) == CpTypes.BANG -> {
+                index += 1
+            }
+            lookAhead(index) == CpTypes.L_BRACKET -> {
+                index += 1
+                index = scanTypeEnd(index) ?: return null
+                if (lookAhead(index) != CpTypes.SEMICOLON) {
+                    return null
+                }
+                index += 1
+                if (lookAhead(index) != CpTypes.INTEGER_LITERAL && lookAhead(index) != CpTypes.IDENTIFIER) {
+                    return null
+                }
+                index += 1
+                if (lookAhead(index) != CpTypes.R_BRACKET) {
+                    return null
+                }
+                index += 1
+            }
+            lookAhead(index) == CpTypes.L_PAREN -> {
+                index += 1
+                index = scanTypeEnd(index) ?: return null
+                while (lookAhead(index) == CpTypes.COMMA) {
+                    index += 1
+                    if (lookAhead(index) == CpTypes.R_PAREN) {
+                        break
+                    }
+                    index = scanTypeEnd(index) ?: return null
+                }
+                if (lookAhead(index) != CpTypes.R_PAREN) {
+                    return null
+                }
+                index += 1
+            }
+            lookAhead(index) == CpTypes.IDENTIFIER -> {
+                index += 1
+                if (lookAhead(index) == CpTypes.LESS) {
+                    index = scanAngleArgumentListEnd(index) ?: return null
+                }
+                while (allowAssociatedNames && lookAhead(index) == CpTypes.COLON_COLON && lookAhead(index + 1) == CpTypes.IDENTIFIER) {
+                    index += 2
+                    if (lookAhead(index) == CpTypes.LESS) {
+                        return null
+                    }
+                }
+            }
+            else -> return null
+        }
+        return index
+    }
+
+    private fun scanBalancedEnd(start: Int, open: IElementType, close: IElementType): Int? {
+        if (lookAhead(start) != open) {
+            return null
+        }
+        var depth = 1
+        var index = start + 1
+        while (depth > 0) {
+            when (lookAhead(index) ?: return null) {
+                open -> depth += 1
+                close -> depth -= 1
+            }
+            index += 1
+        }
+        return index
     }
 
     private fun scanAngleArgumentListEnd(start: Int): Int? {
@@ -1459,6 +1660,9 @@ private class CpBuilder(
 
     private fun contextual(text: String): Boolean =
         at(CpTypes.IDENTIFIER) && builder.tokenText == text
+
+    private fun contextualAt(text: String, index: Int): Boolean =
+        index == 0 && contextual(text)
 
     private fun consumeEllipsis(): Boolean {
         if (lookAhead(0) == CpTypes.DOT && lookAhead(1) == CpTypes.DOT && lookAhead(2) == CpTypes.DOT) {
@@ -1600,6 +1804,12 @@ private class CpBuilder(
             CpTypes.KW_DELETE,
             CpTypes.PLUS_PLUS,
             CpTypes.MINUS_MINUS,
+        )
+
+        private val STATIC_DECLARATION_FOLLOWERS = setOf(
+            CpTypes.KW_REF,
+            CpTypes.IDENTIFIER,
+            CpTypes.L_PAREN,
         )
 
         private val LITERALS = setOf(

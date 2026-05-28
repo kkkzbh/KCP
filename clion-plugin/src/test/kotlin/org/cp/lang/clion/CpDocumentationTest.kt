@@ -88,7 +88,7 @@ class CpDocumentationTest : BasePlatformTestCase() {
         myFixture.configureByText(
             CpFileType.INSTANCE,
             """
-            concept iterable<T> {
+            concept readable<T> {
                 type item;
                 requires HasBegin<T>;
                 next(self const&) -> item;
@@ -100,7 +100,7 @@ class CpDocumentationTest : BasePlatformTestCase() {
         val doc = CpDocumentationEngine.documentation(concept.directChild(CpElements.TYPE_NAME)!!)
 
         assertNotNull(doc)
-        assertTrue(doc!!, "concept iterable" in doc)
+        assertTrue(doc!!, "concept readable" in doc)
         assertTrue(doc, "item" in doc)
         assertTrue(doc, "next(self const&amp;) -&gt; item" in doc)
         assertTrue(doc, "requires HasBegin&lt;T&gt;" in doc)

@@ -677,6 +677,30 @@ class CpIntegrationTest {
     }
 
     @Test
+    fun sourceImportRootsDoNotClimbIntoParentWorkspace() {
+        val workspace = Path.of("/home/user/code")
+        val project = workspace.resolve("cp")
+        val source = project.resolve("lab/parser/main.cp")
+        val stdlib = project.resolve("std")
+
+        val roots = cpSourceImportRoots(
+            source = source,
+            projectBasePath = project.toString(),
+            stdlibRoot = stdlib,
+        )
+
+        assertEquals(
+            listOf(
+                source.parent.toAbsolutePath().normalize(),
+                project.toAbsolutePath().normalize(),
+                stdlib.toAbsolutePath().normalize(),
+            ),
+            roots,
+        )
+        assertFalse(roots.contains(workspace.toAbsolutePath().normalize()))
+    }
+
+    @Test
     fun projectSnapshotResolvesAggregateSiblingModuleDirectories() {
         val request = CpProjectSnapshotCollector.buildRequest(
             activePath = "/project/lab/preprocessor/preprocessor.cp",

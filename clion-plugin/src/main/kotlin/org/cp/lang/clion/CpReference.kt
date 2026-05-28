@@ -11,10 +11,10 @@ class CpReference(
 
     override fun resolve(): PsiElement? =
         CpSemanticDeclarationResolver.resolve(element, null)
+            ?: if (isExplicitReferenceTargetQuery()) cpResolveDeclarationForReference(element) else null
 
     override fun isReferenceTo(element: PsiElement): Boolean {
         val resolved = resolve()
-            ?: if (isExplicitReferenceCheck()) CpSemanticDeclarationResolver.resolveNow(this.element, null) else null
         return resolved?.let {
             val target = element.cpNavigationTargetElement() ?: element
             it == target || it.manager.areElementsEquivalent(it, target)
@@ -29,10 +29,14 @@ class CpReference(
         return current
     }
 
-    private fun isExplicitReferenceCheck(): Boolean =
-        Thread.currentThread().stackTrace.any { frame ->
-            frame.className.startsWith("com.intellij.psi.search.") ||
-                frame.className.startsWith("com.intellij.find.findUsages.") ||
-                frame.className.startsWith("com.intellij.refactoring.")
+    private fun isExplicitReferenceTargetQuery(): Boolean {
+        val stack = Thread.currentThread().stackTrace
+        if (stack.any { it.className.startsWith("com.intellij.psi.search.") }) {
+            return false
         }
+        return stack.any { frame ->
+            frame.className == "com.intellij.find.actions.SearchTargetVariantsDataRuleKt" ||
+                frame.className == "com.intellij.codeInsight.TargetElementUtil"
+        }
+    }
 }

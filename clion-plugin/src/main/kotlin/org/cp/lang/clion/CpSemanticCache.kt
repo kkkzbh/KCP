@@ -102,7 +102,7 @@ internal class CpSemanticCache private constructor(
     fun computeNow(file: PsiFile, activeText: String): CpCachedInspection? {
         val modificationCount = cpModificationCount(project)
         val request = CpProjectSnapshotCollector.collect(file, activeText) ?: return null
-        val result = CpHelperRunner.inspectOrNull(request) ?: return null
+        val result = CpSemanticAnalysisService.get(project).inspect(request, reason = "compute-now") ?: return null
         store(request, result, modificationCount)
         return current(file)
     }
@@ -150,7 +150,7 @@ internal class CpSemanticCache private constructor(
                 if (refreshIsStale(pointer, activeSignature)) {
                     return@executeOnPooledThread
                 }
-                val result = CpHelperRunner.inspectOrNull(request) ?: run {
+                val result = CpSemanticAnalysisService.get(project).inspect(request, reason = "refresh") ?: run {
                     CpDiagnosticsTrace.warn("semantic-refresh-null:$activePath:$activeSignature") {
                         "cp semantic refresh produced no result; keeping previous cache active=$activePath"
                     }
