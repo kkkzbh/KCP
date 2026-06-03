@@ -4,6 +4,7 @@ import com.intellij.lang.LanguageParserDefinitions
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 
 class CpDocumentationTest : BasePlatformTestCase() {
@@ -104,5 +105,24 @@ class CpDocumentationTest : BasePlatformTestCase() {
         assertTrue(doc, "item" in doc)
         assertTrue(doc, "next(self const&amp;) -&gt; item" in doc)
         assertTrue(doc, "requires HasBegin&lt;T&gt;" in doc)
+    }
+
+    fun testDocumentationProviderDelegatesToEngineAndKeepsCpContextElement() {
+        myFixture.configureByText(
+            CpFileType.INSTANCE,
+            """
+            struct box {
+                value: i32;
+            }
+            """.trimIndent(),
+        )
+
+        val provider = CpDocumentationProvider()
+        val typeName = myFixture.file.descendants(CpElements.TYPE_NAME).first { it.text == "box" }
+
+        assertTrue(provider.getQuickNavigateInfo(typeName, null)!!.contains("struct box"))
+        assertTrue(provider.generateDoc(typeName, null)!!.contains("value: i32"))
+        assertNull(provider.generateDoc(myFixture.file, null))
+        assertNotNull(provider.getCustomDocumentationElement(myFixture.editor, myFixture.file, typeName))
     }
 }

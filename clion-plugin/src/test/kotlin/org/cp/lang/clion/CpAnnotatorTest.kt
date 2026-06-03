@@ -1,9 +1,11 @@
 package org.cp.lang.clion
 
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
+import com.intellij.codeInsight.daemon.impl.AnnotationHolderImpl
 import com.intellij.lang.ExternalLanguageAnnotators
 import com.intellij.lang.LanguageAnnotators
 import com.intellij.lang.LanguageParserDefinitions
+import com.intellij.lang.annotation.AnnotationSession
 import com.intellij.lang.annotation.HighlightSeverity
 import com.intellij.openapi.editor.colors.TextAttributesKey
 import com.intellij.psi.PsiFile
@@ -77,6 +79,101 @@ class CpAnnotatorTest : BasePlatformTestCase() {
         } finally {
             ExternalLanguageAnnotators.INSTANCE.removeExplicitExtension(CpLanguage, externalAnnotator)
         }
+    }
+
+    fun testExternalAnnotatorAppliesSemanticHighlightCategoriesAndCaptures() {
+        val categories = listOf(
+            "function.declaration",
+            "function.call",
+            "function.reference",
+            "constructor.declaration",
+            "destructor.declaration",
+            "member.function.call",
+            "member.function.declaration",
+            "associated.function.call",
+            "associated.function.declaration",
+            "builtin.function.call",
+            "function.type",
+            "parameter.declaration",
+            "parameter.pack.reference",
+            "pattern.binding",
+            "local.declaration",
+            "constant.declaration",
+            "lambda.capture.reference",
+            "lambda.capture.const_ref",
+            "lambda.capture.ref",
+            "lambda.capture.copy",
+            "lambda.capture.owned_mut_copy",
+            "type",
+            "type.parameter",
+            "type.alias.declaration",
+            "associated.type.declaration",
+            "concept.declaration",
+            "concept.function.requirement",
+            "module.name",
+            "lambda.marker",
+            "loop.label",
+            "field.declaration",
+            "variant.case",
+            "enum.case",
+            "literal",
+            "boolean.literal",
+            "null.literal",
+            "string.literal",
+            "character.literal",
+            "operator",
+        )
+        val file = myFixture.configureByText(CpFileType.INSTANCE, "x".repeat(categories.size + 2))
+        val highlights = categories.mapIndexed { index, category ->
+            CpHelperHighlight(category, index, index + 1)
+        } + listOf(
+            CpHelperHighlight("unknown.semantic.category", 0, 1),
+            CpHelperHighlight("type", 1, 1),
+        )
+        val captures = listOf(
+            CpHelperCapture(
+                name = "read",
+                mode = "by-ref",
+                reason = "local",
+                referenceStartOffset = 0,
+                referenceEndOffset = 1,
+                sourceStartOffset = 0,
+                sourceEndOffset = 1,
+                mutated = false,
+                escaped = false,
+            ),
+            CpHelperCapture(
+                name = "escaped",
+                mode = "move",
+                reason = "closure",
+                referenceStartOffset = 18,
+                referenceEndOffset = 19,
+                sourceStartOffset = 18,
+                sourceEndOffset = 19,
+                mutated = true,
+                escaped = true,
+            ),
+        )
+        val annotator = CpExternalAnnotator()
+        val holder = annotationHolder(annotator, file)
+
+        holder.applyExternalAnnotatorWithContext(
+            file,
+            CpInspectionResult(
+                accepted = true,
+                diagnostics = emptyList(),
+                highlights = highlights,
+                captures = captures,
+            ),
+        )
+        holder.applyExternalAnnotatorWithContext(file, null)
+        holder.assertAllAnnotationsCreated()
+
+        assertEquals(categories.size, holder.size)
+        assertTrue(holder.any { it.textAttributes == CpSyntaxHighlighter.FUNCTION_DECLARATION })
+        assertTrue(holder.any { it.textAttributes == CpSyntaxHighlighter.VARIANT_CASE })
+        assertTrue(holder.any { it.message == "capture read: by-ref, non-escaping, read-only" })
+        assertTrue(holder.any { it.message == "capture escaped: move, escaping closure, mutable" })
     }
 
     fun testExternalAnnotatorSemanticDiagnosticsBecomeEditorErrors() {
@@ -410,5 +507,16 @@ class CpAnnotatorTest : BasePlatformTestCase() {
             projectFiles = emptyList(),
         )
         CpSemanticCache.get(project).store(request, CpHelperRunner.inspect(request), cpModificationCount(project))
+    }
+
+    @Suppress("DEPRECATION")
+    private fun annotationHolder(annotator: CpExternalAnnotator, file: PsiFile): AnnotationHolderImpl {
+        val constructor = AnnotationHolderImpl::class.java.getDeclaredConstructor(
+            Any::class.java,
+            AnnotationSession::class.java,
+            Boolean::class.java,
+        )
+        constructor.isAccessible = true
+        return constructor.newInstance(annotator, AnnotationSession(file), true) as AnnotationHolderImpl
     }
 }

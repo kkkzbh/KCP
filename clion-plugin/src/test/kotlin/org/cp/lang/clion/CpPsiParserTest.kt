@@ -293,6 +293,40 @@ class CpPsiParserTest : BasePlatformTestCase() {
         assertTrue(file.collectPsiErrors().any { "expected 'prefix' or 'postfix' before '++' or '--'" in it })
     }
 
+    fun testDefaultCompareAndEnumSpaceshipBuildStructuredPsi() {
+        val file = parse(
+            """
+            import std;
+
+            enum marker : u8 {
+                alpha = 1;
+                beta = 2;
+            }
+
+            struct key {
+                group: i32;
+                marker: marker;
+            }
+
+            impl key {
+                operator <=>(self const&, rhs: this const&) -> weak_ordering = default;
+            }
+
+            main()
+            {
+                let enum_relation = marker::alpha <=> marker::beta;
+                let key_relation = key{ .group = 1, .marker = marker::alpha } <=> key{ .group = 1, .marker = marker::beta };
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(1, file.descendants(CpElements.ENUM_DECLARATION).size)
+        assertEquals(1, file.descendants(CpElements.STRUCT_DECLARATION).size)
+        assertTrue(file.descendants(CpElements.FUNCTION_NAME).any { it.text == "operator <=>" })
+        assertTrue(file.descendants(CpElements.BINARY_EXPRESSION).count { it.text.contains("<=>") } >= 2)
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
     fun testRepeatedGenericBoundTargetsParse() {
         val file = parse(
             """
@@ -393,6 +427,150 @@ class CpPsiParserTest : BasePlatformTestCase() {
         assertTrue(file.descendants(CpElements.STRUCT_INIT_EXPRESSION).any { it.text == "storage [i32; 4]{}" })
         assertTrue(file.descendants(CpElements.STRUCT_INIT_EXPRESSION).any { it.text == "storage i32{}" })
         assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
+    fun testVariantMatchWithTemplatePackBuildsStructuredPsi() {
+        val file = parse(
+            """
+            variant calc_result<T> {
+                empty;
+                total(T);
+            }
+
+            sum<T...>(values: T...) -> calc_result<i32>
+            {
+                let total = 0;
+                template for(let value : values...) {
+                    total = total + value;
+                }
+                return calc_result<i32>::total(total);
+            }
+
+            main() -> i32
+            {
+                return match sum(10, 20, 12) {
+                    .total(value) => value,
+                    .empty => 0,
+                };
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(1, file.descendants(CpElements.VARIANT_DECLARATION).size)
+        assertEquals(1, file.descendants(CpElements.TEMPLATE_FOR_STATEMENT).size)
+        assertEquals(1, file.descendants(CpElements.MATCH_EXPRESSION).size)
+        assertTrue(file.descendants(CpElements.GENERIC_PARAMETER).any { it.text == "T..." })
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
+    fun testForwardTypePackAndInferredReturnBuildStructuredPsi() {
+        val file = parse(
+            """
+            main() -> i32
+            {
+                return type_count<i32, bool, i32>() * 10 + first_nonzero(0, 12);
+            }
+
+            type_count<T...>()
+            {
+                let total = 0;
+                template for(type U : T...) {
+                    type current = U;
+                    total = total + 1;
+                }
+                return total;
+            }
+
+            first_nonzero<T...>(values: T...)
+            {
+                template for(let value : values...) {
+                    if(value != 0) {
+                        return value;
+                    }
+                }
+                return 0;
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(3, file.descendants(CpElements.FUNCTION).size)
+        assertEquals(2, file.descendants(CpElements.TEMPLATE_FOR_STATEMENT).size)
+        assertTrue(file.descendants(CpElements.GENERIC_PARAMETER).all { it.text == "T..." })
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
+    fun testCallableTypePackReturnBuildsStructuredPsi() {
+        val file = parse(
+            """
+            import std.meta;
+
+            make<F, Args...>() -> call_result<F, Args...>
+            requires F: callable<Args...>
+            {
+                return 42;
+            }
+
+            main() -> i32
+            {
+                return make<f(i32, bool) -> i32, i32, bool>();
+            }
+            """.trimIndent(),
+        )
+
+        assertTrue(file.descendants(CpElements.TYPE_ARGUMENT).any { it.text == "Args..." })
+        assertTrue(file.descendants(CpElements.TYPE_REFERENCE).any { it.text == "call_result<F, Args...>" })
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
+    fun testCallableTailTypePackReturnBuildsStructuredPsi() {
+        val file = parse(
+            """
+            import std.meta;
+
+            make<F, Args...>() -> call_result<F, Args..., bool>
+            requires F: callable<Args..., bool>
+            {
+                return 42;
+            }
+
+            main() -> i32
+            {
+                return make<f(i32, bool) -> i32, i32>();
+            }
+            """.trimIndent(),
+        )
+
+        val typeArguments = file.descendants(CpElements.TYPE_ARGUMENT).map { it.text }
+        assertTrue(typeArguments.any { it == "Args..." })
+        assertTrue(typeArguments.any { it == "bool" })
+        assertTrue(file.descendants(CpElements.TYPE_REFERENCE).any { it.text == "call_result<F, Args..., bool>" })
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
+    fun testIncompleteVariantMatchTemplatePackArmDoesNotTrapRecovery() {
+        val file = parse(
+            """
+            variant calc_result<T> {
+                empty;
+                total(T);
+            }
+
+            sum<T...>(values: T...) -> calc_result<i32>
+            {
+                let total = 0;
+                return match calc_result<i32>::total(total) {
+                    .total(value) => template for(let item : values...) {
+                        total = total + item;
+                    },
+                    .empty => 0,
+                };
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(1, file.descendants(CpElements.VARIANT_DECLARATION).size)
+        assertEquals(1, file.descendants(CpElements.MATCH_EXPRESSION).size)
+        assertTrue(file.collectPsiErrors().isNotEmpty())
     }
 
     fun testRealLabAndStdCompilerSyntaxDoNotFlattenPsi() {

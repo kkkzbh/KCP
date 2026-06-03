@@ -9,6 +9,7 @@ import com.intellij.testFramework.LightVirtualFile
 import org.jdom.Element
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -145,6 +146,55 @@ class CpIntegrationTest {
         assertEquals("unknown module 'missing' [semantic:unknown_module]", CpExternalAnnotator.diagnosticMessage(diagnostic))
         assertEquals(HighlightSeverity.WARNING, CpExternalAnnotator.diagnosticSeverity("warning"))
         assertEquals(HighlightSeverity.INFORMATION, CpExternalAnnotator.diagnosticSeverity("info"))
+    }
+
+    @Test
+    fun inspectionSummariesKeepDiagnosticsAndTruncateNavigation() {
+        val result = CpInspectionResult(
+            accepted = false,
+            diagnostics = listOf(
+                CpHelperDiagnostic(
+                    stage = "parse",
+                    code = "expected_token",
+                    message = "expected token",
+                    severity = "error",
+                    startOffset = 1,
+                    endOffset = 3,
+                    line = 1,
+                    column = 2,
+                ),
+                CpHelperDiagnostic(
+                    stage = "semantic",
+                    code = "unknown_name",
+                    message = "unknown name",
+                    severity = "error",
+                    startOffset = 8,
+                    endOffset = 12,
+                    line = 2,
+                    column = 1,
+                ),
+            ),
+            highlights = emptyList(),
+            navigation = (0 until 10).map { index ->
+                CpHelperNavigation(
+                    category = "reference$index",
+                    sourceStartOffset = index,
+                    sourceEndOffset = index + 1,
+                    targetFile = "main.cp",
+                    targetStartOffset = index + 2,
+                    targetEndOffset = index + 3,
+                )
+            },
+        )
+
+        assertEquals("[expected_token@1:3,unknown_name@8:12]", result.diagnosticSummary())
+        assertEquals(
+            "[reference0@0:1->main.cp:2:3,reference1@1:2->main.cp:3:4," +
+                "reference2@2:3->main.cp:4:5,reference3@3:4->main.cp:5:6," +
+                "reference4@4:5->main.cp:6:7,reference5@5:6->main.cp:7:8," +
+                "reference6@6:7->main.cp:8:9,reference7@7:8->main.cp:9:10,...]",
+            result.navigationSummary(),
+        )
     }
 
     @Test
@@ -583,6 +633,97 @@ class CpIntegrationTest {
             assertEquals(input.toFile(), commandLine.inputFile)
         } finally {
             Files.deleteIfExists(input)
+        }
+    }
+
+    @Test
+    fun runCommandLineCanRequestPtyTerminal() {
+        val commandLine = buildCpRunCommandLine(
+            executable = Path.of("/tmp/cp-run/main"),
+            programArguments = "",
+            workingDirectory = Path.of("/project"),
+            emulateTerminal = true,
+        )
+
+        assertEquals("/tmp/cp-run/main", commandLine.exePath)
+        assertTrue(commandLine is com.intellij.execution.configurations.PtyCommandLine)
+    }
+
+    @Test
+    fun runConfigurationEditorRoundTripsPrimaryFields() {
+        val configuration = newCpRunConfiguration()
+        configuration.mainFile = "/project/main.cp"
+        configuration.compilerPath = "/tool/cp"
+        configuration.compileOptions = "--release"
+        configuration.programArguments = "alpha beta"
+        configuration.emulateTerminal = true
+        @Suppress("UNCHECKED_CAST")
+        val editor = configuration.configurationEditor as com.intellij.openapi.options.SettingsEditor<CpRunConfiguration>
+
+        editor.resetFrom(configuration)
+        editor.applyTo(configuration)
+
+        assertEquals("/project/main.cp", configuration.mainFile)
+        assertEquals("/tool/cp", configuration.compilerPath)
+        assertEquals("--release", configuration.compileOptions)
+        assertEquals("alpha beta", configuration.programArguments)
+        assertTrue(configuration.emulateTerminal)
+        assertNotNull(editor.component)
+    }
+
+    @Test
+    fun runConfigurationValidationAcceptsExplicitCompilerAndWorkingDirectory() {
+        val root = Files.createTempDirectory("cp-run-config")
+        try {
+            val source = root.resolve("main.cp")
+            val compiler = root.resolve("cp")
+            writeSource(source, "main() -> i32 { return 0; }\n")
+            Files.writeString(compiler, "#!/usr/bin/env sh\nexit 0\n")
+            compiler.toFile().setExecutable(true)
+
+            val configuration = newCpRunConfiguration()
+            configuration.mainFile = source.toString()
+            configuration.compilerPath = compiler.toString()
+            configuration.workingDirectory = root.toString()
+            configuration.compileOptions = "--release"
+            configuration.programArguments = """alpha "two words""""
+
+            configuration.checkConfiguration()
+            assertEquals(compiler.toAbsolutePath().normalize(), CpRunPaths.resolveCompiler(configuration.project, compiler.toString(), source))
+            assertEquals(root.toAbsolutePath().normalize(), CpRunPaths.resolveWorkingDirectory(configuration.project, root.toString(), source))
+        } finally {
+            Files.walk(root).use { stream ->
+                stream.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists)
+            }
+        }
+    }
+
+    @Test
+    fun runPathsDiscoverRuntimeAndStdlibBesideCompilerAndSource() {
+        val root = Files.createTempDirectory("cp-run-paths")
+        try {
+            val project = root.resolve("project")
+            val tool = root.resolve("tool/bin/cp")
+            val runtime = root.resolve("tool/bin/libcp_runtime.a")
+            val source = project.resolve("main.cp")
+            val stdlib = project.resolve("std")
+            writeSource(source, "main() -> i32 { return 0; }\n")
+            Files.createDirectories(tool.parent)
+            Files.writeString(tool, "#!/usr/bin/env sh\nexit 0\n")
+            Files.writeString(runtime, "")
+            Files.createDirectories(stdlib)
+            tool.toFile().setExecutable(true)
+
+            val configuration = newCpRunConfiguration()
+            configuration.mainFile = source.toString()
+            configuration.compilerPath = tool.toString()
+
+            assertEquals(runtime, CpRunPaths.resolveRuntimeLibrary(tool))
+            assertEquals(stdlib.toAbsolutePath().normalize(), CpRunPaths.resolveStdlibRoot(configuration.project, source, tool))
+        } finally {
+            Files.walk(root).use { stream ->
+                stream.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists)
+            }
         }
     }
 

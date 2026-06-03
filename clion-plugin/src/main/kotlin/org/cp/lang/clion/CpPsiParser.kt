@@ -700,7 +700,10 @@ private class CpBuilder(
         val marker = builder.mark()
         when {
             at(CpTypes.INTEGER_LITERAL) -> advance()
-            startsType() -> parseType()
+            startsType() -> {
+                parseType()
+                consumeEllipsis()
+            }
             else -> builder.error("expected type argument")
         }
         marker.done(CpElements.TYPE_ARGUMENT)
@@ -1233,7 +1236,9 @@ private class CpBuilder(
         }
         expect(CpTypes.L_BRACE, "expected '{'")
         while (!builder.eof() && !at(CpTypes.R_BRACE)) {
+            val offset = builder.currentOffset
             parseMatchArm()
+            recoverMatchArmIfStalled(offset)
         }
         expect(CpTypes.R_BRACE, "expected '}'")
         marker.done(CpElements.MATCH_EXPRESSION)
@@ -1266,6 +1271,13 @@ private class CpBuilder(
             }
         }
         marker.done(CpElements.MATCH_PATTERN)
+    }
+
+    private fun recoverMatchArmIfStalled(offset: Int) {
+        if (!builder.eof() && builder.currentOffset == offset) {
+            builder.error("expected match arm")
+            advance()
+        }
     }
 
     private fun parseLambdaExpression(): PsiBuilder.Marker {
@@ -1855,7 +1867,6 @@ private class CpBuilder(
         )
 
         private val ANGLE_ARGUMENT_SCAN_STOPS = setOf(
-            CpTypes.ARROW,
             CpTypes.PLUS,
             CpTypes.MINUS,
             CpTypes.SLASH,

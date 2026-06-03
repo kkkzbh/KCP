@@ -1,8 +1,11 @@
 package org.cp.lang.clion
 
 import com.intellij.lang.LanguageParserDefinitions
+import com.intellij.ide.structureView.TreeBasedStructureViewBuilder
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 
 class CpStructureViewTest : BasePlatformTestCase() {
     private val parserDefinition = CpParserDefinition()
@@ -96,5 +99,23 @@ class CpStructureViewTest : BasePlatformTestCase() {
 
         assertFalse("helper" in first)
         assertContainsElements(second, "main", "helper")
+    }
+
+    fun testStructureViewFactoryBuildsModelForCpFilesOnly() {
+        myFixture.configureByText(
+            CpFileType.INSTANCE,
+            """
+            struct box {
+                value: i32;
+            }
+            """.trimIndent(),
+        )
+
+        val builder = CpStructureViewFactory().getStructureViewBuilder(myFixture.file)
+        val model = (builder as? TreeBasedStructureViewBuilder)?.createStructureViewModel(null)
+
+        assertNotNull(builder)
+        assertNotNull(model)
+        assertTrue(CpStructureEngine.labels(myFixture.file).contains("struct box"))
     }
 }
