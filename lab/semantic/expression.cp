@@ -34,10 +34,8 @@ bool_value(value: bool) -> i32
 parse_i32_literal(text: str) -> i32
 {
     let value: i32 = 0;
-    let index: usize = 0;
-    while(index < text.size()) {
-        value = value * 10 + digit_value(text[index]);
-        index += 1;
+    for(const ch : text) {
+        value = value * 10 + digit_value(ch);
     }
     return value;
 }
@@ -97,11 +95,9 @@ impl semantic_analyzer {
     check_call_expression(self&, callee: source_span, arguments: vector<expr_id> const&, full_span: source_span, value_required: bool) -> semantic_expr_info
     {
         let argument_types = vector<semantic_parameter_type>{};
-        let index: usize = 0;
-        while(index < arguments.size()) {
-            let argument = check_expression(arguments[index]);
+        for(const ref argument_id : arguments) {
+            let argument = check_expression(argument_id);
             argument_types.push_back(semantic_parameter_type{ .type = argument.type });
-            index += 1;
         }
 
         let function = semantic_find_function(result, source_text(callee));
@@ -110,7 +106,7 @@ impl semantic_analyzer {
             return error_info();
         }
 
-        let symbol = result.symbols[function.index()];
+        const ref symbol = result.symbols[function.index()];
         if(symbol.parameter_count != arguments.size()) {
             report(diagnostic_kind::argument_count_mismatch, full_span);
             return error_info();
@@ -133,7 +129,7 @@ impl semantic_analyzer {
 
     check_expression(self&, id: expr_id) -> semantic_expr_info
     {
-        let syntax = (*parsed).ast.expressions[id.value];
+        const ref syntax = (*parsed).ast.expressions[id.value];
         match syntax {
             .integer(value) => {
                 let constant = parse_i32_literal(source_text(value.full_span));
@@ -149,7 +145,7 @@ impl semantic_analyzer {
                     record_expression(id, info);
                     return info;
                 }
-                let binding = result.symbols[symbol.index()];
+                const ref binding = result.symbols[symbol.index()];
                 let info = semantic_expr_info{ .type = binding.type, .constant = optional<i32>::none };
                 record_expression(id, info);
                 return info;
@@ -212,7 +208,7 @@ impl semantic_analyzer {
                     record_expression(id, info);
                     return info;
                 }
-                let binding = result.symbols[symbol.index()];
+                const ref binding = result.symbols[symbol.index()];
                 if(binding.type != semantic_type_kind::int_array_type) {
                     report(diagnostic_kind::non_array_index, value.array);
                     check_expression(value.index);

@@ -52,7 +52,7 @@ main() -> i32
     let saw_break = false;
     let saw_continue = false;
     let saw_return = false;
-    for(let token : result.tokens) {
+    for(const ref token : result.tokens) {
         let kind = token.kind;
         if(kind == token_kind::kw_if) {
             saw_if = true;

@@ -58,6 +58,12 @@ auto exit_code(int status) -> int
     return status / 256;
 }
 
+auto coverage_links_gcov() -> bool
+{
+    auto const* value = std::getenv("CP_COMPILER_TEST_LINK_GCOV");
+    return value != nullptr and std::string_view{ value } == "1";
+}
+
 auto unique_temp_dir(std::string_view name) -> std::filesystem::path
 {
     auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -94,6 +100,10 @@ auto compile_main(test_tools const& tools, std::filesystem::path const& output) 
     arguments.push_back((tools.lab_root / "parser/op/main.cp").string());
     arguments.push_back("-o");
     arguments.push_back(output.string());
+    if(coverage_links_gcov()) {
+        arguments.emplace_back("--link-arg");
+        arguments.emplace_back("-lgcov");
+    }
     return run_status(arguments);
 }
 

@@ -26,32 +26,30 @@ array_size_digit(ch: char) -> usize
 array_size_value(text: str) -> usize
 {
     let value: usize = 0;
-    let index: usize = 0;
-    while(index < text.size()) {
-        value = value * 10 as usize + array_size_digit(text[index]);
-        index += 1;
+    for(const ch : text) {
+        value = value * 10 as usize + array_size_digit(ch);
     }
     return value;
 }
 
-declaration_type(item: var_decl_item) -> semantic_type_kind
+declaration_type(item: var_decl_item const&) -> semantic_type_kind
 {
-    if(item.array_size.has_value()) {
+    if(var_decl_array_size(item).has_value()) {
         return semantic_type_kind::int_array_type;
     }
     return semantic_type_kind::int_type;
 }
 
-parameter_type(parameter: parameter_syntax) -> semantic_type_kind
+parameter_type(parameter: parameter_syntax const&) -> semantic_type_kind
 {
-    if(parameter.is_array) {
+    if(parameter_is_array(parameter)) {
         return semantic_type_kind::int_array_type;
     }
     return semantic_type_kind::int_type;
 }
 
 impl semantic_analyzer {
-    bind_parameter(self&, parameter: parameter_syntax, function: function_id) -> void
+    bind_parameter(self&, parameter: parameter_syntax const&, function: function_id) -> void
     {
         let name = source_text(parameter.name);
         let existing = find_in_current_scope(name);
@@ -70,7 +68,7 @@ impl semantic_analyzer {
         });
     }
 
-    bind_local(self&, statement: stmt_id, item: var_decl_item) -> void
+    bind_local(self&, statement: stmt_id, item: var_decl_item const&) -> void
     {
         let name = source_text(item.name);
         let existing = find_in_current_scope(name);
@@ -106,13 +104,11 @@ impl semantic_analyzer {
             enter_scope();
         }
 
-        let syntax = (*parsed).ast.statements[id.value];
+        const ref syntax = (*parsed).ast.statements[id.value];
         match syntax {
             .block(value) => {
-                let index: usize = 0;
-                while(index < value.statements.size()) {
-                    check_statement(value.statements[index]);
-                    index += 1;
+                for(const ref statement : value.statements) {
+                    check_statement(statement);
                 }
             },
             .var_decl(value) => {},
@@ -131,35 +127,32 @@ impl semantic_analyzer {
         }
     }
 
-    check_var_decl(self&, id: stmt_id, value: var_decl_statement) -> void
+    check_var_decl(self&, id: stmt_id, value: var_decl_statement const&) -> void
     {
-        let index: usize = 0;
-        while(index < value.declarations.size()) {
-            let item = value.declarations[index];
-            if(item.initializer.has_value()) {
-                require_int_expression(*item.initializer, (*parsed).ast.expr_span(*item.initializer));
+        for(const ref item : value.declarations) {
+            let initializer = var_decl_initializer(item);
+            if(initializer.has_value()) {
+                require_int_expression(*initializer, (*parsed).ast.expr_span(*initializer));
             }
-            if(item.array_size.has_value()) {
-                let size = array_size_value(source_text(*item.array_size));
+            let array_size = var_decl_array_size(item);
+            if(array_size.has_value()) {
+                let size = array_size_value(source_text(*array_size));
                 if(size == 0 as usize) {
-                    report(diagnostic_kind::invalid_array_size, *item.array_size);
+                    report(diagnostic_kind::invalid_array_size, *array_size);
                 }
-                if(item.array_initializers.size() > size) {
+                let initializers = var_decl_array_initializers(item);
+                if(initializers.size() > size) {
                     report(diagnostic_kind::array_initializer_too_many, item.full_span);
                 }
-                let init_index: usize = 0;
-                while(init_index < item.array_initializers.size()) {
-                    let expression = item.array_initializers[init_index];
+                for(const ref expression : initializers) {
                     require_int_expression(expression, (*parsed).ast.expr_span(expression));
-                    init_index += 1;
                 }
             }
             bind_local(id, item);
-            index += 1;
         }
     }
 
-    check_assign(self&, value: assign_statement) -> void
+    check_assign(self&, value: assign_statement const&) -> void
     {
         let target = find_visible_variable(source_text(value.name));
         if(not target.valid()) {
@@ -171,7 +164,7 @@ impl semantic_analyzer {
             return;
         }
 
-        let symbol = result.symbols[target.index()];
+        const ref symbol = result.symbols[target.index()];
         if(value.index.has_value()) {
             if(symbol.type != semantic_type_kind::int_array_type) {
                 report(diagnostic_kind::non_array_index, value.name);
@@ -187,12 +180,12 @@ impl semantic_analyzer {
         require_int_expression(value.value, (*parsed).ast.expr_span(value.value));
     }
 
-    check_call_statement(self&, value: call_statement) -> void
+    check_call_statement(self&, value: call_statement const&) -> void
     {
         check_call_expression(value.callee, value.arguments, value.full_span, false);
     }
 
-    check_return_statement(self&, value: return_statement) -> void
+    check_return_statement(self&, value: return_statement const&) -> void
     {
         if(current_return_type == semantic_type_kind::void_type) {
             if(value.value.has_value()) {
@@ -213,7 +206,7 @@ impl semantic_analyzer {
         }
     }
 
-    check_for_statement(self&, value: for_statement) -> void
+    check_for_statement(self&, value: for_statement const&) -> void
     {
         enter_scope();
         if(value.initializer.has_value()) {
@@ -231,7 +224,7 @@ impl semantic_analyzer {
 
     check_statement(self&, id: stmt_id) -> void
     {
-        let syntax = (*parsed).ast.statements[id.value];
+        const ref syntax = (*parsed).ast.statements[id.value];
         match syntax {
             .block(value) => {
                 check_block(id, true);

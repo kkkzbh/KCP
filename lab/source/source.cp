@@ -31,10 +31,12 @@ impl source_file {
         };
 
         result.line_starts.push_back(0 as usize);
-        for(let index : iota(0 as usize, result.text.size())) {
+        let index: usize = 0;
+        while(index < result.text.size()) {
             if(result.text[index] == '\n') {
                 result.line_starts.push_back(index + 1);
             }
+            index += 1;
         }
         return result;
     }

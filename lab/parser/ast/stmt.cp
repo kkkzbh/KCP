@@ -9,12 +9,17 @@ export struct block_statement {
     statements: vector<stmt_id>;
 }
 
+export variant var_decl_data {
+    scalar;
+    initialized(expr_id);
+    array(source_span);
+    array_initialized(source_span, vector<expr_id>);
+}
+
 export struct var_decl_item {
     full_span: source_span;
     name: source_span;
-    initializer: optional<expr_id>;
-    array_size: optional<source_span>;
-    array_initializers: vector<expr_id>;
+    data: var_decl_data = var_decl_data::scalar;
 }
 
 impl var_decl_item {
@@ -23,11 +28,34 @@ impl var_decl_item {
         return var_decl_item{
             .full_span = source_span{},
             .name = source_span{},
-            .initializer = optional<expr_id>::none,
-            .array_size = optional<source_span>::none,
-            .array_initializers = vector<expr_id>{}
+            .data = var_decl_data::scalar
         };
     }
+}
+
+export var_decl_initializer(item: var_decl_item const&) -> optional<expr_id>
+{
+    return match item.data {
+        .initialized(value) => optional<expr_id>::some(value),
+        _ => optional<expr_id>::none,
+    };
+}
+
+export var_decl_array_size(item: var_decl_item const&) -> optional<source_span>
+{
+    return match item.data {
+        .array(size) => optional<source_span>::some(size),
+        .array_initialized(size, initializers) => optional<source_span>::some(size),
+        _ => optional<source_span>::none,
+    };
+}
+
+export var_decl_array_initializers(item: var_decl_item const&) -> vector<expr_id>
+{
+    return match item.data {
+        .array_initialized(size, initializers) => initializers,
+        _ => vector<expr_id>{},
+    };
 }
 
 export struct var_decl_statement {

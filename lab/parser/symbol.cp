@@ -3,18 +3,6 @@ export module parser.symbol;
 import std;
 export import lexer.token;
 
-export enum grammar_symbol_kind : u8 {
-    // 终结符 terminal：词法分析器已经切好的最小输入单元。
-    // 例如 `int`、identifier、`(`、`;` 都是终结符；LR 分析器只能读入/匹配它们，不能再把它们展开成更小的语法结构。
-    terminal = 0;
-    // 非终结符 nonterminal：文法中人为定义的语法类别。
-    // 例如 expression、statement、function_item；它们不是输入 token，必须通过产生式继续展开，最后才能落到终结符。
-    nonterminal = 1;
-    // epsilon：理论上的空串，只在 FIRST 集传播时当标记使用。
-    // 真实产生式右部仍用空 vector 表示空产生式，输入流里永远不会出现 epsilon token。
-    epsilon = 2;
-}
-
 export enum nonterminal_kind : u8 {
     augmented = 0;
     program = 1;
@@ -57,162 +45,175 @@ export enum nonterminal_kind : u8 {
     initializer_values = 38;
 }
 
+export variant symbol_data {
+    // 终结符 terminal：词法分析器已经切好的最小输入单元。
+    // 例如 `int`、identifier、`(`、`;` 都是终结符；LR 分析器只能读入/匹配它们，不能再把它们展开成更小的语法结构。
+    terminal(token_kind);
+    // 非终结符 nonterminal：文法中人为定义的语法类别。
+    // 例如 expression、statement、function_item；它们不是输入 token，必须通过产生式继续展开，最后才能落到终结符。
+    nonterminal(nonterminal_kind);
+    // epsilon：理论上的空串，只在 FIRST 集传播时当标记使用。
+    // 真实产生式右部仍用空 vector 表示空产生式，输入流里永远不会出现 epsilon token。
+    epsilon;
+}
+
 export struct grammar_symbol {
-    kind: grammar_symbol_kind;
-    terminal: token_kind;
-    nonterminal: nonterminal_kind;
+    data: symbol_data = symbol_data::epsilon;
 }
 
 impl grammar_symbol {
-    grammar_symbol()
+    grammar_symbol(data: symbol_data)
     {
-        return grammar_symbol{
-            .kind = grammar_symbol_kind::epsilon,
-            .terminal = token_kind::eof,
-            .nonterminal = nonterminal_kind::augmented
+        return grammar_symbol{ .data = data };
+    }
+
+    operator ==(self const&, rhs: this const&) -> bool
+    {
+        return match data {
+            .terminal(left) => match rhs.data {
+                .terminal(right) => left == right,
+                _ => false,
+            },
+            .nonterminal(left) => match rhs.data {
+                .nonterminal(right) => left == right,
+                _ => false,
+            },
+            .epsilon => match rhs.data {
+                .epsilon => true,
+                _ => false,
+            },
+        };
+    }
+
+    operator <=>(self const&, rhs: this const&) -> weak_ordering
+    {
+        let left_rank = symbol_rank(self);
+        let right_rank = symbol_rank(rhs);
+        if(left_rank != right_rank) {
+            return left_rank <=> right_rank;
+        }
+        return match data {
+            .terminal(left) => match rhs.data {
+                .terminal(right) => left <=> right,
+                _ => weak_ordering::equivalent,
+            },
+            .nonterminal(left) => match rhs.data {
+                .nonterminal(right) => left <=> right,
+                _ => weak_ordering::equivalent,
+            },
+            .epsilon => weak_ordering::equivalent,
         };
     }
 }
 
-export token_rank(kind: token_kind) -> i32
-{
-    if(kind == token_kind::eof) { return 0; }
-    if(kind == token_kind::invalid) { return 1; }
-    if(kind == token_kind::identifier) { return 2; }
-    if(kind == token_kind::integer_literal) { return 3; }
-    if(kind == token_kind::kw_int) { return 4; }
-    if(kind == token_kind::kw_void) { return 5; }
-    if(kind == token_kind::kw_if) { return 6; }
-    if(kind == token_kind::kw_else) { return 7; }
-    if(kind == token_kind::kw_while) { return 8; }
-    if(kind == token_kind::kw_return) { return 9; }
-    if(kind == token_kind::kw_for) { return 10; }
-    if(kind == token_kind::kw_break) { return 11; }
-    if(kind == token_kind::kw_continue) { return 12; }
-    if(kind == token_kind::l_paren) { return 13; }
-    if(kind == token_kind::r_paren) { return 14; }
-    if(kind == token_kind::l_brace) { return 15; }
-    if(kind == token_kind::r_brace) { return 16; }
-    if(kind == token_kind::l_bracket) { return 17; }
-    if(kind == token_kind::r_bracket) { return 18; }
-    if(kind == token_kind::comma) { return 19; }
-    if(kind == token_kind::semicolon) { return 20; }
-    if(kind == token_kind::plus) { return 21; }
-    if(kind == token_kind::minus) { return 22; }
-    if(kind == token_kind::star) { return 23; }
-    if(kind == token_kind::slash) { return 24; }
-    if(kind == token_kind::percent) { return 25; }
-    if(kind == token_kind::equal) { return 26; }
-    if(kind == token_kind::equal_equal) { return 27; }
-    if(kind == token_kind::bang_equal) { return 28; }
-    if(kind == token_kind::less) { return 29; }
-    if(kind == token_kind::less_equal) { return 30; }
-    if(kind == token_kind::greater) { return 31; }
-    if(kind == token_kind::greater_equal) { return 32; }
-    if(kind == token_kind::amp_amp) { return 33; }
-    if(kind == token_kind::pipe_pipe) { return 34; }
-    return 35;
-}
-
-export nonterminal_rank(kind: nonterminal_kind) -> i32
-{
-    if(kind == nonterminal_kind::augmented) { return 0; }
-    if(kind == nonterminal_kind::program) { return 1; }
-    if(kind == nonterminal_kind::function_list) { return 2; }
-    if(kind == nonterminal_kind::function_item) { return 3; }
-    if(kind == nonterminal_kind::return_type) { return 4; }
-    if(kind == nonterminal_kind::parameter_list_opt) { return 5; }
-    if(kind == nonterminal_kind::parameter_list) { return 6; }
-    if(kind == nonterminal_kind::parameter_item) { return 7; }
-    if(kind == nonterminal_kind::block) { return 8; }
-    if(kind == nonterminal_kind::statement_list) { return 9; }
-    if(kind == nonterminal_kind::statement) { return 10; }
-    if(kind == nonterminal_kind::var_decl) { return 11; }
-    if(kind == nonterminal_kind::var_decl_list) { return 12; }
-    if(kind == nonterminal_kind::var_decl_item_nt) { return 13; }
-    if(kind == nonterminal_kind::identifier_statement) { return 14; }
-    if(kind == nonterminal_kind::if_statement_nt) { return 15; }
-    if(kind == nonterminal_kind::else_opt) { return 16; }
-    if(kind == nonterminal_kind::while_statement_nt) { return 17; }
-    if(kind == nonterminal_kind::return_statement_nt) { return 18; }
-    if(kind == nonterminal_kind::return_value_opt) { return 19; }
-    if(kind == nonterminal_kind::expression) { return 20; }
-    if(kind == nonterminal_kind::logical_or) { return 21; }
-    if(kind == nonterminal_kind::logical_and) { return 22; }
-    if(kind == nonterminal_kind::equality) { return 23; }
-    if(kind == nonterminal_kind::relational) { return 24; }
-    if(kind == nonterminal_kind::additive) { return 25; }
-    if(kind == nonterminal_kind::multiplicative) { return 26; }
-    if(kind == nonterminal_kind::unary) { return 27; }
-    if(kind == nonterminal_kind::primary) { return 28; }
-    if(kind == nonterminal_kind::argument_list_opt) { return 29; }
-    if(kind == nonterminal_kind::argument_list) { return 30; }
-    if(kind == nonterminal_kind::for_statement_nt) { return 31; }
-    if(kind == nonterminal_kind::for_init_opt) { return 32; }
-    if(kind == nonterminal_kind::for_step_opt) { return 33; }
-    if(kind == nonterminal_kind::break_statement_nt) { return 34; }
-    if(kind == nonterminal_kind::continue_statement_nt) { return 35; }
-    if(kind == nonterminal_kind::initializer_list) { return 36; }
-    if(kind == nonterminal_kind::initializer_values_opt) { return 37; }
-    return 38;
-}
-
-export symbol_kind_rank(kind: grammar_symbol_kind) -> i32
-{
-    if(kind == grammar_symbol_kind::terminal) { return 0; }
-    if(kind == grammar_symbol_kind::nonterminal) { return 1; }
-    return 2;
-}
-
 export symbol_terminal(kind: token_kind) -> grammar_symbol
 {
-    return grammar_symbol{
-        .kind = grammar_symbol_kind::terminal,
-        .terminal = kind,
-        .nonterminal = nonterminal_kind::augmented
-    };
+    return grammar_symbol{symbol_data::terminal(kind)};
 }
 
 export symbol_nonterminal(kind: nonterminal_kind) -> grammar_symbol
 {
-    return grammar_symbol{
-        .kind = grammar_symbol_kind::nonterminal,
-        .terminal = token_kind::eof,
-        .nonterminal = kind
-    };
+    return grammar_symbol{symbol_data::nonterminal(kind)};
+}
+
+export nonterminal_kind_name(kind: nonterminal_kind) -> str
+{
+    if(kind == nonterminal_kind::augmented) { return "augmented"; }
+    if(kind == nonterminal_kind::program) { return "program"; }
+    if(kind == nonterminal_kind::function_list) { return "function_list"; }
+    if(kind == nonterminal_kind::function_item) { return "function_item"; }
+    if(kind == nonterminal_kind::return_type) { return "return_type"; }
+    if(kind == nonterminal_kind::parameter_list_opt) { return "parameter_list_opt"; }
+    if(kind == nonterminal_kind::parameter_list) { return "parameter_list"; }
+    if(kind == nonterminal_kind::parameter_item) { return "parameter_item"; }
+    if(kind == nonterminal_kind::block) { return "block"; }
+    if(kind == nonterminal_kind::statement_list) { return "statement_list"; }
+    if(kind == nonterminal_kind::statement) { return "statement"; }
+    if(kind == nonterminal_kind::var_decl) { return "var_decl"; }
+    if(kind == nonterminal_kind::var_decl_list) { return "var_decl_list"; }
+    if(kind == nonterminal_kind::var_decl_item_nt) { return "var_decl_item"; }
+    if(kind == nonterminal_kind::identifier_statement) { return "identifier_statement"; }
+    if(kind == nonterminal_kind::if_statement_nt) { return "if_statement"; }
+    if(kind == nonterminal_kind::else_opt) { return "else_opt"; }
+    if(kind == nonterminal_kind::while_statement_nt) { return "while_statement"; }
+    if(kind == nonterminal_kind::return_statement_nt) { return "return_statement"; }
+    if(kind == nonterminal_kind::return_value_opt) { return "return_value_opt"; }
+    if(kind == nonterminal_kind::expression) { return "expression"; }
+    if(kind == nonterminal_kind::logical_or) { return "logical_or"; }
+    if(kind == nonterminal_kind::logical_and) { return "logical_and"; }
+    if(kind == nonterminal_kind::equality) { return "equality"; }
+    if(kind == nonterminal_kind::relational) { return "relational"; }
+    if(kind == nonterminal_kind::additive) { return "additive"; }
+    if(kind == nonterminal_kind::multiplicative) { return "multiplicative"; }
+    if(kind == nonterminal_kind::unary) { return "unary"; }
+    if(kind == nonterminal_kind::primary) { return "primary"; }
+    if(kind == nonterminal_kind::argument_list_opt) { return "argument_list_opt"; }
+    if(kind == nonterminal_kind::argument_list) { return "argument_list"; }
+    if(kind == nonterminal_kind::for_statement_nt) { return "for_statement"; }
+    if(kind == nonterminal_kind::for_init_opt) { return "for_init_opt"; }
+    if(kind == nonterminal_kind::for_step_opt) { return "for_step_opt"; }
+    if(kind == nonterminal_kind::break_statement_nt) { return "break_statement"; }
+    if(kind == nonterminal_kind::continue_statement_nt) { return "continue_statement"; }
+    if(kind == nonterminal_kind::initializer_list) { return "initializer_list"; }
+    if(kind == nonterminal_kind::initializer_values_opt) { return "initializer_values_opt"; }
+    return "initializer_values";
 }
 
 export symbol_epsilon() -> grammar_symbol
 {
-    return grammar_symbol{
-        .kind = grammar_symbol_kind::epsilon,
-        .terminal = token_kind::eof,
-        .nonterminal = nonterminal_kind::augmented
+    return grammar_symbol{symbol_data::epsilon};
+}
+
+export symbol_rank(symbol: grammar_symbol const&) -> u8
+{
+    return match symbol.data {
+        .terminal(kind) => 0 as u8,
+        .nonterminal(kind) => 1 as u8,
+        .epsilon => 2 as u8,
+    };
+}
+
+export symbol_is_terminal(symbol: grammar_symbol const&) -> bool
+{
+    return match symbol.data {
+        .terminal(kind) => true,
+        _ => false,
+    };
+}
+
+export symbol_is_nonterminal(symbol: grammar_symbol const&) -> bool
+{
+    return match symbol.data {
+        .nonterminal(kind) => true,
+        _ => false,
+    };
+}
+
+export symbol_is_epsilon(symbol: grammar_symbol const&) -> bool
+{
+    return match symbol.data {
+        .epsilon => true,
+        _ => false,
+    };
+}
+
+export symbol_terminal_kind(symbol: grammar_symbol const&) -> token_kind
+{
+    return match symbol.data {
+        .terminal(kind) => kind,
+        _ => panic("grammar symbol is not terminal"),
+    };
+}
+
+export symbol_nonterminal_kind(symbol: grammar_symbol const&) -> nonterminal_kind
+{
+    return match symbol.data {
+        .nonterminal(kind) => kind,
+        _ => panic("grammar symbol is not nonterminal"),
     };
 }
 
 export symbol_equal(left: grammar_symbol const&, right: grammar_symbol const&) -> bool
 {
-    return left.kind == right.kind and left.terminal == right.terminal and left.nonterminal == right.nonterminal;
-}
-
-export symbol_order(left: grammar_symbol const&, right: grammar_symbol const&) -> weak_ordering
-{
-    if(left.kind != right.kind) {
-        return symbol_kind_rank(left.kind) <=> symbol_kind_rank(right.kind);
-    }
-    if(left.terminal != right.terminal) {
-        return token_rank(left.terminal) <=> token_rank(right.terminal);
-    }
-    return nonterminal_rank(left.nonterminal) <=> nonterminal_rank(right.nonterminal);
-}
-
-export struct grammar_symbol_order {
-}
-
-impl grammar_symbol_order {
-    operator ()(self const&, left: grammar_symbol const&, right: grammar_symbol const&) -> weak_ordering
-    {
-        return symbol_order(left, right);
-    }
+    return left == right;
 }

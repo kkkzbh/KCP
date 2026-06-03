@@ -91,12 +91,11 @@ enum op_relation : u8 {
     greater = 3;
 }
 
-// 分析栈元素只有两类：原始终结符，或规约出来的表达式 E。
-enum stack_item_kind : u8 {
+variant stack_item_data {
     // 终结符：来自输入 token，例如 id、+、*、(、)。
-    terminal = 0;
+    terminal(op_terminal);
     // 非终结符：若干符号按产生式规约得到的 E。
-    expression = 1;
+    expression;
 }
 
 // 分析栈里的一个元素。
@@ -108,16 +107,13 @@ enum stack_item_kind : u8 {
 // 其中 EOF、+、id 是 terminal，E 是 expression。
 // 算符优先矩阵只比较 terminal，E 只参与句柄规约。
 struct stack_item {
-    // terminal 表示还没规约的 token；expression 表示已经规约出的 E。
-    kind: stack_item_kind;
-    // 只有 kind 为 terminal 时这个字段才有意义。
-    terminal: op_terminal;
+    data: stack_item_data = stack_item_data::terminal(op_terminal::eof);
 }
 
 impl stack_item {
-    stack_item()
+    stack_item(data: stack_item_data)
     {
-        return stack_item{ .kind = stack_item_kind::terminal, .terminal = op_terminal::eof };
+        return stack_item{ .data = data };
     }
 }
 
@@ -144,7 +140,7 @@ impl parse_result {
 // 输入 token 流被转换成 op_terminal 后，通过这个函数进入分析栈。
 terminal_item(kind: op_terminal) -> stack_item
 {
-    return stack_item{ .kind = stack_item_kind::terminal, .terminal = kind };
+    return stack_item{stack_item_data::terminal(kind)};
 }
 
 // 规约成功后压回栈里的统一表达式 E。
@@ -152,7 +148,31 @@ terminal_item(kind: op_terminal) -> stack_item
 // 不管句柄是 id、integer、E+E 还是 (E)，规约后都变成同一个非终结符 E。
 expression_item() -> stack_item
 {
-    return stack_item{ .kind = stack_item_kind::expression, .terminal = op_terminal::invalid };
+    return stack_item{stack_item_data::expression};
+}
+
+stack_item_is_terminal(item: stack_item const&) -> bool
+{
+    return match item.data {
+        .terminal(value) => true,
+        _ => false,
+    };
+}
+
+stack_item_is_expression(item: stack_item const&) -> bool
+{
+    return match item.data {
+        .expression => true,
+        _ => false,
+    };
+}
+
+stack_item_terminal(item: stack_item const&) -> op_terminal
+{
+    return match item.data {
+        .terminal(value) => value,
+        _ => panic("stack item is not terminal"),
+    };
 }
 
 // 演示输出用的终结符名称。
@@ -307,7 +327,7 @@ top_terminal_index(stack: vector<stack_item> const&) -> usize
     let index = stack.size();
     while(index > 0 as usize) {
         index -= 1;
-        if(stack[index].kind == stack_item_kind::terminal) {
+        if(stack_item_is_terminal(stack[index])) {
             return index;
         }
     }
@@ -323,7 +343,7 @@ previous_terminal_index(stack: vector<stack_item> const&, before: usize) -> usiz
     let index = before;
     while(index > 0 as usize) {
         index -= 1;
-        if(stack[index].kind == stack_item_kind::terminal) {
+        if(stack_item_is_terminal(stack[index])) {
             return index;
         }
     }
@@ -350,7 +370,7 @@ find_handle_start(stack: vector<stack_item> const&) -> usize
     let current = top_terminal_index(stack);
     while(current > 0 as usize) {
         let previous = previous_terminal_index(stack, current);
-        if(relation_between(stack[previous].terminal, stack[current].terminal) == op_relation::less) {
+        if(relation_between(stack_item_terminal(stack[previous]), stack_item_terminal(stack[current])) == op_relation::less) {
             return previous + 1;
         }
         current = previous;
@@ -372,7 +392,7 @@ reduce_handle(stack: vector<stack_item>&, start: usize) -> bool
     let count = stack.size() - start;
     // id -> E，integer -> E。
     // operand 是 identifier 和 integer_literal 的合并终结符。
-    if(count == 1 as usize and stack[start].kind == stack_item_kind::terminal and stack[start].terminal == op_terminal::operand) {
+    if(count == 1 as usize and stack_item_is_terminal(stack[start]) and stack_item_terminal(stack[start]) == op_terminal::operand) {
         stack.erase_range(start, stack.size());
         stack.push_back(expression_item());
         return true;
@@ -385,10 +405,10 @@ reduce_handle(stack: vector<stack_item>&, start: usize) -> bool
         // 这一步对应所有二元算术产生式：
         //   E -> E+E | E-E | E*E | E/E | E%E
         if(
-            first.kind == stack_item_kind::expression
-            and second.kind == stack_item_kind::terminal
-            and is_binary_op(second.terminal)
-            and third.kind == stack_item_kind::expression
+            stack_item_is_expression(first)
+            and stack_item_is_terminal(second)
+            and is_binary_op(stack_item_terminal(second))
+            and stack_item_is_expression(third)
         ) {
             stack.erase_range(start, stack.size());
             stack.push_back(expression_item());
@@ -397,11 +417,11 @@ reduce_handle(stack: vector<stack_item>&, start: usize) -> bool
         // ( E ) -> E。
         // 左右括号能一起规约，是因为矩阵中设置了 ( = )。
         if(
-            first.kind == stack_item_kind::terminal
-            and first.terminal == op_terminal::l_paren
-            and second.kind == stack_item_kind::expression
-            and third.kind == stack_item_kind::terminal
-            and third.terminal == op_terminal::r_paren
+            stack_item_is_terminal(first)
+            and stack_item_terminal(first) == op_terminal::l_paren
+            and stack_item_is_expression(second)
+            and stack_item_is_terminal(third)
+            and stack_item_terminal(third) == op_terminal::r_paren
         ) {
             stack.erase_range(start, stack.size());
             stack.push_back(expression_item());
@@ -415,9 +435,9 @@ reduce_handle(stack: vector<stack_item>&, start: usize) -> bool
 accept_stack(stack: vector<stack_item> const&) -> bool
 {
     return stack.size() == 2 as usize
-        and stack[0 as usize].kind == stack_item_kind::terminal
-        and stack[0 as usize].terminal == op_terminal::eof
-        and stack[1 as usize].kind == stack_item_kind::expression;
+        and stack_item_is_terminal(stack[0 as usize])
+        and stack_item_terminal(stack[0 as usize]) == op_terminal::eof
+        and stack_item_is_expression(stack[1 as usize]);
 }
 
 // 对一个表达式字符串执行完整实验三流程：
@@ -448,15 +468,13 @@ parse_expression(text: str) -> parse_result
     // 这里复用 stack_item 保存输入，是因为本项目里的 vector 元素需要可默认构造；
     // stack_item 已经有默认构造，而裸 enum 不适合作为 vector 元素。
     let input = vector<stack_item>{};
-    let token_index: usize = 0;
-    while(token_index < tokens.size()) {
-        let terminal = to_op_terminal(tokens[token_index].kind);
+    for(const ref token : tokens) {
+        let terminal = to_op_terminal(token.kind);
         if(terminal == op_terminal::invalid) {
             println("error: unsupported token");
             return parse_result{};
         }
         input.push_back(terminal_item(terminal));
-        token_index += 1;
     }
 
     let result = parse_result{};
@@ -478,7 +496,7 @@ parse_expression(text: str) -> parse_result
             return result;
         }
 
-        let lookahead = input[index].terminal;
+        let lookahead = stack_item_terminal(input[index]);
 
         // 接受条件必须在查矩阵前判断。
         // 当栈已经是 EOF E，并且当前输入也是 EOF，表示整个表达式已经规约完成。
@@ -490,7 +508,7 @@ parse_expression(text: str) -> parse_result
         // 算符优先矩阵只看终结符，不看栈顶是否是 E。
         // 所以先找到“栈顶最近终结符”。
         let top_index = top_terminal_index(stack);
-        let top = stack[top_index].terminal;
+        let top = stack_item_terminal(stack[top_index]);
         let relation = relation_between(top, lookahead);
         if(relation == op_relation::less or relation == op_relation::equal) {
             // 移进会消耗一个输入终结符，所以 index 前进。

@@ -11,7 +11,7 @@ import ir.statement;
 impl quad_lowerer {
     lower_function(self&, id: function_id) -> void
     {
-        let function = (*parsed).ast.functions[id.value];
+        const ref function = (*parsed).ast.functions[id.value];
         let name = source_text(function.name);
         emit("func", "_", "_", name);
         lower_statement(function.body);
@@ -26,11 +26,9 @@ impl quad_lowerer {
             return output;
         }
 
-        let program = (*parsed).ast.programs[(*parsed).root.value];
-        let index: usize = 0;
-        while(index < program.functions.size()) {
-            lower_function(program.functions[index]);
-            index += 1;
+        const ref program = (*parsed).ast.programs[(*parsed).root.value];
+        for(const ref function : program.functions) {
+            lower_function(function);
         }
         output.accepted = true;
         return output;

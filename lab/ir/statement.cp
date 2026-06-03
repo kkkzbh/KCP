@@ -8,13 +8,11 @@ import ir.expression;
 impl quad_lowerer {
     lower_block(self&, id: stmt_id) -> void
     {
-        let syntax = (*parsed).ast.statements[id.value];
+        const ref syntax = (*parsed).ast.statements[id.value];
         match syntax {
             .block(value) => {
-                let index: usize = 0;
-                while(index < value.statements.size()) {
-                    lower_statement(value.statements[index]);
-                    index += 1;
+                for(const ref statement : value.statements) {
+                    lower_statement(statement);
                 }
             },
             .var_decl(value) => {},
@@ -29,32 +27,31 @@ impl quad_lowerer {
         };
     }
 
-    lower_var_decl(self&, value: var_decl_statement) -> void
+    lower_var_decl(self&, value: var_decl_statement const&) -> void
     {
-        let index: usize = 0;
-        while(index < value.declarations.size()) {
-            let item = value.declarations[index];
-            if(item.array_size.has_value()) {
-                emit("array_decl", source_text(*item.array_size), "_", source_text(item.name));
+        for(const ref item : value.declarations) {
+            let array_size = var_decl_array_size(item);
+            if(array_size.has_value()) {
+                emit("array_decl", source_text(*array_size), "_", source_text(item.name));
                 let init_index: usize = 0;
-                while(init_index < item.array_initializers.size()) {
-                    let init = lower_expression(item.array_initializers[init_index]);
+                let initializers = var_decl_array_initializers(item);
+                for(const ref initializer : initializers) {
+                    let init = lower_expression(initializer);
                     let index_text = usize_string(init_index);
                     emit("array_store", source_text(item.name), index_text.as_str(), init.as_str());
                     init_index += 1;
                 }
-                index += 1;
                 continue;
             }
-            if(item.initializer.has_value()) {
-                let init = lower_expression(*item.initializer);
+            let initializer = var_decl_initializer(item);
+            if(initializer.has_value()) {
+                let init = lower_expression(*initializer);
                 emit("assign", init.as_str(), "_", source_text(item.name));
             }
-            index += 1;
         }
     }
 
-    lower_if(self&, value: if_statement) -> void
+    lower_if(self&, value: if_statement const&) -> void
     {
         let then_label = next_label();
         let else_label = next_label();
@@ -72,7 +69,7 @@ impl quad_lowerer {
         emit("label", "_", "_", end_label.as_str());
     }
 
-    lower_while(self&, value: while_statement) -> void
+    lower_while(self&, value: while_statement const&) -> void
     {
         let begin_label = next_label();
         let end_label = next_label();
@@ -86,7 +83,7 @@ impl quad_lowerer {
         pop_loop();
     }
 
-    lower_for(self&, value: for_statement) -> void
+    lower_for(self&, value: for_statement const&) -> void
     {
         if(value.initializer.has_value()) {
             lower_statement(*value.initializer);
@@ -110,7 +107,7 @@ impl quad_lowerer {
 
     lower_statement(self&, id: stmt_id) -> void
     {
-        let syntax = (*parsed).ast.statements[id.value];
+        const ref syntax = (*parsed).ast.statements[id.value];
         match syntax {
             .block(value) => {
                 lower_block(id);

@@ -17,9 +17,9 @@ return_type_from_syntax(kind: return_type_kind) -> semantic_type_kind
     return semantic_type_kind::int_type;
 }
 
-parameter_type_from_syntax(parameter: parameter_syntax) -> semantic_type_kind
+parameter_type_from_syntax(parameter: parameter_syntax const&) -> semantic_type_kind
 {
-    if(parameter.is_array) {
+    if(parameter_is_array(parameter)) {
         return semantic_type_kind::int_array_type;
     }
     return semantic_type_kind::int_type;
@@ -28,10 +28,8 @@ parameter_type_from_syntax(parameter: parameter_syntax) -> semantic_type_kind
 parameter_types_from_syntax(parameters: vector<parameter_syntax> const&) -> vector<semantic_parameter_type>
 {
     let result = vector<semantic_parameter_type>{};
-    let index: usize = 0;
-    while(index < parameters.size()) {
-        result.push_back(semantic_parameter_type{ .type = parameter_type_from_syntax(parameters[index]) });
-        index += 1;
+    for(const ref parameter : parameters) {
+        result.push_back(semantic_parameter_type{ .type = parameter_type_from_syntax(parameter) });
     }
     return result;
 }
@@ -39,7 +37,7 @@ parameter_types_from_syntax(parameters: vector<parameter_syntax> const&) -> vect
 impl semantic_analyzer {
     collect_function(self&, id: function_id) -> void
     {
-        let function = (*parsed).ast.functions[id.value];
+        const ref function = (*parsed).ast.functions[id.value];
         let name = source_text(function.name);
         let existing = semantic_find_function(result, name);
         if(existing.valid()) {
@@ -60,11 +58,9 @@ impl semantic_analyzer {
 
     collect_functions(self&) -> void
     {
-        let program = (*parsed).ast.programs[(*parsed).root.value];
-        let index: usize = 0;
-        while(index < program.functions.size()) {
-            collect_function(program.functions[index]);
-            index += 1;
+        const ref program = (*parsed).ast.programs[(*parsed).root.value];
+        for(const ref function : program.functions) {
+            collect_function(function);
         }
     }
 
@@ -72,24 +68,22 @@ impl semantic_analyzer {
     {
         let main_symbol = semantic_find_function(result, "main");
         if(not main_symbol.valid()) {
-            let program = (*parsed).ast.programs[(*parsed).root.value];
+            const ref program = (*parsed).ast.programs[(*parsed).root.value];
             report(diagnostic_kind::missing_main, program.full_span);
         }
     }
 
     check_function(self&, id: function_id) -> void
     {
-        let function = (*parsed).ast.functions[id.value];
+        const ref function = (*parsed).ast.functions[id.value];
         current_function = id;
         current_return_type = return_type_from_syntax(function.return_type);
         current_function_span = function.full_span;
         current_saw_value_return = false;
 
         enter_scope();
-        let parameter_index: usize = 0;
-        while(parameter_index < function.parameters.size()) {
-            bind_parameter(function.parameters[parameter_index], id);
-            parameter_index += 1;
+        for(const ref parameter : function.parameters) {
+            bind_parameter(parameter, id);
         }
 
         check_block(function.body, false);
@@ -101,11 +95,9 @@ impl semantic_analyzer {
 
     check_functions(self&) -> void
     {
-        let program = (*parsed).ast.programs[(*parsed).root.value];
-        let index: usize = 0;
-        while(index < program.functions.size()) {
-            check_function(program.functions[index]);
-            index += 1;
+        const ref program = (*parsed).ast.programs[(*parsed).root.value];
+        for(const ref function : program.functions) {
+            check_function(function);
         }
     }
 }
