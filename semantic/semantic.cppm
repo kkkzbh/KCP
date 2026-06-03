@@ -244,8 +244,8 @@ private:
     auto validate_extern_c_function(function_syntax const& function, std::span<semantic_type_id const> parameter_types, semantic_type_id return_type) -> void;
     auto is_extern_c_compatible_type(semantic_type_id type, bool allow_unit) const -> bool;
     auto collect_impl_declarations(std::size_t unit_index, ast_arena const& ast, impl_id id) -> void;
-    auto collect_impl_function(std::size_t unit_index, ast_arena const& ast, impl_syntax const& impl, semantic_type_id impl_type, std::vector<std::string> const& impl_generic_parameters, function_id id) -> void;
-    auto collect_impl_operator(std::size_t unit_index, ast_arena const& ast, impl_syntax const& impl, semantic_type_id impl_type, std::vector<std::string> const& impl_generic_parameters, function_id id) -> void;
+    auto collect_impl_function(std::size_t unit_index, ast_arena const& ast, impl_syntax const& impl, semantic_type_id impl_type, std::vector<semantic_generic_parameter> const& impl_generic_parameters, function_id id) -> void;
+    auto collect_impl_operator(std::size_t unit_index, ast_arena const& ast, impl_syntax const& impl, semantic_type_id impl_type, std::vector<semantic_generic_parameter> const& impl_generic_parameters, function_id id) -> void;
     auto validate_default_compare_operator(function_syntax const& function, semantic_type_id impl_type, std::optional<std::uint32_t> struct_index, std::span<semantic_type_id const> parameter_types, semantic_type_id return_type, bool is_generic) -> std::optional<std::vector<semantic_default_compare_field>>;
     auto default_compare_field(std::uint32_t field_index, semantic_type_id field_type, source_span span) -> std::optional<semantic_default_compare_field>;
     auto default_compare_to_weak_method(semantic_type_id result_type, semantic_type_id weak_type, source_span span) -> std::optional<symbol_id>;
@@ -275,9 +275,12 @@ private:
     auto requirement_type(std::size_t unit_index, ast_arena const& ast, type_id id, semantic_type_id self_type) -> semantic_type_id;
     auto signatures_match(function_signature const& actual, semantic_concept_function_requirement const& expected, semantic_type_id self_type)
         -> bool;
-    auto collect_type_pattern_parameters(ast_arena const& ast, type_id id) -> std::vector<std::string>;
-    auto collect_type_pattern_parameters(ast_arena const& ast, type_syntax const& syntax, std::vector<std::string>& names) -> void;
+    auto collect_type_pattern_parameters(ast_arena const& ast, type_id id) -> std::vector<semantic_generic_parameter>;
+    auto collect_type_pattern_parameters(ast_arena const& ast, type_syntax const& syntax, std::vector<semantic_generic_parameter>& parameters) -> void;
+    auto generic_parameter_names(std::vector<semantic_generic_parameter> const& parameters) const -> std::vector<std::string>;
+    auto generic_parameter_kinds(std::vector<semantic_generic_parameter> const& parameters) const -> std::vector<generic_parameter_syntax::kind>;
     auto bind_active_generic_parameters(std::vector<std::string> const& names) -> void;
+    auto bind_active_generic_parameters(std::vector<semantic_generic_parameter> const& parameters) -> void;
     auto bind_active_generic_parameters(std::vector<generic_parameter_syntax> const& parameters) -> void;
     auto bind_active_function_generic_parameters(std::size_t unit_index, function_id id) -> void;
     auto inferred_parameter_generic_name(std::size_t index) const -> std::string;
@@ -297,6 +300,7 @@ private:
     auto function_pack_generic_index(std::size_t unit_index, function_id id) const -> std::optional<std::size_t>;
     auto function_value_pack_parameter_index(std::size_t unit_index, function_id id) const -> std::optional<std::size_t>;
     auto validate_function_pack_shape(std::size_t unit_index, function_id id) -> void;
+    auto validate_non_function_generic_parameter_packs(std::span<generic_parameter_syntax const> parameters, std::string_view owner_kind) -> void;
     auto validate_function_type_arguments(std::size_t unit_index, function_id id, std::vector<semantic_type_id> const& type_arguments, source_span span) -> bool;
     auto infer_function_type_arguments_for_call(symbol_id symbol, std::optional<semantic_type_id> receiver_type, std::vector<expression_info> const& arguments, std::vector<semantic_type_id> const& explicit_arguments, source_span span) -> std::optional<std::vector<semantic_type_id>>;
     auto instantiate_function_symbol_for_receiver(symbol_id symbol, semantic_type_id receiver_type, source_span span) -> semantic_function_instance const*;
@@ -313,6 +317,8 @@ private:
     auto lower_type(ast_arena const& ast, type_id id) -> semantic_type_id;
     auto lower_return_type(ast_arena const& ast, type_id id) -> semantic_type_id;
     auto lower_meta_type_query(ast_arena const& ast, type_syntax const& syntax, std::string_view name) -> std::optional<semantic_type_id>;
+    auto append_type_pack_expansion_argument(ast_arena const& ast, type_argument_type_syntax const& argument, source_span span, std::vector<semantic_type_id>& arguments) -> bool;
+    auto append_lowered_type_argument(ast_arena const& ast, type_argument_syntax const& argument, source_span span, std::vector<semantic_type_id>& arguments) -> bool;
     auto meta_type_queries_visible() const -> bool;
     auto evaluate_meta_type_query(meta_type_query_kind kind, std::vector<semantic_type_id> arguments, source_span span) -> semantic_type_id;
     auto try_call_result_type(semantic_type_id callable, std::span<semantic_type_id const> argument_types, source_span span, bool report_failure) -> std::optional<semantic_type_id>;
@@ -552,7 +558,7 @@ private:
     std::map<std::string, std::map<semantic_type_id, std::map<overload_operator_kind, std::vector<symbol_id>>>> module_extension_operator_exports{}; ///< 按模块名索引的导出内建类型扩展 operator。
     std::map<std::tuple<symbol_id, std::vector<semantic_type_id>, semantic_type_id>, std::size_t> concept_impl_index{}; ///< concept + concept arguments + concrete type 的实现事实索引。
     std::vector<std::size_t> generic_concept_impl_indices{}; ///< 目标类型模式含泛型参数的 concept impl。
-    std::map<std::size_t, std::vector<std::string>> concept_impl_generic_parameters{}; ///< concept impl 显式泛型参数。
+    std::map<std::size_t, std::vector<semantic_generic_parameter>> concept_impl_generic_parameters{}; ///< concept impl 目标类型模式引入的泛型参数。
     std::map<std::size_t, concept_requires_syntax> concept_impl_requires{}; ///< 条件 concept impl 的 requires 子句。
     std::map<return_inference_key, std::vector<std::string>> implicit_function_generic_parameters{}; ///< impl 目标类型模式和省略参数类型引入的函数泛型参数。
     std::map<return_inference_key, std::vector<generic_parameter_syntax::kind>> implicit_function_generic_parameter_kinds{};
@@ -565,6 +571,7 @@ private:
     semantic_type_id active_self_type{}; ///< concept / impl 相关类型 lowering 中的 this 替换目标。
     std::map<std::string, semantic_type_id> const* active_type_aliases{}; ///< concept impl 当前可见关联类型。
     std::size_t active_context_index{}; ///< 当前语义 side table 写入的实例上下文；0 表示源程序根上下文。
+    std::size_t active_function_context_index{}; ///< 当前函数签名所属上下文；template for 展开不改变该上下文。
     std::size_t next_context_index{ 1uz }; ///< 泛型实例和 template for 展开使用的唯一上下文编号源。
     std::size_t active_unit_index{}; ///< 当前函数体检查所在的翻译单元下标。
     semantic_unit_state const* active_unit{}; ///< 当前函数体检查所在的翻译单元状态。

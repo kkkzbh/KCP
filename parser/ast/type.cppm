@@ -9,7 +9,9 @@ export struct type_argument_type_syntax
 {
     auto constexpr operator==(type_argument_type_syntax const& other) const -> bool = default;
 
+    source_span full_span{};
     type_id type{};
+    bool is_pack_expansion{};
 };
 
 export struct type_argument_literal_syntax

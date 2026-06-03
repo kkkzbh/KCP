@@ -481,7 +481,7 @@ auto semantic_analyzer::lower_meta_type_query(ast_arena const& ast, type_syntax 
 
     auto type_argument = [&](std::size_t index) -> semantic_type_id {
         auto const* argument = std::get_if<type_argument_type_syntax>(&syntax.arguments[index]);
-        if(argument == nullptr) {
+        if(argument == nullptr or argument->is_pack_expansion) {
             report(diagnostic_kind::invalid_type_argument, syntax.full_span, "meta type query argument must be a type");
             return semantic_type_ids::error;
         }
@@ -518,13 +518,81 @@ auto semantic_analyzer::lower_meta_type_query(ast_arena const& ast, type_syntax 
                 return semantic_type_ids::error;
             }
             arguments.reserve(syntax.arguments.size());
-            for(auto index = 0uz; index < syntax.arguments.size(); ++index) {
-                arguments.emplace_back(type_argument(index));
+            for(auto const& argument : syntax.arguments) {
+                append_lowered_type_argument(ast, argument, syntax.full_span, arguments);
             }
             break;
     }
 
     return evaluate_meta_type_query(*kind, std::move(arguments), syntax.full_span);
+}
+
+auto semantic_analyzer::append_type_pack_expansion_argument(ast_arena const& ast, type_argument_type_syntax const& argument, source_span, std::vector<semantic_type_id>& arguments) -> bool
+{
+    auto const& syntax = ast.node(argument.type);
+    auto is_simple_pack_name = (
+        not syntax.is_function_type
+        and not syntax.is_decltype
+        and not syntax.is_never_type
+        and not syntax.is_array_type
+        and not syntax.is_storage_type
+        and not syntax.is_tuple_type
+        and not syntax.is_grouped_type
+        and syntax.arguments.empty()
+        and syntax.associated_names.empty()
+        and not syntax.is_const
+        and not syntax.is_like
+        and not syntax.is_forward
+        and syntax.suffix_operators.empty()
+    );
+    if(not is_simple_pack_name) {
+        report(diagnostic_kind::invalid_type_argument, argument.full_span, "type argument pack expansion requires a type parameter pack");
+        arguments.emplace_back(semantic_type_ids::error);
+        return false;
+    }
+
+    auto name = std::string{ ast_source.identifier(syntax.name) };
+    if(active_type_pack_substitutions != nullptr) {
+        auto found = active_type_pack_substitutions->find(name);
+        if(found != active_type_pack_substitutions->end()) {
+            arguments.insert(arguments.end(), found->second.begin(), found->second.end());
+            return true;
+        }
+    }
+
+    if(not active_generic_parameter_packs.contains(name)) {
+        report(diagnostic_kind::invalid_type_argument, argument.full_span, "type argument pack expansion requires a type parameter pack");
+        arguments.emplace_back(semantic_type_ids::error);
+        return false;
+    }
+    auto found = active_generic_parameters.find(name);
+    if(found == active_generic_parameters.end()) {
+        report(diagnostic_kind::invalid_type_argument, argument.full_span, "unknown type parameter pack");
+        arguments.emplace_back(semantic_type_ids::error);
+        return false;
+    }
+    if(not std::holds_alternative<generic_parameter_type>(result.types.get(found->second))) {
+        report(diagnostic_kind::invalid_type_argument, argument.full_span, "integer generic parameter cannot be expanded as a type pack");
+        arguments.emplace_back(semantic_type_ids::error);
+        return false;
+    }
+    arguments.emplace_back(result.types.intern(type_pack_expansion{ .pack = found->second }));
+    return true;
+}
+
+auto semantic_analyzer::append_lowered_type_argument(ast_arena const& ast, type_argument_syntax const& argument, source_span span, std::vector<semantic_type_id>& arguments) -> bool
+{
+    auto const* type_argument = std::get_if<type_argument_type_syntax>(&argument);
+    if(type_argument == nullptr) {
+        report(diagnostic_kind::invalid_type_argument, span, "type argument must be a type");
+        arguments.emplace_back(semantic_type_ids::error);
+        return false;
+    }
+    if(type_argument->is_pack_expansion) {
+        return append_type_pack_expansion_argument(ast, *type_argument, span, arguments);
+    }
+    arguments.emplace_back(lower_type(ast, type_argument->type));
+    return true;
 }
 
 auto semantic_analyzer::meta_type_queries_visible() const -> bool
@@ -1041,6 +1109,7 @@ auto semantic_analyzer::is_default_initializable(semantic_type_id type) -> bool
             [](pointer_type const&) { return true; },
             [](function_type const&) { return false; },
             [](generic_parameter_type const&) { return false; },
+            [](type_pack_expansion const&) { return false; },
             [](associated_type_ref const&) { return false; },
             [](meta_type_query const&) { return false; },
             [](integer_constant_type const&) { return false; },
@@ -1086,6 +1155,7 @@ auto semantic_analyzer::is_dependent_type(semantic_type_id type) const -> bool
                     });
             },
             [](generic_parameter_type const&) { return true; },
+            [](type_pack_expansion const&) { return true; },
             [&](associated_type_ref const& value) { return is_dependent_type(value.owner); },
             [&](meta_type_query const& value) {
                 return std::ranges::any_of(value.arguments, [&](auto argument) {
@@ -1726,6 +1796,10 @@ auto semantic_analyzer::lower_generic_type_argument(ast_arena const& ast, type_a
     using enum generic_parameter_syntax::kind;
     if(parameter_kind == type) {
         if(auto const* type_argument = std::get_if<type_argument_type_syntax>(&argument)) {
+            if(type_argument->is_pack_expansion) {
+                report(diagnostic_kind::invalid_type_argument, type_argument->full_span, "type argument pack expansion is not valid here");
+                return semantic_type_ids::error;
+            }
             auto lowered = lower_type(ast, type_argument->type);
             auto const& kind = result.types.get(lowered);
             if(std::holds_alternative<integer_constant_type>(kind) or std::holds_alternative<generic_integer_parameter_type>(kind)) {

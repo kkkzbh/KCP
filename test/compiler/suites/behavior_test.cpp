@@ -95,9 +95,19 @@ auto read_text(std::filesystem::path const& path) -> std::string
     );
 }
 
+auto compiler_test_links_gcov() -> bool
+{
+    auto const* value = std::getenv("CP_COMPILER_TEST_LINK_GCOV");
+    return value != nullptr and std::string_view{ value } == "1";
+}
+
 auto compile(test_tools const& tools, std::vector<std::string> arguments) -> int
 {
     arguments.insert(arguments.begin(), tools.cp.string());
+    if(compiler_test_links_gcov()) {
+        arguments.emplace_back("--link-arg");
+        arguments.emplace_back("-lgcov");
+    }
     return run_status(arguments);
 }
 
@@ -337,6 +347,39 @@ auto check_emit_obj(test_tools const& tools) -> void
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "object-linked binary should return 42");
 }
 
+auto check_cli_option_surface(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("cli-options");
+    auto stdout_path = dir / "help.out";
+    auto stderr_path = dir / "error.err";
+    auto source = dir / "answer.cp";
+    auto app = dir / "answer";
+    auto mir = dir / "mir.err";
+    write_source(source, "main() -> i32 { return 42; }");
+
+    test_parser::assert_true(run_stdout({ tools.cp.string(), "--help" }, stdout_path) == 0, "cp --help should succeed");
+    test_parser::assert_true(read_text(stdout_path).contains("--emit"), "help output should describe emit mode");
+
+    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string() }, stderr_path)) == 2, "cp should reject missing inputs");
+    test_parser::assert_true(read_text(stderr_path).contains("expected at least one input file"), "missing input should explain the problem");
+
+    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), "--unknown" }, stderr_path)) == 2, "cp should reject unknown options");
+    test_parser::assert_true(read_text(stderr_path).contains("unexpected option"), "unknown option should explain the problem");
+
+    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), "--emit", "bad", source.string() }, stderr_path)) == 2, "cp should reject unknown emit kinds");
+    test_parser::assert_true(read_text(stderr_path).contains("unknown emit kind"), "bad emit kind should explain the problem");
+
+    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), "--clang" }, stderr_path)) == 2, "cp should reject missing --clang argument");
+    test_parser::assert_true(read_text(stderr_path).contains("--clang requires an argument"), "missing --clang value should explain the problem");
+
+    auto status = compile(tools, { source.string(), "-o", app.string(), "--dump-mir" });
+    test_parser::assert_true(status == 0, "cp should compile while dumping MIR");
+    test_parser::assert_true(std::filesystem::exists(app), "dump MIR compile should still write the binary");
+
+    test_parser::assert_true(run_stderr({ tools.cp.string(), source.string(), "--emit", "ll", "--dump-mir", "-o", (dir / "answer.ll").string() }, mir) == 0, "cp should dump MIR on stderr");
+    test_parser::assert_true(read_text(mir).contains("func main"), "dump MIR output should include main");
+}
+
 auto check_multi_input(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("multi");
@@ -369,6 +412,27 @@ auto check_error_rejects_output(test_tools const& tools) -> void
     auto extern_status = compile(tools, { extern_source.string(), "-o", extern_app.string() });
     test_parser::assert_true(extern_status != 0, "extern C inferred return should make cp fail");
     test_parser::assert_true(not std::filesystem::exists(extern_app), "failed extern C compile should not produce output");
+
+    auto empty_pack_unit_source = dir / "empty_pack_unit_value.cp";
+    auto empty_pack_unit_app = dir / "empty_pack_unit_value";
+    write_source(
+        empty_pack_unit_source,
+        R"(first<T...>(values: T...)
+{
+    template fo)" "r" R"( (let value : values...) {
+        return value;
+    }
+}
+
+main()
+{
+    let value = first();
+})"
+    );
+
+    auto empty_pack_unit_status = compile(tools, { empty_pack_unit_source.string(), "-o", empty_pack_unit_app.string() });
+    test_parser::assert_true(empty_pack_unit_status != 0, "empty pack unit value should make cp fail before codegen");
+    test_parser::assert_true(not std::filesystem::exists(empty_pack_unit_app), "failed empty pack unit value compile should not produce output");
 }
 
 auto check_keep_ll(test_tools const& tools) -> void
@@ -1618,15 +1682,180 @@ sum_ref<T...>(values: T const&...) -> i32
     return total;
 }
 
+first_nonzero<T...>(values: T...)
+{
+    template fo)" "r" R"( (let value : values...) {
+        if(value != 0) {
+            return value;
+        }
+    }
+    return 0;
+}
+
 main() -> i32
 {
-    return sum(10, 20, 9) + type_count<i32, bool, i32>() + empty() + sum_ref(0);
+    return sum(10, 20, 9) + type_count<i32, bool, i32>() + empty() + sum_ref(0) + first_nonzero(0, 42) - 42;
 })"
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status == 0, "cp should compile parameter pack binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "parameter pack binary should return 42");
+}
+
+auto check_variant_match_parameter_pack_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("variant-match-parameter-pack");
+    auto source = dir / "variant_match_pack.cp";
+    auto app = dir / "variant_match_pack";
+    write_source(
+        source,
+        R"(variant calc_result<T> {
+    empty;
+    total(T);
+}
+
+sum<T...>(values: T...) -> calc_result<i32>
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + value;
+    }
+    return calc_result<i32>::total(total);
+}
+
+main() -> i32
+{
+    return match sum(10, 20, 12) {
+        .total(value) => value,
+        .empty => 0,
+    };
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile variant match parameter pack binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "variant match parameter pack binary should return 42");
+}
+
+auto check_forward_parameter_pack_inferred_return_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("forward-parameter-pack-inferred-return");
+    auto source = dir / "forward_pack_return.cp";
+    auto app = dir / "forward_pack_return";
+    write_source(
+        source,
+        R"(main() -> i32
+{
+    return type_count<i32, bool, i32>() * 10 + first_nonzero(0, 12);
+}
+
+type_count<T...>()
+{
+    let total = 0;
+    template fo)" "r" R"( (type U : T...) {
+        type current = U;
+        total = total + 1;
+    }
+    return total;
+}
+
+first_nonzero<T...>(values: T...)
+{
+    template fo)" "r" R"( (let value : values...) {
+        if(value != 0) {
+            return value;
+        }
+    }
+    return 0;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile forward parameter-pack inferred-return binary");
+    test_parser::assert_true(
+        exit_code(run_status({ app.string() })) == 42,
+        "forward parameter-pack inferred-return binary should return 42"
+    );
+}
+
+auto check_variant_match_type_pack_inferred_return_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("variant-match-type-pack-inferred-return");
+    auto source = dir / "variant_match_type_pack_return.cp";
+    auto app = dir / "variant_match_type_pack_return";
+    write_source(
+        source,
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+first_i32<T...>()
+{
+    template fo)" "r" R"( (type U : T...) {
+        template if(U == i32) {
+            return 20;
+        }
+    }
+    return 0;
+}
+
+first_some<T...>(values: optional<T>...)
+{
+    template fo)" "r" R"( (let value : values...) {
+        let current = match value {
+            .some(item) => item,
+            .none => 0,
+        };
+        if(current != 0) {
+            return current;
+        }
+    }
+    return 0;
+}
+
+main() -> i32
+{
+    return first_i32<bool, i32>() + first_some(optional<i32>::none, optional<i32>::some(22));
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile variant match type-pack inferred-return binary");
+    test_parser::assert_true(
+        exit_code(run_status({ app.string() })) == 42,
+        "variant match type-pack inferred-return binary should return 42"
+    );
+}
+
+auto check_callable_type_pack_return_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("callable-type-pack-return");
+    auto source = dir / "callable_type_pack_return.cp";
+    auto app = dir / "callable_type_pack_return";
+    write_source(
+        source,
+        R"(import std.meta;
+
+make<F, Args...>() -> call_result<F, Args...>
+requires F: callable<Args...>
+{
+    return 21;
+}
+
+main() -> i32
+{
+    return make<f() -> i32>() + make<f(i32, bool) -> i32, i32, bool>();
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile callable type-pack return binary");
+    test_parser::assert_true(
+        exit_code(run_status({ app.string() })) == 42,
+        "callable type-pack return binary should return 42"
+    );
 }
 
 auto check_direct_iterator_range_for_rejected_binary(test_tools const& tools) -> void
@@ -2697,6 +2926,64 @@ main() -> i32
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status == 0, "cp should compile defaulted comparison map/set binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "defaulted comparison should order map/set keys lexicographically");
+}
+
+auto check_default_compare_direct_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("default-compare-direct");
+    auto source = dir / "default_compare_direct.cp";
+    auto app = dir / "default_compare_direct";
+    write_source(
+        source,
+        R"(import std;
+
+enum marker : u8 {
+    alpha = 1;
+    beta = 2;
+}
+
+struct key {
+    group: i32;
+    marker: marker;
+}
+
+impl key {
+    operator <=>(self const&, rhs: this const&) -> weak_ordering = default;
+}
+
+main() -> i32
+{
+    let low = key{ .group = 1, .marker = marker::alpha };
+    let high = key{ .group = 1, .marker = marker::beta };
+    let later = key{ .group = 2, .marker = marker::alpha };
+    if(not is_less(marker::alpha <=> marker::beta)) {
+        return 1;
+    }
+    if(not is_greater(marker::beta <=> marker::alpha)) {
+        return 2;
+    }
+    if(not is_equivalent(marker::alpha <=> marker::alpha)) {
+        return 3;
+    }
+    if(not is_less(low <=> high)) {
+        return 4;
+    }
+    if(not is_greater(high <=> low)) {
+        return 5;
+    }
+    if(not is_less(high <=> later)) {
+        return 6;
+    }
+    if(not is_equivalent(low <=> low)) {
+        return 7;
+    }
+    return 42;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "cp should compile direct enum/defaulted comparison binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "enum and defaulted comparison should produce weak_ordering values");
 }
 
 auto check_std_map_set_btree_stress_binary(test_tools const& tools) -> void
@@ -3892,6 +4179,7 @@ auto main(int argc, char** argv) -> int
     check_first_argument_ufcs_binary(tools);
     check_emit_ll(tools);
     check_emit_obj(tools);
+    check_cli_option_surface(tools);
     check_multi_input(tools);
     check_error_rejects_output(tools);
     check_keep_ll(tools);
@@ -3931,6 +4219,10 @@ auto main(int argc, char** argv) -> int
     check_const_generic_array_binary(tools);
     check_imported_generic_function_binary(tools);
     check_parameter_pack_binary(tools);
+    check_variant_match_parameter_pack_binary(tools);
+    check_forward_parameter_pack_inferred_return_binary(tools);
+    check_variant_match_type_pack_inferred_return_binary(tools);
+    check_callable_type_pack_return_binary(tools);
     check_direct_iterator_range_for_rejected_binary(tools);
     check_string_index_binary(tools);
     check_string_iteration_binary(tools);
@@ -3950,6 +4242,7 @@ auto main(int argc, char** argv) -> int
     check_ranges_pipeline_binary(tools);
     check_std_map_set_binary(tools);
     check_default_compare_map_set_binary(tools);
+    check_default_compare_direct_binary(tools);
     check_std_map_set_btree_stress_binary(tools);
     check_compiler_lab_workload_binary(tools);
     check_compiler_lab_ll1_sets_binary(tools);

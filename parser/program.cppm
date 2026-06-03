@@ -1231,7 +1231,7 @@ auto parser::parse_concept_id() -> std::optional<concept_id_syntax>
         arguments = std::move(*parsed);
         auto const& last = arguments.back();
         if(auto const* argument = std::get_if<type_argument_type_syntax>(&last)) {
-            end = arena.span(argument->type);
+            end = argument->full_span;
         } else if(auto const* argument = std::get_if<type_argument_literal_syntax>(&last)) {
             end = argument->literal;
         } else {
@@ -2034,7 +2034,7 @@ auto parser::parse_generic_parameter() -> std::optional<generic_parameter_syntax
             return std::nullopt;
         }
         if(auto const* argument = std::get_if<type_argument_type_syntax>(&*default_argument)) {
-            end = arena.span(argument->type);
+            end = argument->full_span;
         } else if(auto const* argument = std::get_if<type_argument_literal_syntax>(&*default_argument)) {
             end = argument->literal;
         } else {

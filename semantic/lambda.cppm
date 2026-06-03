@@ -368,8 +368,10 @@ auto semantic_analyzer::check_lambda_body(lambda_expr_syntax const& node) -> sem
     };
 
     auto old_function = active_function;
+    auto old_function_context = active_function_context_index;
     auto old_self = active_self;
     active_function = node.function;
+    active_function_context_index = active_context_index;
     active_self = {};
 
     lambda_capture_stack.emplace_back(node.function);
@@ -404,6 +406,7 @@ auto semantic_analyzer::check_lambda_body(lambda_expr_syntax const& node) -> sem
     lambda_capture_stack.pop_back();
 
     active_self = old_self;
+    active_function_context_index = old_function_context;
     active_function = old_function;
 
     return build_lambda_info(node, std::move(captures), std::move(callable), false);
@@ -735,6 +738,7 @@ auto semantic_analyzer::instantiate_lambda(semantic_lambda_info const& lambda, s
     auto old_unit = active_unit;
     auto old_ast = active_ast;
     auto old_function = active_function;
+    auto old_function_context = active_function_context_index;
     auto old_substitutions = active_type_substitutions;
     auto old_pack_substitutions = active_type_pack_substitutions;
     auto old_self = active_self;
@@ -745,6 +749,7 @@ auto semantic_analyzer::instantiate_lambda(semantic_lambda_info const& lambda, s
     active_unit = &units[source.unit_index];
     active_ast = &active_unit->ast;
     active_function = source.function;
+    active_function_context_index = context_index;
     active_type_substitutions = &instance.substitutions;
     active_type_pack_substitutions = &instance.pack_substitutions;
     active_self = {};
@@ -808,6 +813,7 @@ auto semantic_analyzer::instantiate_lambda(semantic_lambda_info const& lambda, s
     active_self = old_self;
     active_type_pack_substitutions = old_pack_substitutions;
     active_type_substitutions = old_substitutions;
+    active_function_context_index = old_function_context;
     active_function = old_function;
     active_ast = old_ast;
     active_unit = old_unit;

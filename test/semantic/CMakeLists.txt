@@ -41,3 +41,4 @@ function(add_semantic_suite target_name source_name test_name)
 endfunction()
 
 add_semantic_suite(semantic_behavior_test suites/behavior_test.cpp semantic_behavior)
+add_semantic_suite(semantic_result_api_test suites/result_api_test.cpp semantic_result_api)

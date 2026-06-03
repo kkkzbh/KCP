@@ -18,46 +18,76 @@ auto semantic_analyzer::function_key(std::size_t unit_index, function_id id) con
     return return_inference_key{ unit_index, id };
 }
 
-auto semantic_analyzer::collect_type_pattern_parameters(ast_arena const& ast, type_id id) -> std::vector<std::string>
+auto has_generic_parameter(std::vector<semantic_generic_parameter> const& parameters, std::string_view name) -> bool
 {
-    auto names = std::vector<std::string>{};
-    collect_type_pattern_parameters(ast, ast.node(id), names);
-    return names;
+    return std::ranges::any_of(parameters, [&](semantic_generic_parameter const& parameter) {
+        return parameter.name == name;
+    });
 }
 
-auto semantic_analyzer::collect_type_pattern_parameters(ast_arena const& ast, type_syntax const& syntax, std::vector<std::string>& names) -> void
+auto append_generic_parameter(std::vector<semantic_generic_parameter>& parameters, std::string name, generic_parameter_syntax::kind kind) -> void
+{
+    if(not has_generic_parameter(parameters, name)) {
+        parameters.emplace_back(std::move(name), kind);
+    }
+}
+
+auto semantic_analyzer::collect_type_pattern_parameters(ast_arena const& ast, type_id id) -> std::vector<semantic_generic_parameter>
+{
+    auto parameters = std::vector<semantic_generic_parameter>{};
+    collect_type_pattern_parameters(ast, ast.node(id), parameters);
+    return parameters;
+}
+
+auto semantic_analyzer::collect_type_pattern_parameters(ast_arena const& ast, type_syntax const& syntax, std::vector<semantic_generic_parameter>& parameters) -> void
 {
     if(syntax.is_array_type) {
-        collect_type_pattern_parameters(ast, ast.node(syntax.array_element), names);
+        collect_type_pattern_parameters(ast, ast.node(syntax.array_element), parameters);
         if(auto const* length = std::get_if<type_argument_name_syntax>(&syntax.array_length)) {
             auto name = std::string{ ast_source.identifier(length->name) };
-            if(not std::ranges::contains(names, name)) {
-                names.emplace_back(std::move(name));
-            }
+            append_generic_parameter(parameters, std::move(name), generic_parameter_syntax::kind::const_usize);
         }
         return;
     }
     if(syntax.is_storage_type) {
-        collect_type_pattern_parameters(ast, ast.node(syntax.storage_element), names);
+        collect_type_pattern_parameters(ast, ast.node(syntax.storage_element), parameters);
         if(syntax.storage_length) {
             if(auto const* length = std::get_if<type_argument_name_syntax>(&*syntax.storage_length)) {
                 auto name = std::string{ ast_source.identifier(length->name) };
-                if(not std::ranges::contains(names, name)) {
-                    names.emplace_back(std::move(name));
-                }
+                append_generic_parameter(parameters, std::move(name), generic_parameter_syntax::kind::const_usize);
             }
         }
         return;
     }
     if(syntax.is_tuple_type) {
         for(auto element : syntax.tuple_elements) {
-            collect_type_pattern_parameters(ast, ast.node(element), names);
+            collect_type_pattern_parameters(ast, ast.node(element), parameters);
         }
         return;
     }
     if(syntax.is_grouped_type) {
-        collect_type_pattern_parameters(ast, ast.node(syntax.grouped_type), names);
+        collect_type_pattern_parameters(ast, ast.node(syntax.grouped_type), parameters);
         return;
+    }
+
+    auto syntax_name = std::string{ ast_source.identifier(syntax.name) };
+    auto bare_type_variable = (
+        syntax.arguments.empty()
+        and syntax.associated_names.empty()
+        and syntax.suffix_operators.empty()
+        and not syntax.is_const
+        and not syntax.is_like
+        and not syntax.is_forward
+        and not syntax.is_function_type
+        and not syntax.is_decltype
+        and syntax_name != "this"
+        and syntax_name != "array"
+        and syntax_name != "tuple"
+        and not is_builtin_name(syntax_name)
+        and not resolve_type_symbol(active_unit_index, syntax_name)
+    );
+    if(bare_type_variable) {
+        append_generic_parameter(parameters, std::move(syntax_name), generic_parameter_syntax::kind::type);
     }
 
     for(auto const& argument : syntax.arguments) {
@@ -67,25 +97,44 @@ auto semantic_analyzer::collect_type_pattern_parameters(ast_arena const& ast, ty
 
         auto const& type = ast.node(std::get<type_argument_type_syntax>(argument).type);
         auto name = std::string{ ast_source.identifier(type.name) };
-        auto bare_type_variable = (
+        auto bare_argument_type_variable = (
             type.arguments.empty()
             and type.associated_names.empty()
             and type.suffix_operators.empty()
             and not type.is_const
+            and not type.is_like
+            and not type.is_forward
             and not type.is_function_type
             and not type.is_decltype
+            and not type.is_array_type
             and not type.is_storage_type
+            and not type.is_tuple_type
+            and not type.is_grouped_type
             and name != "this"
             and name != "array"
             and name != "tuple"
             and not is_builtin_name(name)
             and not resolve_type_symbol(active_unit_index, name)
         );
-        if(bare_type_variable and not std::ranges::contains(names, name)) {
-            names.emplace_back(std::move(name));
+        if(bare_argument_type_variable) {
+            append_generic_parameter(parameters, std::move(name), generic_parameter_syntax::kind::type);
         }
-        collect_type_pattern_parameters(ast, type, names);
+        collect_type_pattern_parameters(ast, type, parameters);
     }
+}
+
+auto semantic_analyzer::generic_parameter_names(std::vector<semantic_generic_parameter> const& parameters) const -> std::vector<std::string>
+{
+    return parameters
+        | std::views::transform([](semantic_generic_parameter const& parameter) { return parameter.name; })
+        | std::ranges::to<std::vector<std::string>>();
+}
+
+auto semantic_analyzer::generic_parameter_kinds(std::vector<semantic_generic_parameter> const& parameters) const -> std::vector<generic_parameter_syntax::kind>
+{
+    return parameters
+        | std::views::transform([](semantic_generic_parameter const& parameter) { return parameter.parameter_kind; })
+        | std::ranges::to<std::vector<generic_parameter_syntax::kind>>();
 }
 
 auto semantic_analyzer::bind_active_generic_parameters(std::vector<std::string> const& names) -> void
@@ -96,6 +145,18 @@ auto semantic_analyzer::bind_active_generic_parameters(std::vector<std::string> 
         active_generic_parameters.emplace(
             names[index],
             result.types.intern(generic_parameter_type{ .index = static_cast<std::uint32_t>(index) })
+        );
+    }
+}
+
+auto semantic_analyzer::bind_active_generic_parameters(std::vector<semantic_generic_parameter> const& parameters) -> void
+{
+    active_generic_parameters.clear();
+    active_generic_parameter_packs.clear();
+    for(auto index = 0uz; index < parameters.size(); ++index) {
+        active_generic_parameters.emplace(
+            parameters[index].name,
+            generic_parameter_type_for(static_cast<std::uint32_t>(index), parameters[index].parameter_kind)
         );
     }
 }
@@ -305,7 +366,11 @@ auto semantic_analyzer::explicit_type_arguments(ast_arena const& ast, call_expr_
     arguments.reserve(node.type_arguments.size());
     for(auto const& argument : node.type_arguments) {
         if(auto const* type = std::get_if<type_argument_type_syntax>(&argument)) {
-            arguments.emplace_back(lower_type(ast, type->type));
+            if(type->is_pack_expansion) {
+                append_type_pack_expansion_argument(ast, *type, node.full_span, arguments);
+            } else {
+                arguments.emplace_back(lower_type(ast, type->type));
+            }
         } else if(auto const* literal = std::get_if<type_argument_literal_syntax>(&argument)) {
             arguments.emplace_back(result.types.intern(integer_constant_type {
                 .value = parse_integer_literal(ast_source.slice(literal->literal)),
@@ -647,6 +712,7 @@ auto semantic_analyzer::validate_function_pack_shape(std::size_t unit_index, fun
     }
 
     auto seen_value_pack = false;
+    auto value_pack_span = std::optional<source_span>{};
     for(auto index = 0uz; index < function.parameters.size(); ++index) {
         auto const& parameter = function.parameters[index];
         if(parameter.is_self_receiver and index != 0uz) {
@@ -659,6 +725,9 @@ auto semantic_analyzer::validate_function_pack_shape(std::size_t unit_index, fun
         if(not parameter.is_pack) {
             continue;
         }
+        if(not value_pack_span) {
+            value_pack_span = parameter.full_span;
+        }
         if(seen_value_pack or index + 1uz != function.parameters.size()) {
             report(
                 diagnostic_kind::invalid_type_argument,
@@ -667,6 +736,26 @@ auto semantic_analyzer::validate_function_pack_shape(std::size_t unit_index, fun
             );
         }
         seen_value_pack = true;
+    }
+    if(value_pack_span and not seen_generic_pack) {
+        report(
+            diagnostic_kind::invalid_type_argument,
+            *value_pack_span,
+            "value parameter pack requires a type parameter pack"
+        );
+    }
+}
+
+auto semantic_analyzer::validate_non_function_generic_parameter_packs(std::span<generic_parameter_syntax const> parameters, std::string_view owner_kind) -> void
+{
+    for(auto const& parameter : parameters) {
+        if(parameter.is_pack) {
+            report(
+                diagnostic_kind::invalid_type_argument,
+                parameter.full_span,
+                std::format("{} generic parameter pack is not supported", owner_kind)
+            );
+        }
     }
 }
 
@@ -897,6 +986,10 @@ auto semantic_analyzer::substitute_type_for_instance(semantic_type_id type, std:
                 }
                 return semantic_type_ids::error;
             },
+            [&](type_pack_expansion const&) {
+                report(diagnostic_kind::invalid_type_argument, span, "type argument pack expansion is only valid in an argument list");
+                return semantic_type_ids::error;
+            },
             [&](associated_type_ref const& value) {
                 auto owner = substitute_type_for_instance(value.owner, pack_index, type_arguments, pack_element, span);
                 if(auto found = associated_type(read_type(owner), value.name)) {
@@ -911,12 +1004,29 @@ auto semantic_analyzer::substitute_type_for_instance(semantic_type_id type, std:
                 return semantic_type_ids::error;
             },
             [&](meta_type_query const& value) {
-                auto substituted = (
-                    value.arguments
-                    | std::views::transform([&](auto argument) {
-                        return substitute_type_for_instance(argument, pack_index, type_arguments, pack_element, span);
-                    }) | std::ranges::to<std::vector<semantic_type_id>>()
-                );
+                auto substituted = std::vector<semantic_type_id>{};
+                substituted.reserve(value.arguments.size());
+                for(auto argument : value.arguments) {
+                    if(auto const* expansion = std::get_if<type_pack_expansion>(&result.types.get(argument))) {
+                        auto const* generic = std::get_if<generic_parameter_type>(&result.types.get(expansion->pack));
+                        if(generic != nullptr and pack_index and generic->index == *pack_index) {
+                            if(pack_element) {
+                                substituted.emplace_back(*pack_element);
+                            } else {
+                                substituted.insert(
+                                    substituted.end(),
+                                    type_arguments.begin() + static_cast<std::ptrdiff_t>(*pack_index),
+                                    type_arguments.end()
+                                );
+                            }
+                            continue;
+                        }
+                        report(diagnostic_kind::invalid_type_argument, span, "type argument pack expansion cannot be substituted");
+                        substituted.emplace_back(semantic_type_ids::error);
+                    } else {
+                        substituted.emplace_back(substitute_type_for_instance(argument, pack_index, type_arguments, pack_element, span));
+                    }
+                }
                 return evaluate_meta_type_query(value.kind, std::move(substituted), span);
             },
             [&](integer_constant_type const&) { return type; },

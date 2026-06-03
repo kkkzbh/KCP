@@ -119,6 +119,13 @@ export struct generic_parameter_type
     std::uint32_t index{};
 };
 
+export struct type_pack_expansion
+{
+    auto constexpr operator==(type_pack_expansion const&) const -> bool = default;
+
+    semantic_type_id pack{};
+};
+
 export struct associated_type_ref
 {
     auto constexpr operator==(associated_type_ref const&) const -> bool = default;
@@ -203,6 +210,7 @@ export using semantic_type_kind = std::variant <
     pointer_type,
     function_type,
     generic_parameter_type,
+    type_pack_expansion,
     associated_type_ref,
     meta_type_query,
     integer_constant_type,

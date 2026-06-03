@@ -292,7 +292,7 @@ impl partial_eq<box<i32>> for box<i32> {
 requires T...: display
 {
     let total = 0;
-    template fo)" "r" R"( (let value : values...) {
+    template fo)" "r" R"( (const ref value : values...) {
         total = total + value;
     }
     template fo)" "r" R"( (type U : T...) {
@@ -314,12 +314,65 @@ requires T...: display
     auto const& pack_body = function_body(pack_parsed, pack_function);
     auto const& value_template_for = as<template_for_statement_syntax>(pack_parsed.ast.node(pack_body.statements[1]));
     test_parser::assert_true(
-        value_template_for.binding_kind == template_for_binding_kind::let_binding,
+        value_template_for.binding_kind == template_for_binding_kind::const_binding,
         "template for value binding should preserve binding kind");
+    test_parser::assert_true(value_template_for.is_ref, "template for value binding should preserve ref marker");
     auto const& type_template_for = as<template_for_statement_syntax>(pack_parsed.ast.node(pack_body.statements[2]));
     test_parser::assert_true(
         type_template_for.binding_kind == template_for_binding_kind::type_binding,
         "template for type binding should preserve binding kind");
+
+    auto const pack_type_argument_source = sources.add_source (
+        "api_pack_type_argument.cp",
+        R"(import std.meta;
+
+make<F, Args...>() -> call_result<F, Args...>
+requires F: callable<Args...>
+{
+    return 0;
+}
+
+main() -> i32
+{
+    return make<f(i32, bool) -> i32, i32, bool>();
+})"
+    );
+    auto pack_type_argument_parsed = parse_source(sources, pack_type_argument_source);
+    test_parser::assert_true(pack_type_argument_parsed.accepted, "type argument pack expansion source should parse");
+    auto const& pack_type_argument_function = first_function(pack_type_argument_parsed);
+    auto const& pack_return = pack_type_argument_parsed.ast.node(*pack_type_argument_function.return_type);
+    test_parser::assert_true(pack_return.arguments.size() == 2, "call_result should preserve callable and expanded pack arguments");
+    auto const& return_pack_argument = as<type_argument_type_syntax>(pack_return.arguments.back());
+    test_parser::assert_true(return_pack_argument.is_pack_expansion, "return type should preserve type argument pack expansion");
+    auto const& callable_bound = as<concept_type_bound_constraint_syntax>(
+        pack_type_argument_function.requires_clause->constraints.front()
+    ).concept_bounds.front();
+    auto const& bound_pack_argument = as<type_argument_type_syntax>(callable_bound.arguments.front());
+    test_parser::assert_true(bound_pack_argument.is_pack_expansion, "concept bound should preserve type argument pack expansion");
+
+    auto const template_if_source = sources.add_source (
+        "api_template_if.cp",
+        R"(select<T>(value: T) -> i32
+{
+    template if(T == i32) {
+        return 1;
+    } else template if(T == bool) {
+        return 2;
+    } else {
+        return 3;
+    }
+})");
+    auto template_if_parsed = parse_source(sources, template_if_source);
+    test_parser::assert_true(template_if_parsed.accepted, "template if source should parse");
+    auto const& template_if_function = first_function(template_if_parsed);
+    auto const& template_if_body = function_body(template_if_parsed, template_if_function);
+    auto const& template_if = as<template_if_statement_syntax>(template_if_parsed.ast.node(template_if_body.statements.front()));
+    test_parser::assert_true(template_if.branches.size() == 2, "template if should preserve ordered conditional branches");
+    test_parser::assert_true(template_if.else_branch != std::nullopt, "template if should preserve final else branch");
+    test_parser::assert_true(template_if.conditions.size() == 2, "template if should preserve branch conditions");
+    test_parser::assert_true(
+        template_if.conditions[template_if.branches.front().condition].kind == template_if_condition_kind::type_equality,
+        "template if should preserve type equality condition");
 
     auto const bad_concept_impl_source = sources.add_source (
         "api_bad_concept_impl.cp",
@@ -402,6 +455,43 @@ requires T...: display
     auto const& contextual_static = declaration(static_parsed, static_body.statements[2]);
     test_parser::assert_true(not contextual_static.is_static, "static should remain a valid declaration name");
     test_parser::assert_true(ast_source.identifier(contextual_static.name) == "static", "contextual static name should be preserved");
+
+    auto const for_binding_source = sources.add_source (
+        "api_for_bindings.cp",
+        R"(main()
+{
+    for(let value : [1]) {
+    }
+    for(const value : [1]) {
+    }
+    for(let ref value : [1]) {
+    }
+    for(const ref value : [1]) {
+    }
+})");
+    auto for_bindings = parse_source(sources, for_binding_source);
+    test_parser::assert_true(for_bindings.accepted, "range-for declaration bindings should parse");
+    auto const& for_body = function_body(for_bindings, first_function(for_bindings));
+    test_parser::assert_true(for_body.statements.size() == 4, "range-for binding fixture should keep all statements");
+    auto const& let_value = as<for_statement_syntax>(for_bindings.ast.node(for_body.statements[0]));
+    auto const& const_value = as<for_statement_syntax>(for_bindings.ast.node(for_body.statements[1]));
+    auto const& let_ref = as<for_statement_syntax>(for_bindings.ast.node(for_body.statements[2]));
+    auto const& const_ref = as<for_statement_syntax>(for_bindings.ast.node(for_body.statements[3]));
+    test_parser::assert_true(not let_value.is_const and not let_value.is_ref, "for(let x : range) should be by-value mutable binding");
+    test_parser::assert_true(const_value.is_const and not const_value.is_ref, "for(const x : range) should be by-value const binding");
+    test_parser::assert_true(not let_ref.is_const and let_ref.is_ref, "for(let ref x : range) should preserve ref binding");
+    test_parser::assert_true(const_ref.is_const and const_ref.is_ref, "for(const ref x : range) should preserve const ref binding");
+
+    auto invalid_ref_for = parse_source(
+        sources,
+        sources.add_source("api_bad_for_ref.cp", "main() { for(ref value : [1]) { } }")
+    );
+    test_parser::assert_true(not invalid_ref_for.accepted, "for(ref x : range) should not parse without let or const");
+    auto invalid_const_order_for = parse_source(
+        sources,
+        sources.add_source("api_bad_for_const_order.cp", "main() { for(let const value : [1]) { } }")
+    );
+    test_parser::assert_true(not invalid_const_order_for.accepted, "for(let const x : range) should not parse");
 
     auto const grouped_source = sources.add_source (
         "api_grouped_type.cp",
@@ -976,6 +1066,25 @@ impl vec2 {
         postfix_decrement.overload_operator == overload_operator_kind::postfix_minus_minus,
         "impl operator postfix -- should record postfix decrement overload kind");
 
+    auto const default_operator_source = sources.add_source(
+        "api_default_operator.cp",
+        R"(struct item {
+    value: i32;
+}
+
+impl item {
+    operator <=>(self const&, rhs: this const&) -> weak_ordering = default;
+})"
+    );
+    auto default_operator = parse_source(sources, default_operator_source);
+    test_parser::assert_true(default_operator.accepted, "defaulted operator <=> source should parse");
+    auto const& default_impl = default_operator.ast.node(default_operator.root->impls.front());
+    auto const& default_compare = default_operator.ast.node(default_impl.functions.front());
+    test_parser::assert_true(default_compare.defaulted, "defaulted operator should record default marker");
+    test_parser::assert_true(
+        default_compare.overload_operator == overload_operator_kind::spaceship,
+        "defaulted operator should record spaceship overload kind");
+
     auto const bare_update_operator_source = sources.add_source (
         "api_bare_update_operator.cp",
         R"(operator ++(value: i32) -> i32
@@ -994,6 +1103,47 @@ operator --(value: i32) -> i32
     test_parser::assert_true(
         not bare_update_operators.diagnostics.empty(),
         "bare update operator declarations should emit parser diagnostics");
+
+    auto const operator_surface_source = sources.add_source (
+        "api_operator_surface.cp",
+        R"(struct bits {
+    value: i32;
+}
+
+operator -(left: bits, right: bits) -> bits { return left; }
+operator +(left: bits, right: bits) -> bits { return left; }
+operator *(left: bits, right: bits) -> bits { return left; }
+operator /(left: bits, right: bits) -> bits { return left; }
+operator %(left: bits, right: bits) -> bits { return left; }
+operator &(left: bits, right: bits) -> bits { return left; }
+operator |(left: bits, right: bits) -> bits { return left; }
+operator ^(left: bits, right: bits) -> bits { return left; }
+operator <<(left: bits, count: i32) -> bits { return left; }
+operator >>(left: bits, count: i32) -> bits { return left; }
+operator ~(value: bits) -> bits { return value; }
+operator ==(left: bits, right: bits) -> bool { return false; }
+operator <=>(left: bits, right: bits) -> i32 { return 0; }
+operator !=(left: bits, right: bits) -> bool { return false; }
+operator <(left: bits, right: bits) -> bool { return false; }
+operator <=(left: bits, right: bits) -> bool { return false; }
+operator >(left: bits, right: bits) -> bool { return false; }
+operator >=(left: bits, right: bits) -> bool { return false; }
+operator =(left: bits&, right: bits) { }
+operator +=(left: bits&, right: bits) { }
+operator -=(left: bits&, right: bits) { }
+operator *=(left: bits&, right: bits) { }
+operator /=(left: bits&, right: bits) { }
+operator %=(left: bits&, right: bits) { }
+operator &=(left: bits&, right: bits) { }
+operator |=(left: bits&, right: bits) { }
+operator ^=(left: bits&, right: bits) { }
+operator <<=(left: bits&, count: i32) { }
+operator >>=(left: bits&, count: i32) { }
+operator [](value: bits, index: i32) -> i32 { return value.value; }
+operator ()(value: bits) -> i32 { return value.value; })");
+    auto operator_surface = parse_source(sources, operator_surface_source);
+    test_parser::assert_true(operator_surface.accepted, "operator declaration surface should parse");
+    test_parser::assert_true(operator_surface.root->functions.size() == 31uz, "operator surface should record every declaration");
 
     auto const default_parameter_source = sources.add_source (
         "api_default_parameter.cp",
@@ -1134,6 +1284,108 @@ main()
     test_parser::assert_true(
         storage_syntax.ast.node(single_initializer.type).is_storage_type,
         "storage T{} should parse as a storage typed initializer");
+
+    auto expect_rejected = [&](std::string_view name, std::string text) {
+        auto parsed = parse_source(sources, sources.add_source(std::string{name}, std::move(text)));
+        test_parser::assert_true(not parsed.accepted, std::format("{} should be rejected by the parser", name));
+        test_parser::assert_true(not parsed.diagnostics.empty(), std::format("{} should emit parser diagnostics", name));
+    };
+    expect_rejected("api_export_impl_rejected.cp", "export impl item { }");
+    expect_rejected("api_struct_missing_name_rejected.cp", "struct { value: i32; }");
+    expect_rejected("api_enum_missing_value_rejected.cp", "enum marker { value = ; }");
+    expect_rejected("api_variant_empty_payload_rejected.cp", "variant result { item(); }");
+    expect_rejected("api_concept_bad_parameter_rejected.cp", "concept cursor { next(,) -> i32; }");
+    expect_rejected("api_impl_missing_destructor_name_rejected.cp", "struct item { value: i32; } impl item { ~() { } }");
+    expect_rejected("api_function_missing_parameter_rejected.cp", "main(,) { }");
+    expect_rejected("api_declaration_missing_name_rejected.cp", "main() { let : i32 = 1; }");
+    expect_rejected("api_if_missing_condition_rejected.cp", "main() { if( { return; } }");
+    expect_rejected("api_while_missing_condition_rejected.cp", "main() { while) { return; } }");
+    expect_rejected("api_do_while_missing_condition_rejected.cp", "main() { do { return; } while(; }");
+    expect_rejected("api_for_missing_name_rejected.cp", "main() { for(let : values) { return; } }");
+    expect_rejected("api_template_for_missing_colon_rejected.cp", "main() { template for(let value values) { return; } }");
+    expect_rejected("api_template_if_missing_rhs_rejected.cp", "main() { template if(T ==) { return; } }");
+    expect_rejected("api_match_bad_binding_rejected.cp", "main() { match value { .some( => 1, } }");
+    expect_rejected("api_storage_missing_element_rejected.cp", "main() { let value: storage ; }");
+    expect_rejected("api_function_type_trailing_comma_rejected.cp", "main() { let callback: f(i32,) -> i32 = add; }");
+    expect_rejected("api_new_missing_type_rejected.cp", "main() { let value = new ; }");
+    expect_rejected("api_field_initializer_missing_name_rejected.cp", "main() { let value = point{ . = 1 }; }");
+
+    auto const unexpected_top_level_tokens = std::initializer_list<std::pair<std::string_view, std::string_view>> {
+        { "api_unexpected_integer_rejected.cp", "1" },
+        { "api_unexpected_float_rejected.cp", "1.0" },
+        { "api_unexpected_char_rejected.cp", "'x'" },
+        { "api_unexpected_string_rejected.cp", "\"text\"" },
+        { "api_unexpected_true_rejected.cp", "true" },
+        { "api_unexpected_false_rejected.cp", "false" },
+        { "api_unexpected_nullptr_rejected.cp", "nullptr" },
+        { "api_unexpected_and_rejected.cp", "and" },
+        { "api_unexpected_or_rejected.cp", "or" },
+        { "api_unexpected_not_rejected.cp", "not" },
+        { "api_unexpected_module_rejected.cp", "module" },
+        { "api_unexpected_export_rejected.cp", "export" },
+        { "api_unexpected_if_rejected.cp", "if" },
+        { "api_unexpected_else_rejected.cp", "else" },
+        { "api_unexpected_while_rejected.cp", "while" },
+        { "api_unexpected_do_rejected.cp", "do" },
+        { "api_unexpected_for_rejected.cp", "for" },
+        { "api_unexpected_return_rejected.cp", "return" },
+        { "api_unexpected_break_rejected.cp", "break" },
+        { "api_unexpected_continue_rejected.cp", "continue" },
+        { "api_unexpected_let_rejected.cp", "let" },
+        { "api_unexpected_const_rejected.cp", "const" },
+        { "api_unexpected_static_rejected.cp", "static" },
+        { "api_unexpected_match_rejected.cp", "match" },
+        { "api_unexpected_requires_rejected.cp", "requires" },
+        { "api_unexpected_new_rejected.cp", "new" },
+        { "api_unexpected_delete_rejected.cp", "delete" },
+        { "api_unexpected_l_brace_rejected.cp", "{" },
+        { "api_unexpected_r_brace_rejected.cp", "}" },
+        { "api_unexpected_l_paren_rejected.cp", "(" },
+        { "api_unexpected_r_paren_rejected.cp", ")" },
+        { "api_unexpected_l_bracket_rejected.cp", "[" },
+        { "api_unexpected_r_bracket_rejected.cp", "]" },
+        { "api_unexpected_comma_rejected.cp", "," },
+        { "api_unexpected_colon_rejected.cp", ":" },
+        { "api_unexpected_colon_colon_rejected.cp", "::" },
+        { "api_unexpected_dot_rejected.cp", "." },
+        { "api_unexpected_arrow_rejected.cp", "->" },
+        { "api_unexpected_plus_rejected.cp", "+" },
+        { "api_unexpected_minus_rejected.cp", "-" },
+        { "api_unexpected_star_rejected.cp", "*" },
+        { "api_unexpected_slash_rejected.cp", "/" },
+        { "api_unexpected_percent_rejected.cp", "%" },
+        { "api_unexpected_amp_rejected.cp", "&" },
+        { "api_unexpected_pipe_rejected.cp", "|" },
+        { "api_unexpected_caret_rejected.cp", "^" },
+        { "api_unexpected_tilde_rejected.cp", "~" },
+        { "api_unexpected_equal_equal_rejected.cp", "==" },
+        { "api_unexpected_bang_equal_rejected.cp", "!=" },
+        { "api_unexpected_bang_rejected.cp", "!" },
+        { "api_unexpected_less_rejected.cp", "<" },
+        { "api_unexpected_less_equal_rejected.cp", "<=" },
+        { "api_unexpected_spaceship_rejected.cp", "<=>" },
+        { "api_unexpected_greater_rejected.cp", ">" },
+        { "api_unexpected_greater_equal_rejected.cp", ">=" },
+        { "api_unexpected_equal_rejected.cp", "=" },
+        { "api_unexpected_plus_equal_rejected.cp", "+=" },
+        { "api_unexpected_minus_equal_rejected.cp", "-=" },
+        { "api_unexpected_star_equal_rejected.cp", "*=" },
+        { "api_unexpected_slash_equal_rejected.cp", "/=" },
+        { "api_unexpected_percent_equal_rejected.cp", "%=" },
+        { "api_unexpected_amp_equal_rejected.cp", "&=" },
+        { "api_unexpected_pipe_equal_rejected.cp", "|=" },
+        { "api_unexpected_caret_equal_rejected.cp", "^=" },
+        { "api_unexpected_less_less_rejected.cp", "<<" },
+        { "api_unexpected_less_less_equal_rejected.cp", "<<=" },
+        { "api_unexpected_greater_greater_rejected.cp", ">>" },
+        { "api_unexpected_greater_greater_equal_rejected.cp", ">>=" },
+        { "api_unexpected_plus_plus_rejected.cp", "++" },
+        { "api_unexpected_minus_minus_rejected.cp", "--" },
+        { "api_unexpected_question_rejected.cp", "?" },
+    };
+    for(auto const& [name, text] : unexpected_top_level_tokens) {
+        expect_rejected(name, std::string{ text });
+    }
 
     return 0;
 }

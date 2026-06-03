@@ -429,40 +429,50 @@ auto parser::looks_like_generic_call_suffix() const -> bool
         return false;
     }
 
-    auto depth = 0;
+    auto angle_depth = 0;
+    auto paren_depth = 0;
+    auto bracket_depth = 0;
     auto lookahead = 0uz;
     while(true) {
         auto kind = peek(lookahead).kind;
         if(kind == token_kind::eof) {
             return false;
         }
-        if (
-            depth > 0
-            and (
-                kind == token_kind::r_paren
-                or kind == token_kind::r_bracket
-                or kind == token_kind::r_brace
-                or kind == token_kind::semicolon
-            )
-        ) {
-            return false;
-        }
+        auto inside_group = paren_depth > 0 or bracket_depth > 0;
 
-        if(kind == token_kind::less) {
-            ++depth;
-        } else if(kind == token_kind::greater) {
-            --depth;
-        } else if(kind == token_kind::greater_greater) {
-            depth -= 2;
+        if(kind == token_kind::less and not inside_group) {
+            ++angle_depth;
+        } else if(kind == token_kind::greater and not inside_group) {
+            --angle_depth;
+        } else if(kind == token_kind::greater_greater and not inside_group) {
+            angle_depth -= 2;
         } else if(kind == token_kind::greater_greater_equal) {
+            return false;
+        } else if(kind == token_kind::l_paren) {
+            ++paren_depth;
+        } else if(kind == token_kind::r_paren) {
+            if(paren_depth == 0) {
+                return false;
+            }
+            --paren_depth;
+        } else if(kind == token_kind::l_bracket) {
+            ++bracket_depth;
+        } else if(kind == token_kind::r_bracket) {
+            if(bracket_depth == 0) {
+                return false;
+            }
+            --bracket_depth;
+        } else if(kind == token_kind::l_brace or kind == token_kind::r_brace) {
+            return false;
+        } else if(kind == token_kind::semicolon and bracket_depth == 0) {
             return false;
         }
 
         ++lookahead;
-        if(depth == 0) {
+        if(angle_depth == 0) {
             return peek(lookahead).kind == token_kind::l_paren;
         }
-        if(depth < 0) {
+        if(angle_depth < 0) {
             return false;
         }
     }

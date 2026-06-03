@@ -112,7 +112,7 @@ auto parser::parse_named_type(bool allow_associated_names) -> std::optional<type
         type.arguments = std::move(*arguments);
         auto const& last = type.arguments.back();
         if(auto const* argument = std::get_if<type_argument_type_syntax>(&last)) {
-            type.full_span = combine_spans(type.full_span, arena.span(argument->type));
+            type.full_span = combine_spans(type.full_span, argument->full_span);
         } else if(auto const* argument = std::get_if<type_argument_literal_syntax>(&last)) {
             type.full_span = combine_spans(type.full_span, std::get<type_argument_literal_syntax>(last).literal);
         } else {
@@ -454,10 +454,18 @@ auto parser::parse_type_argument() -> std::optional<type_argument_syntax>
     if(not nested) {
         return std::nullopt;
     }
+    auto full_span = arena.span(*nested);
+    auto is_pack_expansion = false;
+    if(auto ellipsis = consume_ellipsis()) {
+        full_span = combine_spans(full_span, *ellipsis);
+        is_pack_expansion = true;
+    }
 
     return type_argument_syntax {
         type_argument_type_syntax {
+            .full_span = full_span,
             .type = *nested,
+            .is_pack_expansion = is_pack_expansion,
         }
     };
 }

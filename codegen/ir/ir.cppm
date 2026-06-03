@@ -3928,6 +3928,7 @@ struct function_lowerer
                     }
                     return semantic_type_ids::error;
                 },
+                [&](type_pack_expansion const&) { return semantic_type_ids::error; },
                 [&](associated_type_ref const&) { return type; },
                 [&](meta_type_query const&) { return type; },
                 [&](integer_constant_type const&) { return type; },

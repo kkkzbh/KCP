@@ -287,7 +287,11 @@ auto semantic_analyzer::resolve_imports() -> void
                     target.insert(target.end(), symbols.begin(), symbols.end());
                     if(import.exported and state.named_module) {
                         auto& exported_operators = module_operator_exports[state.module_name][kind];
-                        exported_operators.insert(exported_operators.end(), symbols.begin(), symbols.end());
+                        for(auto symbol : symbols) {
+                            if(not std::ranges::contains(exported_operators, symbol)) {
+                                exported_operators.emplace_back(symbol);
+                            }
+                        }
                     }
                 }
             }
@@ -420,7 +424,6 @@ auto semantic_analyzer::collect_concept_declaration(std::size_t unit_index, ast_
         );
         return;
     }
-
     auto index = static_cast<std::uint32_t>(result.concepts.size());
     auto symbol = add_symbol(semantic_symbol {
         .kind = symbol_kind::concept_,
@@ -597,6 +600,7 @@ auto semantic_analyzer::collect_struct_declaration(std::size_t unit_index, ast_a
         );
         return;
     }
+    validate_non_function_generic_parameter_packs(syntax.generic_parameters, "struct");
 
     auto index = static_cast<std::uint32_t>(result.structs.size());
     auto type = result.types.intern(struct_type{ .index = index });
@@ -939,13 +943,14 @@ auto semantic_analyzer::collect_impl_declarations(std::size_t unit_index, ast_ar
 {
     active_unit_index = unit_index;
     auto const& impl = ast.node(id);
+    validate_non_function_generic_parameter_packs(impl.generic_parameters, "impl");
     auto impl_generic_parameters = impl.generic_parameters.empty()
         ? collect_type_pattern_parameters(ast, impl.type)
         : (
             impl.generic_parameters
             | std::views::transform([&](generic_parameter_syntax const& parameter) {
-                return std::string{ ast_source.identifier(parameter.name) };
-            }) | std::ranges::to<std::vector<std::string>>()
+                return semantic_generic_parameter{ std::string{ ast_source.identifier(parameter.name) }, parameter.parameter_kind };
+            }) | std::ranges::to<std::vector<semantic_generic_parameter>>()
         );
     auto old_parameters = std::move(active_generic_parameters);
     auto old_packs = std::move(active_generic_parameter_packs);
@@ -1005,7 +1010,7 @@ auto semantic_analyzer::collect_impl_declarations(std::size_t unit_index, ast_ar
     }
 }
 
-auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena const& ast, impl_syntax const& impl, semantic_type_id impl_type, std::vector<std::string> const& impl_generic_parameters, function_id id) -> void
+auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena const& ast, impl_syntax const& impl, semantic_type_id impl_type, std::vector<semantic_generic_parameter> const& impl_generic_parameters, function_id id) -> void
 {
     active_unit_index = unit_index;
     auto const& function = ast.node(id);
@@ -1041,17 +1046,14 @@ auto semantic_analyzer::collect_impl_function(std::size_t unit_index, ast_arena 
         return;
     }
 
-    auto all_generic_parameters = implicit_function_generic_names(impl_generic_parameters, function);
+    auto impl_generic_parameter_names = generic_parameter_names(impl_generic_parameters);
+    auto all_generic_parameters = implicit_function_generic_names(impl_generic_parameter_names, function);
     for(auto const& parameter : function.generic_parameters) {
         all_generic_parameters.emplace_back(ast_source.identifier(parameter.name));
     }
-    implicit_function_generic_parameters[function_key(unit_index, id)] = implicit_function_generic_names(impl_generic_parameters, function);
-    if(not impl.generic_parameters.empty()) {
-        implicit_function_generic_parameter_kinds[function_key(unit_index, id)] = (
-            impl.generic_parameters
-            | std::views::transform([](generic_parameter_syntax const& parameter) { return parameter.parameter_kind; })
-            | std::ranges::to<std::vector<generic_parameter_syntax::kind>>()
-        );
+    implicit_function_generic_parameters[function_key(unit_index, id)] = implicit_function_generic_names(impl_generic_parameter_names, function);
+    if(not impl_generic_parameters.empty()) {
+        implicit_function_generic_parameter_kinds[function_key(unit_index, id)] = generic_parameter_kinds(impl_generic_parameters);
     }
     function_impl_target_patterns[function_key(unit_index, id)] = impl_type;
     if(impl.requires_clause) {
@@ -1439,7 +1441,7 @@ auto semantic_analyzer::check_default_compare_operators() -> void
     }
 }
 
-auto semantic_analyzer::collect_impl_operator(std::size_t unit_index, ast_arena const& ast, impl_syntax const& impl, semantic_type_id impl_type, std::vector<std::string> const& impl_generic_parameters, function_id id) -> void
+auto semantic_analyzer::collect_impl_operator(std::size_t unit_index, ast_arena const& ast, impl_syntax const& impl, semantic_type_id impl_type, std::vector<semantic_generic_parameter> const& impl_generic_parameters, function_id id) -> void
 {
     active_unit_index = unit_index;
     auto const& function = ast.node(id);
@@ -1451,17 +1453,14 @@ auto semantic_analyzer::collect_impl_operator(std::size_t unit_index, ast_arena 
         return;
     }
 
-    auto all_generic_parameters = implicit_function_generic_names(impl_generic_parameters, function);
+    auto impl_generic_parameter_names = generic_parameter_names(impl_generic_parameters);
+    auto all_generic_parameters = implicit_function_generic_names(impl_generic_parameter_names, function);
     for(auto const& parameter : function.generic_parameters) {
         all_generic_parameters.emplace_back(ast_source.identifier(parameter.name));
     }
-    implicit_function_generic_parameters[function_key(unit_index, id)] = implicit_function_generic_names(impl_generic_parameters, function);
-    if(not impl.generic_parameters.empty()) {
-        implicit_function_generic_parameter_kinds[function_key(unit_index, id)] = (
-            impl.generic_parameters
-            | std::views::transform([](generic_parameter_syntax const& parameter) { return parameter.parameter_kind; })
-            | std::ranges::to<std::vector<generic_parameter_syntax::kind>>()
-        );
+    implicit_function_generic_parameters[function_key(unit_index, id)] = implicit_function_generic_names(impl_generic_parameter_names, function);
+    if(not impl_generic_parameters.empty()) {
+        implicit_function_generic_parameter_kinds[function_key(unit_index, id)] = generic_parameter_kinds(impl_generic_parameters);
     }
     function_impl_target_patterns[function_key(unit_index, id)] = impl_type;
     if(impl.requires_clause) {
@@ -1594,6 +1593,7 @@ auto semantic_analyzer::collect_concept_impl_declarations(std::size_t unit_index
 {
     active_unit_index = unit_index;
     auto const& impl = ast.node(id);
+    validate_non_function_generic_parameter_packs(impl.generic_parameters, "concept impl");
     auto concept_name = ast_source.identifier(impl.concept_name.name);
     auto concept_symbol = resolve_concept_symbol(unit_index, concept_name);
     if(not concept_symbol) {
@@ -1610,8 +1610,8 @@ auto semantic_analyzer::collect_concept_impl_declarations(std::size_t unit_index
         : (
             impl.generic_parameters
             | std::views::transform([&](generic_parameter_syntax const& parameter) {
-                return std::string{ ast_source.identifier(parameter.name) };
-            }) | std::ranges::to<std::vector<std::string>>()
+                return semantic_generic_parameter{ std::string{ ast_source.identifier(parameter.name) }, parameter.parameter_kind };
+            }) | std::ranges::to<std::vector<semantic_generic_parameter>>()
         );
     auto old_parameters = std::move(active_generic_parameters);
     auto old_packs = std::move(active_generic_parameter_packs);
@@ -1679,13 +1679,10 @@ auto semantic_analyzer::collect_concept_impl_declarations(std::size_t unit_index
 
     for(auto function_id : impl.functions) {
         auto const& function = ast.node(function_id);
-        implicit_function_generic_parameters[function_key(unit_index, function_id)] = implicit_function_generic_names(impl_generic_parameters, function);
-        if(not impl.generic_parameters.empty()) {
-            implicit_function_generic_parameter_kinds[function_key(unit_index, function_id)] = (
-                impl.generic_parameters
-                | std::views::transform([](generic_parameter_syntax const& parameter) { return parameter.parameter_kind; })
-                | std::ranges::to<std::vector<generic_parameter_syntax::kind>>()
-            );
+        auto impl_generic_parameter_names = generic_parameter_names(impl_generic_parameters);
+        implicit_function_generic_parameters[function_key(unit_index, function_id)] = implicit_function_generic_names(impl_generic_parameter_names, function);
+        if(not impl_generic_parameters.empty()) {
+            implicit_function_generic_parameter_kinds[function_key(unit_index, function_id)] = generic_parameter_kinds(impl_generic_parameters);
         }
         function_impl_target_patterns[function_key(unit_index, function_id)] = target_type;
         if(impl.requires_clause) {
@@ -1996,18 +1993,30 @@ auto semantic_analyzer::lower_concept_arguments(std::size_t unit_index, ast_aren
         auto const& parameter = concept_syntax.generic_parameters[index];
         if(parameter.is_pack) {
             for(auto argument_index = index; argument_index < concept_ref.arguments.size(); ++argument_index) {
-                arguments.emplace_back(lower_generic_type_argument(
-                    ast,
-                    concept_ref.arguments[argument_index],
-                    parameter.parameter_kind,
-                    concept_ref.full_span
-                ));
+                auto const& argument = concept_ref.arguments[argument_index];
+                if(auto const* type_argument = std::get_if<type_argument_type_syntax>(&argument); type_argument != nullptr and type_argument->is_pack_expansion) {
+                    append_type_pack_expansion_argument(ast, *type_argument, concept_ref.full_span, arguments);
+                } else {
+                    arguments.emplace_back(lower_generic_type_argument(
+                        ast,
+                        argument,
+                        parameter.parameter_kind,
+                        concept_ref.full_span
+                    ));
+                }
             }
             break;
         }
 
         auto argument = semantic_type_id{};
         if(index < concept_ref.arguments.size()) {
+            if(auto const* type_argument = std::get_if<type_argument_type_syntax>(&concept_ref.arguments[index]); type_argument != nullptr and type_argument->is_pack_expansion) {
+                report(diagnostic_kind::invalid_type_argument, type_argument->full_span, "type argument pack expansion requires a concept parameter pack");
+                argument = semantic_type_ids::error;
+                arguments.emplace_back(argument);
+                substitutions.emplace(std::string{ ast_source.identifier(parameter.name) }, argument);
+                continue;
+            }
             argument = lower_generic_type_argument(ast, concept_ref.arguments[index], parameter.parameter_kind, concept_ref.full_span);
         } else if(parameter.default_argument) {
             active_unit_index = concept_value.unit_index;
@@ -2086,7 +2095,7 @@ auto semantic_analyzer::concept_impl_applies(semantic_concept_impl const& impl, 
         if(auto names = concept_impl_generic_parameters.find(impl_index); names != concept_impl_generic_parameters.end()) {
             auto count = std::min(names->second.size(), type_arguments.size());
             for(auto index = 0uz; index < count; ++index) {
-                substitutions.emplace(names->second[index], type_arguments[index]);
+                substitutions.emplace(names->second[index].name, type_arguments[index]);
             }
         }
         auto const& ast = units[impl.unit_index].ast;
@@ -2213,6 +2222,7 @@ auto semantic_analyzer::is_mutable_object_type(semantic_type_id type) const -> b
             [](pointer_type const&) { return true; },
             [](function_type const&) { return false; },
             [](generic_parameter_type const&) { return false; },
+            [](type_pack_expansion const&) { return false; },
             [](associated_type_ref const&) { return false; },
             [](meta_type_query const&) { return false; },
             [](integer_constant_type const&) { return false; },

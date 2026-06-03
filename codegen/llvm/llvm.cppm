@@ -81,6 +81,9 @@ struct llvm_type_lowerer
             [&](generic_parameter_type const&) -> llvm::Type* {
                 return llvm::Type::getVoidTy(context);
             },
+            [&](type_pack_expansion const&) -> llvm::Type* {
+                return llvm::Type::getVoidTy(context);
+            },
             [&](associated_type_ref const&) -> llvm::Type* {
                 return llvm::Type::getVoidTy(context);
             },
@@ -137,6 +140,7 @@ struct llvm_type_lowerer
                 return llvm::Type::getVoidTy(context);
             },
             [&](associated_type_ref const&) -> llvm::Type* { return llvm::Type::getVoidTy(context); },
+            [&](type_pack_expansion const&) -> llvm::Type* { return llvm::Type::getVoidTy(context); },
             [&](meta_type_query const&) -> llvm::Type* { return llvm::Type::getVoidTy(context); },
             [&](array_type const& type) -> llvm::Type* {
                 return llvm::ArrayType::get(lower_substituted(type.element, arguments), array_length_value(substitute_integer(type.length, arguments)));
@@ -216,6 +220,7 @@ struct llvm_type_lowerer
                 return id;
             },
             [&](associated_type_ref const&) { return id; },
+            [&](type_pack_expansion const&) { return semantic_type_ids::error; },
             [&](meta_type_query const&) { return id; },
             [&](integer_constant_type const&) { return id; },
             [&](generic_integer_parameter_type const& parameter) {
@@ -846,6 +851,7 @@ struct llvm_module_lowerer
                 [](pointer_type const&) -> std::uint64_t { return 8; },
                 [](function_type const&) -> std::uint64_t { return 8; },
                 [](generic_parameter_type const&) -> std::uint64_t { return 0; },
+                [](type_pack_expansion const&) -> std::uint64_t { return 0; },
                 [](associated_type_ref const&) -> std::uint64_t { return 0; },
                 [](meta_type_query const&) -> std::uint64_t { return 0; },
                 [](integer_constant_type const&) -> std::uint64_t { return 0; },
@@ -938,6 +944,7 @@ struct llvm_module_lowerer
                 [](pointer_type const&) -> std::uint64_t { return 8; },
                 [](function_type const&) -> std::uint64_t { return 8; },
                 [](generic_parameter_type const&) -> std::uint64_t { return 1; },
+                [](type_pack_expansion const&) -> std::uint64_t { return 1; },
                 [](associated_type_ref const&) -> std::uint64_t { return 1; },
                 [](meta_type_query const&) -> std::uint64_t { return 1; },
                 [](integer_constant_type const&) -> std::uint64_t { return 1; },

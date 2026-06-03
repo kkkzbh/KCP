@@ -2607,7 +2607,7 @@ auto semantic_analyzer::check_block_expression(ast_arena const& ast, block_expr_
 {
     push_scope();
     auto returns = return_state{};
-    auto signature_id = result.signature_of(active_unit_index, active_function);
+    auto signature_id = result.signature_of(active_function_context_index, active_unit_index, active_function);
     if(signature_id.valid()) {
         returns.declared_return = result.signatures[signature_id.value].returns;
     }

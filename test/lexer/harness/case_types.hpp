@@ -74,6 +74,7 @@ auto constexpr inline all_token_kinds = std::array {
     token_kind::kw_ref,
     token_kind::kw_move,
     token_kind::kw_like,
+    token_kind::kw_forward,
     token_kind::kw_new,
     token_kind::kw_delete,
     token_kind::l_paren,

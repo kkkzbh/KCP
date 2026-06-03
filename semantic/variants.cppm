@@ -21,6 +21,7 @@ auto semantic_analyzer::collect_variant_declaration(std::size_t unit_index, ast_
         );
         return;
     }
+    validate_non_function_generic_parameter_packs(syntax.generic_parameters, "variant");
 
     auto index = static_cast<std::uint32_t>(result.variants.size());
     auto type = result.types.intern(variant_type{ .index = index });
@@ -126,6 +127,9 @@ auto semantic_analyzer::substitute_type(semantic_type_id type, std::vector<seman
                 if(value.index < arguments.size()) {
                     return arguments[value.index];
                 }
+                return semantic_type_ids::error;
+            },
+            [](type_pack_expansion const&) {
                 return semantic_type_ids::error;
             },
             [&](associated_type_ref const& value) {

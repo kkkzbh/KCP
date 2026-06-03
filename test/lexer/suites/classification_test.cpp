@@ -47,6 +47,7 @@ auto main() -> int
             {"const", token_kind::kw_const},
             {"false", token_kind::kw_false},
             {"concept", token_kind::kw_concept},
+            {"forward", token_kind::kw_forward},
             {"delete", token_kind::kw_delete},
             {"nullptr", token_kind::kw_nullptr},
             {"while", token_kind::kw_while},

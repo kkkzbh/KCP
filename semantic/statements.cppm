@@ -38,6 +38,7 @@ auto semantic_analyzer::check_bodies() -> void
 auto semantic_analyzer::check_struct_field_defaults() -> void
 {
     auto old_context = active_context_index;
+    auto old_function_context = active_function_context_index;
     auto old_unit_index = active_unit_index;
     auto old_unit = active_unit;
     auto old_ast = active_ast;
@@ -53,6 +54,7 @@ auto semantic_analyzer::check_struct_field_defaults() -> void
     auto old_generic_parameter_packs = std::move(active_generic_parameter_packs);
 
     active_context_index = 0uz;
+    active_function_context_index = 0uz;
     active_type_substitutions = nullptr;
     active_type_pack_substitutions = nullptr;
     active_self_type = {};
@@ -103,6 +105,7 @@ auto semantic_analyzer::check_struct_field_defaults() -> void
     active_ast = old_ast;
     active_unit = old_unit;
     active_unit_index = old_unit_index;
+    active_function_context_index = old_function_context;
     active_context_index = old_context;
 }
 
@@ -130,6 +133,7 @@ auto semantic_analyzer::check_function_instance(std::size_t instance_index) -> v
 auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id id, std::size_t context_index, function_signature_id signature_id, symbol_id function_symbol, std::map<std::string, semantic_type_id> const* substitutions, std::map<std::string, std::vector<semantic_type_id>> const* pack_substitutions) -> void
 {
     auto old_context = active_context_index;
+    auto old_function_context = active_function_context_index;
     auto old_unit_index = active_unit_index;
     auto old_unit = active_unit;
     auto old_ast = active_ast;
@@ -147,6 +151,7 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
     auto old_template_for_depth = active_template_for_depth;
 
     active_context_index = context_index;
+    active_function_context_index = context_index;
     active_unit_index = unit_index;
     active_unit = &units[unit_index];
     active_ast = &active_unit->ast;
@@ -173,6 +178,7 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
         active_ast = old_ast;
         active_unit = old_unit;
         active_unit_index = old_unit_index;
+        active_function_context_index = old_function_context;
         active_context_index = old_context;
     };
 
@@ -309,6 +315,10 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
     }
 
     check_statement(function.body, returns);
+    if(returns.inferred_return and not returns.observed_return) {
+        returns.declared_return = semantic_type_ids::unit;
+        update_inferred_function_return(active_function_context_index, active_unit_index, active_function, semantic_type_ids::unit);
+    }
     finish_nrvo(id, returns);
     if(statement_can_complete_normally(function.body)) {
         if(is_never(signature.returns)) {
@@ -657,6 +667,14 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                     );
                     declared_type = semantic_type_ids::error;
                 }
+                if(not expected and is_unit(read_type(initializer.type))) {
+                    report(
+                        diagnostic_kind::type_mismatch,
+                        node.full_span,
+                        "unit expression cannot initialize a local variable"
+                    );
+                    declared_type = semantic_type_ids::error;
+                }
                 if(node.is_ref) {
                     if(node.is_static) {
                         report(
@@ -833,7 +851,7 @@ auto semantic_analyzer::check_statement(stmt_id id, return_state& returns) -> vo
                     if(not returns.observed_return) {
                         returns.observed_return = returned.type;
                         returns.declared_return = returned.type;
-                        update_inferred_function_return(active_context_index, active_unit_index, active_function, returned.type);
+                        update_inferred_function_return(active_function_context_index, active_unit_index, active_function, returned.type);
                     } else if(not can_implicitly_convert(returned, *returns.observed_return)) {
                         report(
                             diagnostic_kind::return_type_mismatch,
