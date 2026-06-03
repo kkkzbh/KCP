@@ -86,6 +86,10 @@ let first = text[0];
 
 `string` 的第一版语义：
 
+- `string{}` 构造空字符串。
+- `string{text}` 从 `str` 构造拥有副本；字符串字面量类型仍是 `str`，因此常用写法是 `string{"text"}`。
+- copy 构造和 copy 赋值做深拷贝；move 构造和 move 赋值转移底层存储，并把源对象长度置为 0。
+- `str` 不会隐式转换成 `string`，`as` 也不是构造钩子；`"text" as string` 不合法。需要拥有副本时显式写 `string{"text"}` 或 `string{some_str}`。
 - `size()` 返回有效字符数，不包含 trailing `'\0'`。
 - `capacity()` 返回可存放的有效字符数，不包含 trailing `'\0'` 预留位。
 - `data()` 返回底层连续存储指针；普通对象返回 `char*`，const 对象返回 `char const*`。
@@ -94,6 +98,8 @@ let first = text[0];
 - `as_str()` 返回借用视图 `str`，长度等于 `size()`，不拥有底层存储。
 - 下标、`front()` 和 `back()` 使用 `assert` 表达当前长度前置条件；checked 第一版失败时 panic。
 - `push_back()`、`pop_back()`、`resize(new_size, ch)`、`append(str)` 和 `clear()` 都保持 trailing `'\0'` 不变量。
+- `string` 实现 `iterable` 和 `const_iterable`，可写迭代元素为 `char&`，只读迭代元素为 `char const&`。
+- `string` 实现 `contiguous_mutable_range`，可作为标准库需要连续可写字符区间的输入。
 
 `string` 不是 `str` 的替代品：`str` 表达借用和字面量视图，`string` 表达拥有和可变缓冲区。需要传递只读文本时优先使用 `str` 参数；需要保存或修改文本时使用 `string`。
 
@@ -148,6 +154,15 @@ let many = storage [i32; 4]{};
 
 storage 类型只保证大小和对齐，不表示其中已经存在 `T` 对象。它默认初始化时不调用 `T{}`，析构时不调用 `T` 析构函数，也不支持普通数组索引。对象生命周期必须通过 `construct_at(storage.slot(...), value)` 和 `destroy_at(storage.slot(...))` 显式管理。const storage 只能取到 `T const*`，适合读取已经构造的 slot，不能用于构造或析构 slot。
 
+storage 是普通值类型，可以作为字段、局部变量、参数、返回值和泛型实参使用。可写 storage binding 支持整体赋值：
+
+```cp
+let slots = storage [i32; 2]{};
+slots = storage [i32; 2]{};
+```
+
+整体赋值只复制原始 storage 值，不为其中可能存在的对象调用赋值、构造或析构。已经在 storage slot 中手动构造对象的代码，必须在覆盖 storage 前自行维护对象生命周期。
+
 `(T1, T2)` 表示元组类型：
 
 ```cp
@@ -187,6 +202,27 @@ f*(left: i32, right: i32) -> i32
 
 函数类型参数可以只写类型，也可以写参数名。参数名由 parser 识别并保存在 AST 中，用于诊断、文档和可读性；它不参与类型等价、ABI 或重载选择。
 
+函数类型是普通类型表达式，可以出现在局部类型别名、函数返回类型、参数类型、泛型类型实参、`requires` 约束和 `std.meta` 查询中：
+
+```cp
+type unary = f(i32) -> i32;
+type result = call_result<f(i32, bool) -> i32, i32, bool>;
+
+make<F, Args...>() -> call_result<F, Args...>
+requires
+    F: callable<Args...>
+{
+    return 0;
+}
+
+main() -> i32
+{
+    return make<f(i32, bool) -> i32, i32, bool>();
+}
+```
+
+在类型实参列表里，`f(i32, bool) -> i32` 仍然按完整函数类型解析，`->` 属于函数类型的一部分，不结束外层泛型调用。`f(...) -> R` 作为类型实参只表示类型，不会创建 lambda 或函数值；需要值时仍要传入普通函数名、lambda 或闭包对象。
+
 lambda、普通函数绑定、捕获和闭包规则见 [lambda.md](lambda.md)。
 
 ### decltype 类型表达式
@@ -220,6 +256,8 @@ type R = decltype(ref x);        // i32&
 type C = decltype(const ref x);  // i32 const&
 ```
 
+`forward` 表达式也是例外：在泛型函数体内，`decltype(forward value)` 保留当前实例中 `forward value` 的引用或移动引用形态。标准库 ranges 使用它区分可写左值、const 左值和右值。
+
 规则：
 
 - `decltype(expr)` 只能出现在类型位置，例如类型别名、变量类型标注、函数返回类型、泛型实例类型实参或 `template for` body 中的类型位置。
@@ -227,6 +265,7 @@ type C = decltype(const ref x);  // i32 const&
 - `decltype(expr)` 返回表达式的静态读出类型，不保留左值、引用或可写性类别。
 - `decltype(ref expr)` 的结果是 `T&`。
 - `decltype(const ref expr)` 的结果是 `T const&`。
+- `decltype(forward name)` 的结果按当前实例的 forward 绑定类别保留引用或移动引用形态；`name` 必须是当前函数的 `forward&` 参数。
 - `self` 在成员函数体中是普通 receiver 变量，因此 `decltype(ref self)` 合法。
 - 如果 `expr` 依赖泛型参数，`decltype(expr)` 可以形成依赖类型，等实例化后再确定。
 - 不支持 C++ 的 `decltype(auto)`。
@@ -273,6 +312,31 @@ main()
 省略返回类型时，语义分析收集函数体中的所有 `return value;` 并统一出返回类型。没有任何带值 `return` 时，函数返回类型推导为内部 `unit`。
 
 返回类型推导不通过额外括号保留引用。`return (x);` 与 `return x;` 等价，都会按普通表达式读出规则推导返回类型。需要返回引用时，显式写 `return ref x;` 或 `return const ref x;`，借用表达式规则见 [ownership.md](ownership.md)。
+
+当前实现的推导规则：
+
+- 可以从当前函数之后声明的函数调用继续推导；`main() { return f(); } f() { return 1; }` 合法。
+- 已显式声明返回类型的递归函数不需要推导；`f() -> i32 { return f(); }` 合法。
+- 没有显式返回类型的直接递归或互递归函数不能只靠自身调用推出类型，会报 `cannot_infer_return_type`。
+- 多个 `return value;` 的值类型必须能统一；例如多个整数字面量可统一为 `i32`，`return 1;` 与 `return true;` 不能统一。
+- `return;` 不贡献值类型。函数中没有任何带值 `return` 时推导为 `unit`。
+- `if`、`while`、`do while`、范围 `for`、`match`、`template for` 展开体和被选中的 `template if` 分支中的 `return value;` 都参与推导。
+- 未被选中的 `template if` 分支不参与推导，也不要求其中的名字和类型有效。
+- `!` never 表达式可以流入任何返回类型；例如 `match` 的一个分支返回 `panic(...)`，其它分支返回 `i32` 时，整体可推导为 `i32`。
+- 关联函数调用和成员访问按普通语义检查后参与推导；例如 `return box::make(1);` 可以推导为 `box`。
+- `return ref x;` 和 `return const ref x;` 才能推导引用返回；普通 `return x;` 读取出值类型。
+
+泛型函数省略返回类型时，推导发生在每个具体函数实例上，而不是为泛型定义本身产生一个全局返回类型。也就是说，先确定类型实参、替换参数类型、选择 `template if` 分支并展开 `template for`，再收集该实例中的 `return value;`。固有 `impl` 或 concept `impl` 中的泛型成员函数同样按具体成员函数实例推导；`impl<T> box<T> { value_or(self const&, fallback: T) { ... } }` 在 `box<i32>` 上调用时推导的是该 `i32` 实例的返回类型。
+
+如果当前实例的返回表达式依赖另一个省略返回类型的泛型函数调用，编译器先推导被调泛型函数的具体实例返回类型，再把这个类型用于当前表达式检查。这个顺序对泛型 `variant` 的 `match` 尤其重要：被调函数可以先推导出 `choice<T>` 这样的具体 variant 类型，随后当前函数的 `match` 才能把 `.case(payload)` 绑定成替换后的 payload 类型，并用 arm 表达式继续推导当前函数返回类型。
+
+参数包相关规则：
+
+- `template for` 展开体中的 `return` 按具体展开后的语句参与推导。
+- 值参数包或类型参数包为空时，展开体执行零次，因此展开体内的 `return` 不贡献返回类型。
+- `match` 出现在 `template for` 内时，先按当前 pack 元素替换泛型 `variant` payload 类型，再按普通 `match` arm 类型统一规则推导表达式类型。
+- 同一个具体函数实例中，多个展开产生的返回类型仍必须统一；例如 `first<T...>(values: T...) { template for(let value : values...) { return value; } }` 只有在该实例所有 `value` 的读出类型能统一时才合法。
+- 泛型 lambda 当前不做返回类型推导，必须显式写 `-> R`，见 [lambda.md](lambda.md)。
 
 ### 返回值消除与目标位置初始化
 
@@ -370,6 +434,15 @@ let data: [i32; 4] = [1, 2, 3, 4];
 
 数组提供基础内建操作：下标访问、默认初始化和范围遍历。`size`、`front`、`back`、`data`、`as_slice`、`fill`、`map`、`iter` 等高层能力由标准库提供。
 
+数组是普通值类型。可写数组 binding 支持整体赋值，右侧必须能转换为完全相同的 `[T; N]`：
+
+```cp
+let values = [1, 2];
+values = [3, 4];
+```
+
+数组长度是类型的一部分，因此 `[i32; 2]` 不能整体赋值为 `[i32; 3]`。数组不会退化为指针；需要指针时显式取址或使用标准库 view/slice。
+
 元组同样暂时保持内建或编译器认识的异构聚合，因为当前用户层还不能表达 pack 字段 `fields: T...`。未来支持 pack field expansion 后，可以再考虑迁移为 compiler-recognized std type。
 
 ### 下标访问
@@ -396,6 +469,15 @@ values[1] = x + 10;
 ## 元组操作
 
 元组提供基础内建操作：字面量构造、默认初始化、编译期字段访问和简单解构声明。`size`、`front`、`back`、`get<N>`、`apply`、`map`、`zip`、`fold`、比较和 hash 等高层能力由标准库提供。
+
+元组是普通值类型。可写元组 binding 支持整体赋值，右侧必须能转换为相同 arity、逐元素兼容的元组类型：
+
+```cp
+let pair = (1, 2);
+pair = (3, 4);
+```
+
+不同长度的元组不是同一类值；`(i32, i32)` 不能整体赋值为 `(i32, i32, i32)`。
 
 ### 编译期字段访问
 
@@ -435,6 +517,7 @@ const ref (readonly_first, readonly_second) = pair;
 - 解构目标必须是元组类型。
 - 绑定个数必须和元组元素个数完全一致。
 - 每个绑定的类型由对应元素类型推导。
+- 不支持 `static` 解构声明。
 - `let` 解构产生可重新赋值的 binding；`const` 解构产生不可重新赋值的 binding。
 - 没有 `ref` 时，解构绑定是新 binding，不是引用别名。
 - 带 `ref` 时，解构要求初始化表达式是左值，并为每个元素产生引用 binding。
@@ -573,13 +656,13 @@ let item = p[0];
 
 ## 转换
 
-显式转换有两种写法：
+显式转换只有 `as` 一种写法：
 
 ```cp
 value as i32
 ```
 
-显式转换只使用 `as`。
+显式转换的完整白名单见 [cast.md](cast.md)：已可隐式转换的类型、数值互转、指针到指针、`enum` 到底层整数，以及 opaque alias 定义模块内部的底层互转。
 
 隐式转换只允许本文档明确说明的数值提升和上下文目标转换，不采用宽泛的 C++ 式隐式转换。
 
@@ -594,7 +677,9 @@ for(let value : values) {
 }
 ```
 
-范围表达式的目标语义基于 [iteration.md](iteration.md)：表达式必须实现 `iterable` 或本身实现 `iterator`，循环变量类型为对应 `iter_item`。
+范围表达式的目标语义基于 [iteration.md](iteration.md)：表达式必须是内建数组、实现 `iterable`，或在只读上下文中实现 `const_iterable`。实现 `iterator` 的游标本身不能直接作为 range-for 的范围表达式。
+
+range-for 的绑定推导与声明绑定保持同一方向：没有 `ref` 时按值绑定，`const` 只约束循环变量本身；显式 `ref` 时才保留 iterator item 的引用语义。也就是说 `for(const value : values)` 的 `value` 是 `read_type(iter_item)` 的 const 值，而 `for(const ref value : values)` 才是只读引用。
 
 `break` 和 `continue` 必须位于循环中；带 label 时，label 必须能解析到外层带标签的 `for`。
 
@@ -624,4 +709,4 @@ for(let value : values) {
 
 - 赋值左侧必须是左值。
 - 不能给 `const` binding 重新赋值。
-- 复合赋值优先查找对应 `operator +=`、`operator -=` 等；没有用户定义 operator 时，内建数值、整数等类型按内建复合赋值规则检查，用户自定义类型不自动退化为 `left = left op right`。
+- 复合赋值优先查找对应 `operator +=`、`operator -=` 等；没有用户定义 operator 时，只尝试内建二元运算再写回左侧，例如数值、整数位运算和指针加减整数。用户自定义类型不自动退化为 `left = left op right`。

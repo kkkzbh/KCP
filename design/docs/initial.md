@@ -21,6 +21,7 @@ let ref (a, b) = tuple_lvalue_initializer;
 - `ref` 声明要求初始化表达式是左值，并推导为引用类型。
 - 元组解构声明见 [type_system.md](type_system.md) 的元组操作章节。
 - 不支持未初始化局部变量声明。
+- `static` 局部声明只支持普通值 binding，不支持 `static ref` 或 `static` 解构。
 
 ```cp
 let count: i32 = 1;
@@ -35,6 +36,28 @@ let point = vec2{};
 ```
 
 裸 `{}` 不表示默认初始化。它保留给块表达式。
+
+## static 局部变量
+
+局部声明可以在 `let` / `const` 后写 `static`：
+
+```cp
+next() -> i32
+{
+    let static counter = 0;
+    counter += 1;
+    return counter;
+}
+```
+
+规则：
+
+- `let static name = expr` 创建函数内可见、跨调用保留状态的 binding。
+- 初始化表达式在运行时第一次执行到该声明时求值，之后再次执行到该声明时跳过初始化并复用已有值。
+- `const static name = expr` 也保留跨调用状态，但 binding const 仍然禁止重新赋值。
+- 当前 IR 使用一个全局存储和一个 initialized guard 表达该语义。
+- static local 不按普通局部变量作用域退出生成析构清理；需要拥有资源的 static 对象时，应由后续 runtime/global-lifetime 设计统一处理。
+- 不支持 `let static ref name = expr`、`const static ref name = expr` 或 `let static (a, b) = tuple`。
 
 ## 常量声明
 

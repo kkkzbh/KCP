@@ -151,7 +151,9 @@ requires
 
 ## 格式化输出
 
-`std.io` 第一版只提供输出，不提供标准输入。格式字符串支持 `{}` 占位，以及双左花括号 / 双右花括号输出字面量花括号。
+`std.io` 第一版只提供输出，不提供标准输入。底层输出流是 `output_stream{ fd: i32 }`，`stdout()` 使用 fd 1，`stderr()` 使用 fd 2，最终逐字符调用 runtime 的 `cp_io_write_char`。
+
+格式字符串支持 `{}` 占位，以及双左花括号 / 双右花括号输出字面量花括号。
 
 ```cp
 main() -> i32
@@ -162,7 +164,39 @@ main() -> i32
 }
 ```
 
-内置 `display` 实现覆盖 `bool`、整数、浮点、`char`、`str` 和标准库 `string`。
+公开接口：
+
+```cp
+format<T...: display>(fmt: str, values: T...) -> format_result;
+format_to<T...: display>(out: output_stream&, fmt: str, values: T...) -> display_result;
+print<T...: display>(fmt: str, values: T...) -> display_result;
+println<T...: display>(fmt: str, values: T...) -> display_result;
+eprint<T...: display>(fmt: str, values: T...) -> display_result;
+eprintln<T...: display>(fmt: str, values: T...) -> display_result;
+```
+
+`format` 返回 `format_result::ok(string)` 或 `format_result::error(format_error)`；其它输出函数返回 `display_result::ok` 或 `display_result::error(format_error)`。格式化错误不会 panic，调用者可以通过 `match` 检查。
+
+`format_error` 当前包括：
+
+- `placeholder_too_few`：格式串中还剩 `{}`，但值参数已经用完。
+- `argument_too_many`：值参数还没用完，格式串已经结束。
+- `invalid_escape`：出现单独的 `{`、`}` 或未知花括号转义。
+- `unsupported_specifier`：出现 `{:...}` 形式；第一版不支持格式说明符。
+- `output_failed`：底层输出流写入失败。
+
+不支持宽度、精度、对齐、命名参数、位置参数或自定义格式说明符。`print("a\0b")` 按 `str.len` 写出 3 个字符，不按 C string 在中间 `'\0'` 截断。
+
+内置 `display` 实现覆盖 `bool`、所有内建整数、`f32` / `f64`、`char`、`str` 和标准库 `string`。浮点当前固定输出小数点后 6 位。用户类型需要格式化时实现：
+
+```cp
+impl display for point {
+    display(self const&, out: formatter&) -> display_result
+    {
+        return out.format("point({}, {})", x, y);
+    }
+}
+```
 
 ## 文件 IO
 

@@ -27,8 +27,14 @@ export enum open_flag : u8 {
 - `enum` 值不隐式转换为整数。
 - 整数不隐式转换为 `enum`。
 - `enum` 默认不支持普通 bitwise 组合；如果需要位集合，先显式转换到底层整数。
+- 同一个 `enum` 类型支持内建 `==` / `!=`，结果为 `bool`。
+- 同一个 `enum` 类型支持内建 `<=>`，按底层整数值比较并返回 `weak_ordering`；使用 `<=>` 时必须能看见标准库的 `weak_ordering` 类型，例如导入 `std` 或 `std.compare`。
+- 同一个 `enum` 类型不内建 `<` / `<=` / `>` / `>=`；如果需要这些运算，使用标准库比较协议或显式 operator。
+- 不同 `enum` 类型不互相比较，即使底层类型相同、case 值相同也不等价。
 - 第一版必须显式写底层整数类型。
 - case 值必须是整数常量表达式，支持整数字面量、一元 `-` / `~`、整数算术、位运算和 `1 << 0` 这类表达式。
+- case 名在同一个 `enum` 内不能重复。
+- 底层类型必须是整数类型，不能是 `bool`、浮点、指针、结构体或其它名义类型。
 - 默认初始化 `open_flag{}` 不合法。
 
 显式转换：
@@ -38,6 +44,18 @@ let raw: u8 = open_flag::read as u8;
 ```
 
 第一版只允许 `enum_value as UnderlyingInteger`。反向整数到 enum 的构造暂不作为公共能力开放。
+
+```cp
+let raw: u8 = open_flag::read as u8; // 合法
+let flag: open_flag = 1 as open_flag; // 不合法
+```
+
+`enum` 值也不继承底层整数的位运算：
+
+```cp
+let both = open_flag::read | open_flag::write; // 不合法
+let bits = (open_flag::read as u8) | (open_flag::write as u8); // 合法
+```
 
 ## 与 variant 的区别
 

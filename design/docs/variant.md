@@ -25,7 +25,7 @@ VariantPattern       -> . identifier
 PatternBindingList   -> identifier ( , identifier )*
 ```
 
-`GenericParameterList` 的完整规则见 [generic.md](generic.md)。`variant` 支持类型参数，不支持 const generic。
+`GenericParameterList` 的完整规则见 [generic.md](generic.md)。`variant` 支持类型参数、整数 const 参数和默认泛型实参；类型参数包不是当前 `variant` 类型构造器的公开能力。
 
 ## Variant 定义
 
@@ -68,7 +68,7 @@ export variant option_i32 {
 
 ## 泛型 Variant
 
-`variant` 可以带类型参数，规则和泛型 `struct` 一致：
+`variant` 可以带泛型参数，规则和泛型 `struct` 一致：
 
 ```cp
 variant optional<T> {
@@ -92,7 +92,7 @@ expected<i32, str>
 
 这些具体类型彼此不同，不能因为 case 形状相同而互相隐式转换。
 
-case payload 可以直接使用 `variant` 的类型参数。类型参数的作用域覆盖整个 `variant` 体，不覆盖对应的 `impl`。`impl` 需要从自己的目标类型模式重新绑定参数：
+case payload 可以直接使用 `variant` 的泛型参数。泛型参数的作用域覆盖整个 `variant` 体，不覆盖对应的 `impl`。`impl` 需要从自己的目标类型模式重新绑定参数：
 
 ```cp
 impl optional<T> {
@@ -106,12 +106,22 @@ impl optional<T> {
 }
 ```
 
-不支持对 case 构造器做类型实参推导。构造泛型 `variant` 时必须写满具体类型实参：
+泛型 `variant` 支持整数 const 参数和默认泛型实参：
+
+```cp
+variant maybe_array<T = i32, N: usize = 2> {
+    none;
+    some([T; N]);
+}
+```
+
+不支持对 case 构造器做类型实参推导。构造泛型 `variant` 时，类型名处必须已经能形成具体实例；默认泛型实参可以补齐缺省位置，但 payload 实参不会反推出类型实参：
 
 ```cp
 let a = optional<i32>::none;
 let b = optional<i32>::some(1);
 let c = expected<i32, str>::value(1);
+let d = maybe_array::some([1, 2]); // T/N 来自默认泛型实参，不来自 payload 推导
 ```
 
 下面这些形式不合法：
@@ -289,7 +299,47 @@ let n = match result {
 };
 ```
 
+通配 arm 可以覆盖剩余所有 case，但不会绑定任何 payload。多 payload case 和 `_` 可以在同一个 `match` 中使用：
+
+```cp
+variant event {
+    none;
+    resize(i32, i32);
+    cancelled(str);
+}
+
+let area = match event_value {
+    .resize(width, height) => width * height,
+    _ => 0,
+};
+```
+
+上例中 `_` 同时覆盖 `none` 和 `cancelled(str)`；`cancelled` 的 `str` payload 在 `_` arm 中不可访问。需要访问 payload 时必须写对应 case pattern。
+
 `match` 每个分支的表达式结果类型必须能统一。统一规则沿用现有返回类型推导和块表达式规则。
+
+arm 右侧必须是表达式，不是任意语句列表。可以直接写普通表达式、函数调用、`panic(...)`、另一个 `match`，也可以写块表达式：
+
+```cp
+let value = match input {
+    .some(item) => {
+        let doubled = item * 2;
+        doubled
+    },
+    .none => 0,
+};
+```
+
+不能把语句直接放在 `=>` 后：
+
+```cp
+match value {
+    .some(item) => template for(let x : values...) { use(x); }, // 错误：template for 是语句
+    .none => return 0,                                          // 错误：return 是语句
+}
+```
+
+需要多步计算时使用块表达式，并让块的尾表达式成为 arm 值；需要提前从外层函数返回时，把 `return` 写在块表达式内部。
 
 泛型 `variant` 的 `match` 按具体实例检查。编译器先把 case payload 中的类型参数替换为具体类型，再检查 pattern 绑定数量、绑定类型和分支表达式：
 
@@ -302,6 +352,12 @@ value_or<T>(value: optional<T>, fallback: T) -> T
     };
 }
 ```
+
+payload pattern 绑定是当前 arm 表达式里的局部名字。它不能带 `ref`、`const`、类型标注或嵌套解构；绑定类型就是该具体 case payload 替换泛型实参后的类型。不同 arm 可以使用同名绑定，互不冲突，也不会捕获或覆盖 arm 外的同名局部变量。
+
+`_` 是通配 arm，不绑定 payload。当前实现按源码顺序检查 arm，并把第一个 `_` 当作兜底分支；后续 arm 仍会被语义检查，但运行时不可达。因此 `_` 应只写一次并放在最后。
+
+如果某个 arm 的表达式类型为 `!`，它不决定 `match` 的结果类型；其它可返回 arm 决定结果类型。所有 arm 都是 `!` 时，整个 `match` 的类型为 `!`。没有可返回值的普通 arm 时，结果类型按 `unit` 处理。
 
 `match` 只能面对 case 名或 `_`，不能匹配内部 tag 数字，也不能依赖 case 声明顺序。tag 编号是编译器内部细节，不进入源语言语义。
 
@@ -418,6 +474,8 @@ write str value into payload
 - struct-like case。
 - pattern guard。
 - 嵌套解构 pattern。
+- `ref` / `const` / 类型标注 pattern 绑定。
+- 多个 `_` arm 的有意义运行时分派。
 - 默认初始化。
 - 向用户暴露 tag 数值。
 

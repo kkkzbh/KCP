@@ -22,6 +22,7 @@ Constructor     -> TypeName ( ParameterList? ) FunctionBody
 Destructor      -> ~ TypeName ( ) FunctionBody
 Function        -> identifier ( ParameterList? ) ReturnType? FunctionBody
 Operator        -> operator OverloadableOperator ( ParameterList? ) ReturnType? FunctionBody
+                | operator <=> ( self const& , rhs : this const& ) -> weak_ordering = default ;
                 | operator OverloadableOperator ( ParameterList? ) ReturnType? = delete ;
 
 StructInit      -> TypeName { InitArgList? }
@@ -65,7 +66,13 @@ export struct vec2 {
 
 ## impl 块
 
-`impl` 把构造函数、析构函数、成员函数和关联函数挂到某个结构体类型下：
+`impl` 把构造函数、析构函数、成员函数、关联函数和 operator 挂到某个类型下。当前实现支持的固有 `impl` 目标包括 `struct`、`variant`、opaque alias、内建类型和数组类型；不同目标可声明的项不同：
+
+- `struct` 可以声明构造函数、析构函数、成员函数、关联函数和 operator。
+- `variant` 可以声明成员函数、关联函数和 operator，不能声明构造函数或析构函数。
+- opaque alias 可以声明成员函数和关联函数；当前实现不把 opaque alias 的 `impl operator` 注册为可用 operator。
+- 内建类型和数组类型的 `impl` 函数必须带 `self` receiver，因此只能作为扩展成员函数使用，不能声明关联函数、构造函数或析构函数。
+- 内建类型可以声明扩展 operator，按模块导入/导出规则可见；数组类型当前不提供可用的扩展 operator 注册路径。
 
 ```cp
 impl vec2 {
@@ -86,9 +93,9 @@ impl vec2 {
 }
 ```
 
-一个结构体可以有多个 `impl` 块。`impl` 只能出现在顶层，不能嵌套在函数或其他块中。
+一个类型可以有多个 `impl` 块。`impl` 只能出现在顶层，不能嵌套在函数或其他块中。
 
-`impl` 的物理文件位置不重要。只要 `impl` 所在文件参与同一次编译输入，且该位置能解析到目标结构体类型，`impl` 中的构造函数、析构函数、成员函数和关联函数就挂到对应结构体类型下。使用者能看见该结构体类型时，就可以使用这些挂到类型上的项，不需要单独导入 `impl` 所在文件。
+`impl` 的物理文件位置不重要。只要 `impl` 所在文件参与同一次编译输入，且该位置能解析到目标类型，`impl` 中可用的成员函数、关联函数和 operator 就挂到对应类型下。使用者能看见该类型并满足模块可见性时，就可以使用这些挂到类型上的项，不需要单独导入 `impl` 所在文件。构造函数和析构函数只适用于 `struct` 目标。
 
 泛型类型的 `impl` 使用 `impl<...>` 声明泛型参数，例如 `impl<T> vector<T>`；`impl` 级 `requires` 约束和成员泛型函数规则见 [generic.md](generic.md)。
 
@@ -146,6 +153,24 @@ impl vec2 {
 - 行为是逐字段默认初始化。
 - 如果某个字段类型不可默认初始化，则该 default 构造函数非法。
 - 它参与构造函数候选选择，因此 `vec2{}` 会优先匹配它。
+
+### 默认三路比较
+
+结构体不会隐式拥有排序语义。需要作为 `set` / `map` key，且字段声明顺序正好就是排序顺序时，可以显式请求默认三路比较：
+
+```cp
+impl vec2 {
+    operator <=>(self const&, rhs: this const&) -> weak_ordering = default;
+}
+```
+
+默认 `<=>` 规则：
+
+- 只允许用于非泛型 `struct` 的固有 `impl`。
+- operator 必须是 `<=>`，参数必须是 `self const&` 和同类型 `rhs: this const&`。
+- 返回类型固定为 `weak_ordering`。
+- 行为是按字段声明顺序逐字段调用 `<=>`，把结果通过 `to_weak()` 转成 `weak_ordering`；第一个非 `equivalent` 结果立即返回，全部等价则返回 `weak_ordering::equivalent`。
+- 每个字段类型都必须支持可用 `<=>`，且比较结果必须提供返回 `weak_ordering` 的 `to_weak()`。需要跳过字段、改变排序顺序或处理资源句柄时，应手写 `operator <=>`。
 
 ## 析构函数
 
@@ -220,7 +245,7 @@ impl vec2 {
 }
 ```
 
-固有 `impl` 可以作用于结构体、variant、opaque alias 和内建类型。内建类型没有用户可导入的类型声明模块，因此内建类型扩展方法跟随所在模块的导入导出关系可见；未导入该模块时，不参与成员查找。
+固有 `impl` 可以作用于结构体、variant、opaque alias、内建类型和数组类型。内建类型和数组类型没有用户可导入的类型声明模块，因此它们的扩展方法跟随所在模块的导入导出关系可见；未导入该模块时，不参与成员查找。内建类型和数组类型的扩展函数必须带 `self` receiver，不能作为 `type_name::name(...)` 关联函数调用。
 
 ```cp
 export module int_ext;
@@ -252,6 +277,8 @@ let n = v.length();
 ```
 
 `type_name::name(...)` 用于关联函数调用，不作为显式成员函数调用入口。
+
+构造函数不通过普通调用语法调用。`point(1, 2)` 会按普通函数名 `point` 检查，不会转成 `point{1, 2}`；构造必须写花括号初始化。
 
 ## UFCS 调用
 
@@ -356,6 +383,8 @@ let b = vec2{ .x = 1.0 };
 - 字段顺序不影响语义。
 - 字段初始化表达式按字段声明类型做上下文检查。
 - 因为所有字段都是 public，命名字段聚合始终允许，即使结构体声明了构造函数。
+- 不能混合命名字段初始化和顺序初始化；`.field = value` 不能跟在顺序实参之后，顺序实参也不能跟在命名字段之后。
+- 允许列表末尾多写一个逗号。
 
 ### 顺序初始化
 
@@ -369,7 +398,9 @@ let b = vec2{ 1.0 };
 解析顺序：
 
 1. 先按参数列表匹配构造函数。
-2. 没有可用构造函数时，再按字段声明顺序做聚合初始化。
+2. 没有匹配构造函数时，再按字段声明顺序做聚合初始化。
+
+如果匹配到的构造函数是 `= delete`，初始化失败，不会继续回退到字段聚合。只有完全没有匹配构造函数时，才会走顺序聚合初始化。
 
 顺序聚合初始化规则：
 
@@ -412,7 +443,7 @@ struct production {
 2. 完全类型匹配优先于需要隐式转换的匹配。
 3. 如果最高优先级仍有多个候选，报二义性错误。
 
-这个规则只用于结构体初始化选择构造函数。不支持 C++ 完整重载体系，例如默认参数、初始化列表优先级、用户自定义转换和模板偏序。
+这个规则只用于结构体初始化选择构造函数。当前构造函数选择要求调用点实参数量与构造函数参数数量完全相同，不使用函数参数默认值补齐构造调用。不支持 C++ 完整重载体系，例如初始化列表优先级、用户自定义转换和模板偏序。
 
 除构造函数和 operator 特殊项外，不支持重载：
 

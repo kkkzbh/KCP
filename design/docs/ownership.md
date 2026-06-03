@@ -238,6 +238,7 @@ forward value
 规则：
 
 - `forward expr` 只允许作用于当前函数的 `forward&` 参数。
+- 操作数必须解析到当前函数参数名本身；允许普通括号分组，但不允许转发局部变量、字段访问、下标访问、调用结果或任意表达式。
 - 如果该参数由左值绑定，`forward value` 表现为普通可写左值。
 - 如果该参数由 const 左值绑定，`forward value` 表现为只读左值。
 - 如果该参数由临时值、函数返回值或 `move` 绑定，`forward value` 表现为 `move value`。
@@ -325,6 +326,19 @@ impl handle {
 
 `= delete` 是局部能力开关，不是属性，也不依赖继承。第一版只用于 copy/move 构造、copy/move 赋值和需要显式禁止的特殊 operator。
 
+## 析构与清理路径
+
+局部变量和按值参数的生命周期由语义检查和 IR 生成共同维护。当前实现只为需要析构的非引用对象注册清理；引用 binding、裸指针、`storage T{}` 的原始槽位本身不触发被指向对象或槽内对象析构。
+
+清理规则：
+
+- 普通 block 结束时，按局部对象构造/绑定的逆序调用析构函数。
+- `return` 离开当前函数前，会先清理当前作用域中仍然存活的局部对象。
+- `break` 和 `continue` 跳出或进入下一轮循环前，会清理从当前位置到目标循环边界之间的局部对象。
+- `template for` 不是运行时循环；它展开后的普通语句按各自展开作用域注册清理。
+- NRVO 返回的 local 是函数返回对象本身，callee 中不再对这个 returned local 调用析构；调用方接收后的对象按调用方生命周期析构。
+- 手动 `construct_at` 到 `storage` 或裸指针中的对象，必须由用户配对 `destroy_at`。覆盖或离开 `storage` binding 不会自动析构槽内对象。
+
 ## copyable、movable 和 move_only
 
 `copyable`、`movable` 和 `move_only` 是由特殊成员可用性推出的语言级 concept，而不是改变类型行为的标记。
@@ -369,6 +383,7 @@ push<T: movable>(value: T move&) {
 - 引用折叠。
 - C++ 风格 `T&&` / `std::forward<T>`。
 - `like` 传播 move。
+- 具体类型 forward 引用，例如 `i32 forward&`；`forward&` 要求 pointee 是依赖类型，或来自省略参数类型的隐式泛型参数。
 - `T const move&`。
 - `T const forward&`。
 - `self forward&`。

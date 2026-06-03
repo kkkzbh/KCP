@@ -117,7 +117,7 @@ export extern "C" getchar() -> i32;
 
 ## 第一版类型边界
 
-第一版只允许 C-compatible 类型：
+第一版只允许当前语义层明确接受的 C-compatible 类型：
 
 ```text
 void
@@ -128,15 +128,15 @@ isize usize
 f32 f64
 char
 T*
-opaque alias whose underlying type is C-compatible
 ```
 
 其中：
 
 - `void` 在返回类型位置 lower 为内部 `unit`，再 lower 为 C `void`。
+- 参数位置不允许 `void` / 内部 `unit`。
 - `char` 按 1 字节整数传递。
 - `T*` 只检查指针本身的 ABI；`T` 指向的对象布局仍由调用者契约负责。
-- opaque alias 在 ABI 上按底层类型传递，但类型检查中仍是名义类型。标准库用它封装文件句柄和 option bitset。
+- 指针的 pointee 可以是非 C-compatible 类型；这只表示“传地址”，不表示该对象可以按 C layout 解释。
 
 第一版不允许：
 
@@ -147,6 +147,7 @@ str
 struct by value
 variant
 enum by value, unless the value is explicitly cast to its underlying integer
+opaque alias by value
 T&
 f(...) -> R
 generic extern function
@@ -157,9 +158,20 @@ impl member function
 
 这些类型需要更完整的 ABI 设计后再开放。特别是 `str` 的语言设计是运行时长度字符串视图，而不是稳定的 C `char*`；因此不能直接把 `str` 当作 C 字符串 ABI 暴露。
 
+opaque alias 当前也是名义类型，不能按底层类型自动穿过 `extern "C"` 边界。标准库需要跨 C ABI 暴露句柄或 bitset 时，应在 ABI 函数边界使用底层整数或指针类型，在 cp 内部再用 opaque alias 封装。
+
 普通 cp `struct` 第一版不承诺 C ABI layout。需要跨 C 传递结构体时，后续应单独设计 `repr(C)` 或 `extern struct`。
 
 第一版 `extern "C"` 只能用于顶层自由函数，不能用于 `impl` 内成员函数、构造函数、析构函数、lambda 或 concept requirement。
+
+`extern "C"` 函数边界必须是完全确定的具体类型：
+
+- ABI 字符串只接受 `"C"`。
+- 显式泛型参数不允许。
+- `requires` 子句不允许。
+- 返回类型不能依赖函数体推导；省略返回类型的带函数体 `extern "C"` 定义会在 ABI 检查时因为返回类型仍是 inferred 而报错。
+- 参数类型和返回类型不能保留类型参数、推导类型或其它非 C-compatible 类型。
+- 普通默认参数按 cp 调用规则在调用点补全，不改变 C ABI 签名；第一版不把默认参数作为 C 互操作能力的一部分。
 
 ## 函数体规则
 

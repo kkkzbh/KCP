@@ -100,6 +100,7 @@ export concept iterable {
 - `iter_type::iter_item` 必须和 `iterable::iter_item` 相同。
 - `iter(self&)` 可以保存必要的当前位置、边界、指针或引用信息。
 - `iter(self&)` 是可写 receiver 入口。只读 receiver 使用下面的 `const_iterable`，仍然叫 `iter`，不引入 `iter_const()` 这种公开方法名。
+- 非 const 临时 range 可以被当作可写 receiver 调用 `iter(self&)`；因此 `iota(0, 3)`、函数返回的 `vector<T>` 或 adapter 链结果都可以直接用于 range-for 或 terminal。
 
 例如：
 
@@ -209,6 +210,20 @@ while(true) {
 
 因此 `for(const value : values)` 不表示 const iteration，也不保留引用；它只表示本轮的 value binding 不可重新赋值。const iteration 由范围表达式本身的只读 receiver 决定。
 
+按值绑定会复制或移动本轮 item 的读出值，不会 alias 原 range 元素：
+
+```cp
+for(let value : values) {
+    value += 1; // 只修改循环变量副本
+}
+
+for(let ref value : values) {
+    value += 1; // 修改原 range 元素，前提是 iter_item 是可写引用
+}
+```
+
+如果 range 表达式是 const binding、const 引用或只能产生 const iterator item，那么 `for(let ref value : range)` 会报错；需要写 `for(const ref value : range)` 或按值绑定。
+
 ## break 和 continue
 
 因为 `next` 同时完成“取值”和“推进”，`continue` 不需要额外跳到一个 `advance` 步骤。
@@ -240,7 +255,7 @@ for(let value : values.iter()) {
 }
 ```
 
-不把“所有 iterator 自动也是 iterable”写成 blanket impl，也不做 `iterable -> iterator` 隐式转换。需要组合时，标准库 ranges 通过 `to_view(source: R forward&)` 把左值借用为 view、把右值保存为 owning view。
+不把“所有 iterator 自动也是 iterable”写成 blanket impl，也不做 `iterable -> iterator` 隐式转换。需要组合时，标准库 ranges 通过 `to_view(source: R forward&)` 把左值借用为 view、把右值保存为 owning view。`values.iter().count()` 和 `for(let value : values.iter())` 都是错误；应写 `values.count()` 或 `for(let value : values)`。
 
 ## 内建类型
 

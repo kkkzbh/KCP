@@ -11,7 +11,7 @@ f(i32, i32) -> i32
 f*(i32, i32) -> i32
 ```
 
-`f(...) -> R` 是函数类型，表示一个非空、可直接调用的函数实现。它可以由普通命名函数或无捕获 lambda 产生。
+`f(...) -> R` 是函数类型，表示一个非空、可直接调用的函数实现。它可以由普通命名函数或非泛型无捕获 lambda 产生。
 
 `f*(...) -> R` 是函数指针类型，表示运行时函数地址。它接近 C/C++ 的函数指针，主要用于 C ABI、底层表驱动和需要显式地址语义的场景。
 
@@ -64,7 +64,7 @@ let raw: f*(i32, i32) -> i32 = add;
 lambda 表达式写作：
 
 ```text
-LambdaExpr -> f ( LambdaParamList? ) ReturnType? LambdaBody
+LambdaExpr -> f GenericParameterList? ( LambdaParamList? ) ReturnType? LambdaBody
 LambdaBody -> Block
             | => Expr
 ```
@@ -76,6 +76,8 @@ let square = f(x: i32) -> i32 {
     x * x
 };
 ```
+
+lambda 参数不能带默认值。需要默认行为时，在外层函数或闭包体内显式处理。
 
 返回类型可以省略，由 lambda body 推导：
 
@@ -94,6 +96,29 @@ let square: f(i32) -> i32 = f(x) {
 ```
 
 省略参数类型只允许在存在明确上下文函数类型时使用。没有上下文类型时，lambda 参数必须显式标注类型。
+
+lambda 可以声明自己的泛型参数：
+
+```cp
+let id = f<T>(value: T) -> T {
+    value
+};
+
+let count_types = f<T...>(values: T...) -> i32 {
+    let total = 0;
+    template for(let value : values...) {
+        total = total + 1;
+    }
+    return total;
+};
+```
+
+当前实现中，泛型 lambda 必须显式写返回类型；`f<T>(value: T) { value }` 不合法。泛型 lambda 表达式本身是匿名可调用对象，即使没有捕获，也不会在声明点直接降成某个具体 `f(...) -> R` 函数类型。调用泛型 lambda 时必须显式提供类型实参：
+
+```cp
+let value = id<i32>(1); // 合法
+let bad = id(1);        // 不合法：泛型 lambda 调用需要显式类型实参
+```
 
 ## Lambda 函数体
 
@@ -172,8 +197,13 @@ let add_bias = f(x: i32) {
 - 只读取的变量按只读捕获处理。
 - 被赋值、取可写引用或传给需要可写引用的参数时，按可写捕获处理。
 - 捕获只发生在普通词法作用域变量上；模块项、普通函数名、类型名和 concept 名不算捕获。
+- lambda 参数、局部 `let`、解构绑定、`for` 绑定、`template for` 绑定和 `match` pattern 绑定都会引入局部名字；同名局部名字会遮蔽外层变量，不触发捕获。
+- 捕获扫描会穿过成员访问、下标访问、数组/元组/结构体初始化、块表达式、`if`、循环、`match`、`template for` 和嵌套调用等表达式/语句形态。
+- `match` arm 中的 pattern 绑定是 arm 局部名字，不捕获同名外层变量。
+- 泛型 lambda 也按同一套规则捕获外层变量；定义处先按语法结构收集外层捕获，实例化时再检查具体 body 和类型替换。
+- 嵌套 lambda 自己负责捕获它引用到的外层名字；内层 lambda body 中的名字不会被当作外层 lambda 的直接捕获。
 
-无捕获 lambda 等价于普通命名函数：
+非泛型无捕获 lambda 等价于普通命名函数：
 
 ```cp
 let f: f(i32) -> i32 = f(x: i32) {
@@ -215,11 +245,17 @@ let bad_pointer: f*(i32) -> i32 = f(x: i32) {
 
 - lambda 只在当前作用域内调用时，捕获按引用实现。
 - lambda 被返回、赋给外层存储、放入结构体字段或传给可能保存它的参数时，视为逃逸。
-- 非逃逸只读捕获是 `const_ref`，借用外层变量。
-- 非逃逸可写捕获是 `ref`，写回外层变量。
-- 逃逸只读捕获是 `copy`，创建闭包时拷贝快照。
-- 逃逸可写捕获是 `owned_mut_copy`，闭包拥有自己的可写副本。
-- 无捕获 lambda 不需要环境对象，仍按普通函数值处理。
+- 简单局部绑定本身不让 lambda 逃逸；如果该绑定后续被返回、赋值到其他位置或作为调用实参传出，则绑定里关联的 lambda 按对应上下文逃逸。
+- `return` 的值中包含 lambda 时，逃逸原因是 `returned`。
+- 赋值右侧、`new` 初始化值和块表达式尾值中包含 lambda 时，逃逸原因是 `stored`。
+- 调用实参中包含 lambda 时，逃逸原因是 `passed`；这是保守规则，普通语义分析不证明被调函数是否立即调用或保存回调。
+- 同一个 lambda 如果出现在多个上下文，逃逸强度取最大者：`returned` 强于 `stored`，`stored` 强于 `passed`。
+- 非逃逸只读捕获是 `const_ref`，闭包字段类型是 `T const&`，借用外层变量。
+- 非逃逸可写捕获是 `ref`，闭包字段类型是 `T&`，写回外层变量。
+- 非逃逸捕获 const 源变量时，即使语法上尝试写入，最终也只能是只读引用，并由赋值/参数检查报告 const 写入错误。
+- 逃逸只读捕获是 `copy`，闭包字段类型是值类型 `T`，创建闭包时拷贝快照。
+- 逃逸可写捕获是 `owned_mut_copy`，闭包字段类型是值类型 `T`，闭包拥有自己的可写副本。
+- 非泛型无捕获 lambda 不需要环境对象，仍按普通函数值处理。
 - 不隐式生成 shared cell 或 shared capture frame。
 
 示例：
@@ -297,7 +333,7 @@ let a = apply(1, inc);
 let b = apply(1, f(x: i32) => x + 1);
 ```
 
-`cb: f(i32) -> i32` 表示调用方必须提供普通函数或无捕获 lambda。实现可以把它 lower 为代码地址，但语言层保证它是非空函数值。
+`cb: f(i32) -> i32` 表示调用方必须提供普通函数或非泛型无捕获 lambda。实现可以把它 lower 为代码地址，但语言层保证它是非空函数值。
 
 如果 API 明确需要底层地址语义，才写函数指针：
 
@@ -319,7 +355,7 @@ let closure = f(x: i32) {
 // apply(1, closure); // error if apply expects f(i32) -> i32
 ```
 
-泛型函数可以通过 `callable<Args...>` concept 接收普通函数、无捕获 lambda 和有捕获闭包。lambda/闭包语义上满足调用表达式协议，因此可作为 comparator、projection 这类泛型算法对象使用：
+泛型函数可以通过 `callable<Args...>` concept 接收普通函数、非泛型无捕获 lambda 和有捕获闭包。lambda/闭包语义上满足调用表达式协议，因此可作为 comparator、projection 这类泛型算法对象使用：
 
 ```cp
 apply<F>(value: i32, callback: F) -> call_result<F, i32>
@@ -330,6 +366,23 @@ requires
 }
 ```
 
+闭包可以作为普通值存入泛型字段，只要字段类型由泛型参数承载：
+
+```cp
+struct holder<F> {
+    callback: F;
+}
+
+impl<F> holder<F> {
+    apply(self&, value: i32) -> i32
+    {
+        return callback(value);
+    }
+}
+```
+
+这里 `callback(value)` 先按函数值、函数指针和 lambda/闭包调用规则检查；如果 `F` 是带捕获闭包类型，也会调用其闭包对象。
+
 ## 支持内容
 
 Lambda 支持：
@@ -337,10 +390,12 @@ Lambda 支持：
 - 函数类型 `f(...) -> R`。
 - 函数指针类型 `f*(...) -> R`。
 - 普通函数名在值位置绑定为函数值。
-- 无捕获 lambda 可绑定为函数类型或函数指针类型。
+- 非泛型无捕获 lambda 可绑定为函数类型或函数指针类型。
 - 有捕获 lambda 生成匿名闭包类型。
 - 有捕获 lambda 不能绑定为函数类型或函数指针类型。
 - 有捕获 lambda 可通过泛型参数传递，并用调用表达式 `callback(args...)` 调用。
+- 泛型 lambda：`f<T>(value: T) -> T { ... }`。
+- 类型参数包 lambda：`f<T...>(values: T...) -> R { ... }`。
 - lambda `{ ... }` body 同时支持 `return` 和尾表达式。
 - lambda `=> expr` 表达式体。
 - 参数名可出现在函数类型中，但不参与类型等价。
@@ -348,6 +403,9 @@ Lambda 支持：
 Lambda 不支持：
 
 - 显式捕获列表。
+- lambda 参数默认值。
+- 泛型 lambda 返回类型推导。
+- 泛型 lambda 调用点类型实参推导。
 - 捕获生命周期完整证明。
 - 闭包类型的命名、结构反射或稳定 ABI。
 - 函数重载和函数类型参与重载排序。

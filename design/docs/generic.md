@@ -64,6 +64,14 @@ IntegerGenericKind
 GenericDefault
     -> = TypeArgument
 
+TypeArgumentList
+    -> < TypeArgument ( , TypeArgument )* >
+
+TypeArgument
+    -> Type
+     | Type ...
+     | IntegerLiteral
+
 ConceptId
     -> identifier TypeArgumentList?
 
@@ -116,7 +124,9 @@ TemplateIfCondition
 
 TemplateForBinding
     -> let identifier
+     | let ref identifier
      | const identifier
+     | const ref identifier
      | type identifier
 
 PackExpansion
@@ -205,6 +215,13 @@ print<T...>(values: T...)
 
 `T...` 表示零个或多个类型参数，`values: T...` 表示与 `T...` 等长的值参数包。参数包规则见“参数包与 template for”。
 
+当前实现的参数包能力分两类：
+
+- 函数和泛型 lambda 可以建立类型参数包以及对应的值参数包，例如 `print<T...>(values: T...)`。具体函数实例或具体 lambda 实例会得到 `T...` 的类型实参序列，`values...` 与它等长。
+- `concept` 声明可以把最后一个类型参数声明为 concept 参数包，例如 `concept callable<Args...>`。它只用于 concept 实参匹配和约束检查，不会创建值参数包，也不能在 concept 体内用 `template for` 展开。
+
+`struct tuple<T...>`、`variant choice<T...>`、`impl<T...> ...` 或 `impl<T...> concept for type` 这类类型构造器/实现级参数包不是当前可用的公开能力；第一版也没有 pack field expansion。concept 参数包的公开用法同样要求写在泛型参数列表末尾；非末尾 concept pack 不作为可依赖语义。
+
 泛型参数可以带默认实参：
 
 ```cp
@@ -225,6 +242,8 @@ let same: pair<i32> = pair<i32>{ .first = 1, .second = 2 };
 let mixed: pair<i32, bool> = pair<i32, bool>{ .first = 1, .second = true };
 ```
 
+默认泛型实参只用来补齐当前声明中仍未确定的尾部参数。它不能跳过中间参数，也不能反向推出前面的参数。函数调用点显式写出的泛型实参同样按前缀绑定；如果某个前缀实参与普通实参推导出的类型冲突，调用失败。
+
 函数参数也可以带默认值。默认值只能用于尾部参数，调用时只能省略尾部实参：
 
 ```cp
@@ -238,6 +257,15 @@ sort(values, desc<i32>{}); // 显式降序 order
 ```
 
 函数默认表达式在泛型实参确定后检查，因此 `Order{}` 会在 `Order` 被推导或由默认泛型实参补齐后再按参数类型检查。默认表达式可以引用前面已经声明的泛型参数和值参数。
+
+函数参数默认值的当前实现边界：
+
+- 只能用于尾部参数；一旦某个参数有默认值，后续普通参数也必须有默认值。
+- 默认值参数必须有显式参数类型，不能用于省略类型参数，例如 `bad(value = 1)`。
+- `self` receiver 不能有默认值。
+- 值参数包不能有默认值。
+- lambda 参数不能有默认值。
+- 调用点只允许省略尾部实参；默认表达式按对应参数类型做普通表达式检查。
 
 `this` 可以出现在 concept 泛型参数默认值中，表示当前被检查或被实现的类型。因此：
 
@@ -459,11 +487,64 @@ print<T...>(values: T...)
 
 - `T...` 在泛型参数列表中声明一个类型参数包。
 - `values: T...` 在函数参数列表中声明一个值参数包。
-- 值参数包长度与对应类型参数包长度相同。
+- 函数和泛型 lambda 的值参数包长度与对应类型参数包长度相同。
+- concept 的类型参数包只吸收 concept 引用处的剩余类型实参，例如 `F: callable<i32, bool>` 会把 `Args...` 绑定为 `[i32, bool]`。
 - 参数包可以为空；为空时对应的 `template for` body 展开零次。
-- 值参数包必须位于普通参数列表末尾。
+- 函数、泛型 lambda 和 concept 的类型参数包都应写在泛型参数列表最后一个参数位置；`bad<T..., U>` 不作为公开能力。
+- 值参数包必须位于普通参数列表末尾，并且函数或泛型 lambda 必须同时声明类型参数包。`bad(values: i32...)` 不合法；值参数包不是“任意重复某个固定类型参数”的语法。
+- 整数 const 泛型参数不能声明为参数包；当前只支持类型参数包。
+- 参数包不能带默认实参，值参数包参数也不能带默认值。
 - 参数包不是数组、元组或 slice，不能整体存储、返回、赋值或作为普通表达式使用。
-- 参数包只能在明确的展开上下文中使用，展开上下文只有 `template for`。
+- 类型参数包不能在需要单个类型的位置直接使用；`bad<T...>(value: T...) -> T` 不合法，返回类型应通过 `template for`、`decltype`、关联类型或其它单个类型表达式得到。
+- 值参数包只能在明确的值展开上下文中使用；当前值展开上下文只有 `template for`。
+- 类型参数包可以在 `template for(type U : T...)` 中逐个展开，也可以在有限的类型实参列表中写成 `T...` 展开。
+- concept 参数包不能 `template for` 展开；它只能出现在 concept 自身的类型实参匹配中，或作为被约束 concept 的实参列表的一部分。
+
+类型实参列表中的参数包展开只支持“裸类型参数包名加 `...`”。它不是一般 pack pattern：
+
+```cp
+make<F, Args...>() -> call_result<F, Args...>
+requires
+    F: callable<Args...>
+{
+    return 42;
+}
+```
+
+允许的公开场景：
+
+- `call_result<F, Args...>` 这类支持可变类型实参的元类型查询。
+- `F: callable<Args...>` 这类目标 concept 最后一个参数是类型参数包的 concept 引用。
+- 展开后继续跟固定类型实参，例如 `call_result<F, Args..., bool>` 和 `F: callable<Args..., bool>`。这表示先插入当前 `Args...` 的每个元素，再追加 `bool`。
+- 显式泛型函数或泛型 lambda 调用实参，例如 `make<f(i32, bool) -> i32, i32, bool>()`，以及在泛型内部把当前 `Args...` 展开给另一个可接受这些类型实参的泛型调用。
+
+具体函数实例中，`Args...` 展开为当前实例的实际类型序列；泛型定义体内尚未具体化时，展开保留为依赖的 pack expansion，只能继续流向上述允许的可变实参位置。普通类型构造器、非可变 meta query 和单个类型参数槽不会因为看见 `Args...` 就展开。
+
+不支持的形式：
+
+```cp
+type A = read_type<Args...>;      // 错误：read_type 只接收一个类型实参
+type B = tuple<Args...>;          // 不表示把 Args 展开为多个 tuple element，当前不可依赖
+type C = box<Args...>;            // struct/variant/opaque alias 实参列表不提供公开 pack expansion 语义
+type D = call_result<F, box<Args>...>; // 错误：不是裸 pack 名
+requires T: same_as<Args...>;     // 错误：same_as 若不是参数包 concept，不能接收展开
+```
+
+因此，当前 `Args...` 在公开支持的类型实参位置的意义是“把当前类型参数包的元素插入这个实参列表”，不是“对任意类型模式做映射”。普通命名类型构造器不会因为写了 `...` 就获得 pack field 或 pack element 展开能力；在具体实例中把类型参数包当作单个类型使用仍会失败。如果需要把每个 `Args` 包进 `box<Args>`，应使用 `template for(type U : Args...)` 分别处理，或等待后续 pack pattern 设计。
+
+值参数包的元素类型可以是简单 `T...`，也可以把 `T` 嵌在当前实现支持推导的复合类型里：
+
+```cp
+sum_arrays<T...>(values: [T; 2]...) -> i32
+sum_tuples<T...>(values: (T, i32)...) -> i32
+sum_boxes<T...>(values: box<T>...) -> i32
+sum_options<T...>(values: optional<T>...) -> i32
+sum_ref<T...>(values: T const&...) -> i32
+```
+
+调用这些函数时，编译器按每个实参位置推导当前 pack 元素类型。一个 pack 元素在同一个参数模式中出现多次时，所有位置必须推导出同一个类型；不匹配则该实例化失败。
+
+值参数包的目的始终是展开某个函数级类型参数包。即使元素类型看起来是固定类型，也必须有类型参数包参与该函数的实例化语义；当前公开写法应把每个元素的类型模式写成和类型参数包相关的形式，例如 `T...`、`[T; 2]...` 或 `box<T>...`。不能只写 `values: i32...` 来表达“任意数量的 i32 参数”。
 
 `template for` 遍历值参数包：
 
@@ -517,9 +598,15 @@ debug<T...>(values: T...)
 - 展开顺序从左到右。
 - 每次展开 body 都建立独立作用域。
 - `let value` 绑定当前值，`const value` 绑定当前只读值。
+- `let ref value` 要求当前 pack 元素是可引用左值，并按普通 `let ref` 规则保留可写性。
+- `const ref value` 要求当前 pack 元素可引用，并绑定为只读引用。
 - `type U` 绑定当前类型。
 - `return` 仍然返回外层函数、lambda 或当前函数边界。
-- `break` 和 `continue` 不允许直接作用于 `template for`，因为它不是运行时循环。
+- `return` 会参与外层函数返回类型推导；类型包和值包展开体中的 `return value;` 都按被展开后的普通语句处理。
+- 对具体实例来说，非空参数包的 `return` 按展开次数逐次贡献返回类型；空参数包展开零次，因此展开体内的 `return` 不贡献任何返回类型。
+- `template for(let value : values...)` 只能遍历当前函数实例的值参数包，不能遍历数组、元组、range 或普通局部变量。
+- `template for(type U : T...)` 只能遍历当前函数实例的类型参数包；`U` 是类型别名，不是运行时值。
+- `break` 和 `continue` 不允许直接作用于 `template for`，因为它不是运行时循环，也不能穿透 `template for` 去控制外层运行时循环。
 - 展开后的语句按普通语义检查；依赖类型或依赖表达式可以延迟到实例化后检查。
 
 ## template if
@@ -541,7 +628,9 @@ select<T>(value: T) -> i32
 
 条件支持类型相等、concept 条件、可求值为 `bool` 的编译期常量表达式，以及 `not`、`and`、`or` 和括号组合。`T == U` 两侧能作为类型解析时按类型相等处理；普通表达式相等仍按常量表达式求值。
 
-选中分支按普通语句做语义检查并参与 IR/codegen；未选中分支只要求语法正确，不解析名字、不检查类型，也不参与返回、循环或借用状态。没有分支命中且没有 `else` 时等价于空语句。
+`template if` 条件必须能在实例化期得到 `bool` 常量。非 `bool` 条件报错；依赖运行时局部变量的条件不是 constexpr，也会报错。`and` / `or` 按编译期短路规则处理，因此 `template if(false and missing_name)` 不会检查右侧名字，`template if(true or missing_name)` 也不会检查右侧名字。
+
+选中分支按普通语句做语义检查并参与 IR/codegen；未选中分支只要求语法正确，不解析名字、不检查类型，也不参与返回、循环或借用状态。没有分支命中且没有 `else` 时等价于空语句。被选中的分支会参与返回类型推导，未选中的分支不会贡献返回类型。
 
 参数包约束可以写在内联泛型参数或 `requires` 中：
 
@@ -620,12 +709,28 @@ variant expected<T, E> {
 
 case payload 类型可以直接使用 `variant` 的泛型参数。`variant` 泛型参数的作用域覆盖整个 `variant` 体，不覆盖对应的 `impl`；`impl` 需要从自己的目标类型模式重新绑定参数。
 
-case 构造器挂在具体实例的类型命名空间下。不做 case 构造器类型实参推导，因此构造泛型 `variant` 时必须写满具体类型实参：
+泛型 `variant` 和泛型 `struct` 一样支持类型参数、整数 const 参数和默认泛型实参：
+
+```cp
+variant fixed_optional<T, N: usize = 1> {
+    none;
+    some([T; N]);
+}
+```
+
+case 构造器挂在具体实例的类型命名空间下。不做 case 构造器类型实参推导，因此构造泛型 `variant` 时，类型名处必须已经能形成具体实例。具体实例可以由显式实参给出，也可以由默认泛型实参补齐：
 
 ```cp
 let a = optional<i32>::none;
 let b = optional<i32>::some(1);
 let c = expected<i32, str>::unexpected("bad input");
+
+variant maybe<T = i32> {
+    none;
+    some(T);
+}
+
+let d = maybe::some(1); // T 由默认实参补为 i32，不是从 1 反推出来
 ```
 
 下面这些形式不支持：
@@ -905,7 +1010,10 @@ let x = first((1, 2.0)); // T = i32, U = f64
 - 形参模式和目标类型是同一种复合类型时，递归匹配其类型实参，例如 `(T, U)` 对 `(i32, f64)`。
 - `[T; 3]` 可以从 `[i32; 3]` 推导出 `T = i32`。
 - `[T; N]` 可以从 `[i32; 4]` 推导出 `T = i32, N = 4`，其中 `N` 必须是当前函数可见的 `usize` 或 `isize` 整数 const 参数。
-- 引用、指针和 `const` 修饰必须按同一类型结构递归匹配，例如 `T const&` 可以从 `i32 const&` 推导出 `T = i32`。
+- 引用形参先按被引用的值类型推导，例如 `T const&`、`T&`、`T move&` 和 `T forward&` 都会从目标表达式的读类型推出 `T`；表达式是否可绑定到对应引用、是否只读、是否需要移动，随后按普通调用转换规则检查。
+- 指针形参按指针结构递归匹配。`T*` 只能从非 const 指针推导；`T const*` 可以从只读或可写指针推导出 `T`；`like*` 的 const 性由接收者或外层 `like` 规则在实例化后物化。
+- 函数类型形参按完整函数类型匹配，参数列表长度必须一致，并递归匹配每个参数类型和返回类型；例如 `apply<T, R>(callback: f(T) -> R, value: T) -> R` 可以从 `f(i32) -> bool` 推导出 `T = i32, R = bool`。
+- 泛型 `struct` 和泛型 `variant` 只在名义类型相同、实参数量相同的情况下递归匹配其类型实参；不同声明即使结构相同也不会互相推导。
 
 参数包推导只支持函数参数列表末尾的值参数包：
 
@@ -928,6 +1036,9 @@ print(1, "x", 2.0); // T... = i32, str, f64
 - 如果函数还有普通形参，普通形参先按位置匹配，剩余实参进入末尾参数包。
 - 不支持非末尾参数包，也不支持一个函数参数列表中多个值参数包。
 - 包内类型推导不做隐式转换，和普通泛型推导一致。
+- 复合模式可以递归穿过数组、storage、元组、函数类型、指针、引用、泛型 `struct` 和泛型 `variant`；结构不匹配时不推导。
+- 没有值参数包可用时，非空类型参数包只能由调用点显式给出；不写类型实参且没有普通实参可推导时，只能得到空包。
+- 显式类型实参和从普通实参推导出的类型实参必须一致；冲突时报错。
 
 如果某个类型参数无法从普通实参推出，调用必须显式写出全部类型实参：
 
@@ -998,6 +1109,7 @@ main() -> i32
 - 依赖 `decltype(expr)`：实例化后确定表达式类型
 - 参数包：`func<T...>(values: T...)`
 - 参数包约束：`T...: display`
+- concept 参数包：`concept callable<Args...>`
 - 整数 const 参数：`N: usize` / `I: isize`
 - `template for(let value : values...)` 值包展开
 - `template for(type U : T...)` 类型包展开

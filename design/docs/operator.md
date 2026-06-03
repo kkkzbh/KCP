@@ -75,9 +75,15 @@ let value = p[0];
 - `<=>` 是普通可重载二元运算；标准库约定返回 `partial_ordering`、`weak_ordering` 或 `strong_ordering` 这类比较分类值。
 - 标准库 `ordering<T>`、`asc<T>`、`desc<T>` 使用 `<=>` 构造 map/set/sort 所需的三路 order object；`partial_ordering` 不作为默认有序容器或排序协议。
 - 数值类型按共同数值类型比较。
+- 除 `str` 外，同一内建标量类型支持 `== != < <= > >=`；例如 `bool == bool`、`char < char` 和 `i32 <= i32` 都走内建规则。`str` 比较由标准库 operator 提供，不走这一条内建路径。
+- 同一个 `enum` 类型之间内建支持 `==` / `!=`。
+- 同一个 `enum` 类型之间内建支持 `<=>`，按底层整数值比较并返回 `weak_ordering`；该操作要求 `weak_ordering` 在当前编译输入中可见，通常通过 `import std;` 或 `import std.compare;` 提供。
+- 同一个 `enum` 类型之间不内建 `< <= > >=`；需要这些运算时通过标准库比较协议或显式 operator 提供。
+- 不同 `enum` 类型不互相比较，即使底层整数类型相同。
 - 相同目标类型的指针支持 `==` / `!=`。
 - 相同目标类型的指针支持 `< <= > >=`，有定义边界与 C++ 指针有序比较一致。
-- 非数值类型不提供通用内建比较。特定类型若需要比较能力，应通过 `operator` 重载或标准库协议提供。
+- `struct` 不隐式生成比较。需要按字段顺序比较时，必须在固有 `impl` 中显式写 `operator <=> = default;`。
+- 除同类型 `enum` 的 `==` / `!=` / `<=>`、同目标指针比较和同类型内建标量比较外，非数值类型不提供通用内建比较。特定类型若需要比较能力，应通过 `operator` 重载、默认三路比较或标准库协议提供。
 
 显式声明的 `operator ==`、`operator !=`、`operator <`、`operator <=`、`operator >`、`operator >=` 优先于任何基于 `<=>` 的派生策略。标准库对 `str` 直接提供这些比较 operator，并以 `operator <=>` 作为三路比较入口；后续若在编译器层接入派生比较，应保持同样的显式 operator 优先规则。
 
@@ -170,6 +176,8 @@ operator +(left: vec2 const&, right: vec2 const&) -> vec2
 - 固有 `impl` 内的 operator 至少有一个参数必须是 `self`、`self&`、`self const&` 或 `this` 相关类型。
 - 同一个类型命名空间内，相同 operator 可以按参数类型重载。
 - 当前可见的顶层 operator 可以按参数类型重载。
+- 固有 `impl` operator 当前注册在 `struct`、`variant` 和内建类型的类型命名空间中。opaque alias 和数组类型可以有扩展成员函数，但它们的 `impl operator` 不是当前可用能力；opaque alias 需要 operator 时使用顶层 operator，数组类型当前不能声明可用的用户 operator，应通过包装 `struct` 提供该能力。
+- `operator <=>` 可以在非泛型 `struct` 的固有 `impl` 中写成 `= default`，形如 `operator <=>(self const&, rhs: this const&) -> weak_ordering = default;`。它按字段声明顺序逐字段调用 `<=>`，将比较结果通过 `to_weak()` 归一为 `weak_ordering`，遇到非 `equivalent` 立即返回；所有字段都等价时返回 `weak_ordering::equivalent`。字段类型必须能比较，且比较结果必须提供返回 `weak_ordering` 的 `to_weak()`。默认比较要求 `weak_ordering` 可见，因此使用处通常需要导入 `std` 或 `std.compare`。
 - 普通函数、普通成员函数和关联函数仍然不支持重载。
 - operator 不参与 UFCS，不能写成 `operator +(a, b)` 普通调用。
 - `operator ++` 和 `operator --` 不是合法声明；必须写成 `operator prefix ++`、`operator postfix ++`、`operator prefix --` 或 `operator postfix --`，避免前后置声明歧义。
@@ -232,7 +240,8 @@ let item = builtin(matrix[i][j] + dx * scale);
 - 没有可用 `operator =` 时，简单赋值按左侧类型检查右侧表达式并使用内建赋值。
 - `operator =` 的左操作数必须是可写引用；成员形式必须以 `self&` 作为第一个参数。
 - 复合赋值可以由对应 `operator +=`、`operator -=` 等重载。
-- 没有可用复合赋值 operator 时，不自动退化为 `left = left op right`；第一版要求用户显式声明复合赋值能力。
+- 没有可用复合赋值 operator 时，只尝试编译器内建二元运算再写回左侧。也就是说，`i32 += i32`、`ptr += integer` 这类内建路径可用；但不会把用户声明的 `operator +` 自动改写成 `operator +=`，也不会调用普通函数做用户自定义转换。
+- 内建复合赋值要求 `left op right` 的结果能隐式转换回左侧读出类型，否则报错。
 - 复合赋值 operator 的返回类型可以是内部 `unit`，也可以是左操作数引用类型，例如成员形式的 `this&`。
 
 示例：

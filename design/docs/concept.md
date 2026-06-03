@@ -118,6 +118,48 @@ impl partial_eq<str> for string_like {
 }
 ```
 
+### Concept 参数包
+
+concept 可以把最后一个类型参数声明为参数包，用来表达“这个能力还依赖一组调用参数类型”这类关系。标准库 `std.meta` 中的 `callable<Args...>` 就是这种用法：
+
+```cp
+concept callable<Args...> {
+}
+
+apply<F>(callback: F, value: i32) -> call_result<F, i32>
+requires
+    F: callable<i32>
+{
+    return callback(value);
+}
+```
+
+泛型约束可以把当前类型参数包展开给 concept 参数包：
+
+```cp
+make<F, Args...>() -> call_result<F, Args...>
+requires
+    F: callable<Args...>
+{
+    return 42;
+}
+```
+
+这里 `callable` 的最后一个参数是 concept 类型参数包，因此 `Args...` 会按当前函数实例展开为零个或多个类型实参。
+
+规则：
+
+- concept 参数包只支持类型参数包，不支持整数 const 参数包。
+- concept 参数包应位于泛型参数列表末尾；公开语义只保证最后一个参数包按剩余 concept 实参吸收。
+- concept 参数包可以为空；例如 `T: callable` 等价于 `T: callable<>`。
+- concept 参数包没有对应的值参数包，不能写 `values: Args...`，也不能在 concept 体内用 `template for` 展开。
+- concept 参数包不能带默认实参。
+- concept 引用处按普通类型实参规则检查每个 pack 元素；`F: callable<i32, bool>` 会把 `Args...` 绑定为 `[i32, bool]`。
+- `F: callable<Args...>` 只在 `Args` 是当前可见类型参数包时合法；展开语法必须是裸 pack 名加 `...`。
+- 如果目标 concept 的当前位置不是参数包，类型实参 pack expansion 不合法。例如 `T: same_as<Args...>` 只有在 `same_as` 对应位置声明为 concept 参数包时才可能成立。
+- concept 参数包不能把运行时值、值参数包或复合 pack pattern 当作类型实参；`callable<box<Args>...>` 不是当前能力。
+- `impl<T...> callable<T...> for item` 这类实现级参数包不是当前公开能力；可以写具体实参的 impl，例如 `impl callable<i32> for item`。
+
 ## 父 Concept
 
 父 concept 使用 `requires` 声明，不带括号。多个约束使用 `and` 连接：
@@ -234,6 +276,57 @@ impl iterator for range_iter {
 - 有默认实现的函数可以省略；省略时使用 concept 中的默认函数体。
 - impl 提供的函数签名必须与 concept 要求匹配。接收者参数、`this` 和关联类型名按当前实现类型与关联类型绑定替换后比较。
 - impl 中可以直接使用当前 concept 的关联类型名，例如 `iter_item`。
+
+### 条件实现
+
+泛型 concept impl 可以带 `requires`，当前实现支持三类条件：
+
+- 裸 concept 名，表示当前目标类型必须满足该 concept。
+- `Type: Concept`，表示某个类型表达式必须满足 concept。
+- `Type == Type`，表示两个类型表达式必须相同。
+
+```cp
+concept mark {
+}
+
+concept parent {
+}
+
+concept child {
+}
+
+concept int_box {
+}
+
+struct box<T> {
+    value: T;
+}
+
+impl mark for i32 {
+}
+
+impl parent for box<i32> {
+}
+
+impl<T> child for box<T>
+requires parent
+{
+}
+
+impl<T> int_box for box<T>
+requires
+    T: mark and T == i32
+{
+}
+```
+
+规则：
+
+- 在 `impl<T> child for box<T> requires parent` 中，裸 `parent` 等价于 `box<T>: parent`。
+- 在 `requires T: mark and T == i32` 中，两个条件都必须满足；`box<bool>` 不获得 `int_box` 证明。
+- 条件不满足时，该 impl 对具体类型不可用，不是在 impl 定义处报错。使用点如果需要该 concept 且没有其它可用 impl，会报告缺少 concept item/实现证明。
+- `requires` 中只支持 `and` 和括号组合，不支持 `or`、`not` 或任意运行时表达式。
+- 条件实现不会自动补齐父 concept 的 impl；需要父 concept 时仍要有对应证明。
 
 ## 语言级推导 Concept
 

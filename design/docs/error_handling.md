@@ -29,6 +29,8 @@ panic(message: str) -> !;
 unreachable() -> !;
 ```
 
+这些名字是编译器识别的 builtin 调用，不需要导入标准库，也不会解析成普通用户函数重载。它们都不能带显式类型实参。
+
 ## `!` never type
 
 `!` 表示表达式不会正常产生值。它是内建类型，不是标准库类型。
@@ -68,10 +70,26 @@ assert(condition, message);
 
 规则：
 
-- `condition` 必须能隐式转换到 `bool`。
-- `message` 存在时必须能隐式转换到 `str`。
+- `condition` 必须检查为 `bool`；没有整数、指针或其它类型的 truthiness。
+- `message` 存在时必须检查为 `str`。
+- `assert` 只接受 1 个或 2 个实参，返回内部 `unit`。
 - 第一版 `assert` 总是 checked：失败时调用 `panic`。
-- 未来优化模式可以把 `assert(condition)` 降为优化假设，但第一版不引入编译模式开关。
+- 未写 `message` 时，当前 IR 使用默认消息 `"assertion failed"`。
+- IR lowering 内部有 `elide_asserts` 选项，但第一版语言和命令行不把它作为用户可依赖的编译模式；默认语义仍是 checked。
+
+`panic` 和 `unreachable` 的调用边界：
+
+- `panic(message)` 只接受 1 个实参，`message` 必须检查为 `str`，表达式类型是 `!`。
+- `unreachable()` 不接受实参，表达式类型是 `!`。
+- `unreachable()` 当前 lower 为带固定消息的 `panic`，用于标记理论上不可达的控制流。
+
+后端把 panic 统一 lower 到 runtime ABI：
+
+```text
+declare void @cp_panic(ptr, i64) noreturn
+```
+
+字符串实参以 `ptr + len` 形式传给 runtime。
 
 ## 容器访问
 

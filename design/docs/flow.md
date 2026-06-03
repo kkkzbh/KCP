@@ -70,12 +70,26 @@ for(const value : values) {
 }
 ```
 
+```cp
+for(let ref value : values) {
+    value += 1;
+}
+```
+
+```cp
+for(const ref value : values) {
+    use(value);
+}
+```
+
 规则：
 
-- 绑定关键字必须是 `let` 或 `const`。
-- 范围表达式的目标语义基于 [iteration.md](iteration.md)：表达式必须能产生 `iterator`，也就是实现 `iterable` 或本身实现 `iterator`。
-- 循环变量类型为 iterator 的 `iter_item`。
-- `const` 循环变量不能被重新赋值。
+- 绑定语法是声明语法的子集：`let` / `const` 后可以显式写 `ref`。
+- 范围表达式的目标语义基于 [iteration.md](iteration.md)：表达式必须是内建数组、实现 `iterable`，或在只读上下文中实现 `const_iterable`。实现 `iterator` 的游标本身不能直接作为 range-for 的范围表达式。
+- `for(let value : range)` 和 `for(const value : range)` 默认按值绑定，循环变量类型为 `read_type(iter_item)`。
+- `for(let ref value : range)` 要求 `iter_item` 是可写引用，并把循环变量绑定为 `T&`。
+- `for(const ref value : range)` 要求 `iter_item` 是引用，并把循环变量绑定为 `T const&`。
+- `const` 循环变量或 `const ref` 循环变量不能被写入。
 
 不支持 C++ 三段式 `for(init; condition; step)`。
 
