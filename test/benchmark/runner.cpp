@@ -118,16 +118,27 @@ auto require_tool(std::string_view label, std::filesystem::path const& path) -> 
     return true;
 }
 
+auto coverage_links_gcov() -> bool
+{
+    auto const* value = std::getenv("CP_COMPILER_TEST_LINK_GCOV");
+    return value != nullptr and value[0] != '\0';
+}
+
 auto compile_command(language const& value, std::filesystem::path const& source, std::filesystem::path const& output) -> std::vector<std::string>
 {
     if(value.name == "cp") {
-        return {
+        auto command = std::vector<std::string>{
             value.compiler.string(),
             source.string(),
             "--release",
             "-o",
             output.string(),
         };
+        if(coverage_links_gcov()) {
+            command.emplace_back("--link-arg");
+            command.emplace_back("-lgcov");
+        }
+        return command;
     }
     if(value.name == "c++") {
         return {

@@ -16,8 +16,11 @@ SKIP_DIRS = {
     "build",
     "build-clion",
     "build-clion-plugin-native",
+    "build-coverage",
+    "build-coverage-smoke",
     "cmake-build-debug",
     "cmake-build-release",
+    "node_modules",
 }
 
 CPP_SUFFIXES = {".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".cppm", ".ixx"}

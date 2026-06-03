@@ -4,11 +4,14 @@ import org.gradle.api.tasks.bundling.Zip
 import org.gradle.api.tasks.testing.Test
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
+import org.gradle.testing.jacoco.tasks.JacocoReport
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
 plugins {
     id("java")
+    jacoco
     kotlin("jvm") version "2.3.0"
     kotlin("plugin.serialization") version "2.3.0"
     id("org.jetbrains.intellij.platform") version "2.13.1"
@@ -74,6 +77,10 @@ intellijPlatform {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
         }
     }
+}
+
+jacoco {
+    toolVersion = "0.8.13"
 }
 
 val configureNativeHelper by tasks.registering(Exec::class) {
@@ -226,6 +233,27 @@ tasks.named<Test>("test") {
     useJUnit()
     systemProperty("cp.helper.path", nativeHelperPath.asFile.absolutePath)
     systemProperty("cp.repo.root", repoRoot.asFile.absolutePath)
+    extensions.configure<JacocoTaskExtension> {
+        isIncludeNoLocationClasses = true
+        excludes = listOf("jdk.internal.*")
+    }
+}
+
+tasks.named<JacocoReport>("jacocoTestReport") {
+    dependsOn(tasks.named("test"))
+
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+        csv.required.set(false)
+    }
+
+    classDirectories.setFrom(
+        files(
+            layout.buildDirectory.dir("instrumented/instrumentCode"),
+        ),
+    )
+    sourceDirectories.setFrom(files("src/main/kotlin"))
 }
 
 tasks.named<Zip>("buildPlugin") {

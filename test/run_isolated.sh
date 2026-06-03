@@ -38,6 +38,9 @@ if [[ "${detach}" == "1" ]]; then
 else
     run_args+=(--wait)
 fi
+if [[ -n "${CP_COMPILER_TEST_LINK_GCOV:-}" ]]; then
+    run_args+=(--setenv="CP_COMPILER_TEST_LINK_GCOV=${CP_COMPILER_TEST_LINK_GCOV}")
+fi
 
 set +e
 systemd-run "${run_args[@]}" \

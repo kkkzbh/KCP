@@ -8,8 +8,10 @@ script = ""
 name = "Build and Install kcp"
 icon = "tool"
 command = "bash .codex/scripts/build-install-kcp.sh"
+platform = "linux"
 
 [[actions]]
 name = "Build and Install CLion Plugin"
 icon = "tool"
 command = "bash .codex/scripts/build-install-clion-plugin.sh"
+platform = "linux"
