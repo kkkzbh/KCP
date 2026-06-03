@@ -6,7 +6,9 @@ import ir.quad;
 export dump_quads(quads: vector<quad> const&) -> string
 {
     let output = string{};
-    for(const ref item : quads) {
+    let index: usize = 0;
+    while(index < quads.size()) {
+        let item = quads[index];
         output.append("(");
         output.append(item.op.as_str());
         output.append(", ");
@@ -16,6 +18,7 @@ export dump_quads(quads: vector<quad> const&) -> string
         output.append(", ");
         output.append(item.result.as_str());
         output.append(")\n");
+        index += 1;
     }
     return output;
 }

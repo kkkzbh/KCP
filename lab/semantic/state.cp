@@ -83,12 +83,15 @@ impl semantic_analyzer {
         if(scopes.size() == 0 as usize) {
             return symbol_id{};
         }
-        const ref scope = scopes[scopes.size() - 1];
-        for(const ref id : scope.symbols) {
-            const ref symbol = result.symbols[id.index()];
+        let scope = scopes[scopes.size() - 1];
+        let index: usize = 0;
+        while(index < scope.symbols.size()) {
+            let id = scope.symbols[index];
+            let symbol = result.symbols[id.index()];
             if(symbol.name.as_str() == name) {
                 return id;
             }
+            index += 1;
         }
         return symbol_id{};
     }
@@ -98,12 +101,15 @@ impl semantic_analyzer {
         let scope_index = scopes.size();
         while(scope_index > 0 as usize) {
             scope_index -= 1;
-            const ref scope = scopes[scope_index];
-            for(const ref id : scope.symbols) {
-                const ref symbol = result.symbols[id.index()];
+            let scope = scopes[scope_index];
+            let symbol_index: usize = 0;
+            while(symbol_index < scope.symbols.size()) {
+                let id = scope.symbols[symbol_index];
+                let symbol = result.symbols[id.index()];
                 if(symbol.name.as_str() == name) {
                     return id;
                 }
+                symbol_index += 1;
             }
         }
         return symbol_id{};

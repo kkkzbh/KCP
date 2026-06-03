@@ -65,38 +65,6 @@ print_trace_token(kind: token_kind, text: str) -> void
     print("{}(\"{}\")", token_kind_name(kind), text);
 }
 
-print_grammar_symbol(symbol: grammar_symbol const&) -> void
-{
-    match symbol.data {
-        .terminal(kind) => {
-            print("{}", token_kind_name(kind));
-        },
-        .nonterminal(kind) => {
-            print("{}", nonterminal_kind_name(kind));
-        },
-        .epsilon => {
-            print("epsilon");
-        },
-    };
-}
-
-print_production(rule: production const&) -> void
-{
-    print("{}", nonterminal_kind_name(rule.lhs));
-    print(" ->");
-    if(rule.rhs.size() == 0 as usize) {
-        print(" epsilon");
-        return;
-    }
-
-    let index: usize = 0;
-    while(index < rule.rhs.size()) {
-        print(" ");
-        print_grammar_symbol(rule.rhs[index]);
-        index += 1;
-    }
-}
-
 print_trace_prefix(step: usize, depth: usize) -> void
 {
     print_usize_cell(step, 4 as usize);
@@ -104,12 +72,7 @@ print_trace_prefix(step: usize, depth: usize) -> void
     print_trace_indent(depth);
 }
 
-print_action_key(state: usize, kind: token_kind) -> void
-{
-    print("ACTION[{}, {}]", state, token_kind_name(kind));
-}
-
-print_tree_trace_row(tables: parser_tables const&, item: trace_record const&, visible_step: usize) -> usize
+print_tree_trace_row(item: trace_record const&, visible_step: usize) -> usize
 {
     if(item.action.as_str() == "exit" and item.detail.as_str() == "ok") {
         return visible_step;
@@ -131,20 +94,7 @@ print_tree_trace_row(tables: parser_tables const&, item: trace_record const&, vi
         return visible_step + 1;
     }
     if(item.action.as_str() == "match") {
-        print_action_key(item.state, item.lookahead_kind);
-        print(" = shift {}; match ", item.target_state);
-        print_trace_token(item.lookahead_kind, item.lookahead_text.as_str());
-        println("");
-        return visible_step + 1;
-    }
-    if(item.action.as_str() == "reduce") {
-        const ref rule = tables.grammar.productions[item.production];
-        print_action_key(item.state, item.lookahead_kind);
-        print(" = reduce p{}: ", item.production);
-        print_production(rule);
-        print("; pop {}", item.pop_count);
-        print("; GOTO[{}, {}] = {}", item.goto_state, nonterminal_kind_name(rule.lhs), item.goto_target);
-        print("; lookahead ");
+        print("match ");
         print_trace_token(item.lookahead_kind, item.lookahead_text.as_str());
         println("");
         return visible_step + 1;
@@ -157,8 +107,7 @@ print_tree_trace_row(tables: parser_tables const&, item: trace_record const&, vi
         return visible_step + 1;
     }
     if(item.action.as_str() == "accept") {
-        print_action_key(item.state, item.lookahead_kind);
-        println(" = accept {}", item.subject.as_str());
+        println("accept {}", item.subject.as_str());
         return visible_step + 1;
     }
 
@@ -197,7 +146,7 @@ main() -> i32
     }
 
     let result = parse(move lexical.tokens, parse_options{ .trace_enabled = true });
-    const ref program = result.ast.programs[result.root.value];
+    let program = result.ast.programs[result.root.value];
     println("mini c parser accepted: {}", result.accepted);
     println("mini c parser diagnostics: {}", result.diagnostics.size());
     println("mini c parser function count: {}", program.functions.size());
@@ -205,8 +154,8 @@ main() -> i32
     println("mini c parser expression count: {}", result.ast.expressions.size());
     println("mini c parser trace:");
     let visible_step: usize = 1;
-    for(const ref item : result.trace) {
-        visible_step = print_tree_trace_row(tables, item, visible_step);
+    for(let item : result.trace) {
+        visible_step = print_tree_trace_row(item, visible_step);
     }
 
     if(not result.accepted or result.diagnostics.size() != 0) {
@@ -218,10 +167,10 @@ main() -> i32
         return 5;
     }
 
-    const ref sort_function = result.ast.functions[program.functions[0 as usize].value];
-    const ref count_function = result.ast.functions[program.functions[1 as usize].value];
-    const ref checksum_function = result.ast.functions[program.functions[2 as usize].value];
-    const ref main_function = result.ast.functions[program.functions[3 as usize].value];
+    let sort_function = result.ast.functions[program.functions[0 as usize].value];
+    let count_function = result.ast.functions[program.functions[1 as usize].value];
+    let checksum_function = result.ast.functions[program.functions[2 as usize].value];
+    let main_function = result.ast.functions[program.functions[3 as usize].value];
     if(file.slice(sort_function.name) != "selection_sort") {
         println("mini c parser failed: first function is not selection_sort");
         return 6;

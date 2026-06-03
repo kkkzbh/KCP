@@ -25,10 +25,13 @@ read_source(path: str) -> string
 
 print_constant_values(semantics: semantic_result const&) -> void
 {
-    for(const ref item : semantics.expression_infos) {
+    let index: usize = 0;
+    while(index < semantics.expression_infos.size()) {
+        let item = semantics.expression_infos[index];
         if(item.info.constant.has_value()) {
             println("mini c semantic expr {} value: {}", item.expression.value, *item.info.constant);
         }
+        index += 1;
     }
 }
 

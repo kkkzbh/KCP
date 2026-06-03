@@ -9,9 +9,11 @@ import ir.state;
 impl quad_lowerer {
     lower_call(self&, callee: source_span, arguments: vector<expr_id> const&, needs_result: bool) -> string
     {
-        for(const ref argument : arguments) {
-            let value = lower_expression(argument);
+        let index: usize = 0;
+        while(index < arguments.size()) {
+            let value = lower_expression(arguments[index]);
             emit("param", "_", "_", value.as_str());
+            index += 1;
         }
 
         let target = string{source_text(callee)};
@@ -27,7 +29,7 @@ impl quad_lowerer {
 
     lower_expression(self&, id: expr_id) -> string
     {
-        const ref syntax = (*parsed).ast.expressions[id.value];
+        let syntax = (*parsed).ast.expressions[id.value];
         match syntax {
             .integer(value) => {
                 return string{source_text(value.full_span)};
