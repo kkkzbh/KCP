@@ -91,7 +91,6 @@ The standard library is implemented as ordinary cp modules. It currently include
 | `runtime/` | runtime ABI documentation and support |
 | `std/` | cp standard library source |
 | `design/` | language documentation and examples |
-| `lab/` | focused compiler-construction pipelines and sample grammars |
 | `clion-plugin/` | CLion plugin for cp language support |
 | `test/` | compiler, library, parser, lexer, and integration tests |
 
