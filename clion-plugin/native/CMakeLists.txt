@@ -44,7 +44,7 @@ target_link_libraries(cp_lexer_helper_cli
 )
 
 set_target_properties(cp_lexer_helper_cli PROPERTIES
-    OUTPUT_NAME "cp-lexer-helper"
+    OUTPUT_NAME "kcp-lexer-helper"
     RUNTIME_OUTPUT_DIRECTORY "${CP_LEXER_HELPER_ARTIFACT_DIR}"
 )
 

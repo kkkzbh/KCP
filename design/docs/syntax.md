@@ -1,10 +1,10 @@
 # 语法导览
 
-这页按学习顺序解释 cp 程序的主要语法。需要查完整规则时，再进入对应参考页。
+这页按学习顺序解释 KCP 程序的主要语法。需要查完整规则时，再进入对应参考页。
 
 ## 最小程序
 
-cp 的入口函数通常写成 `main() -> i32`。函数体使用花括号，返回类型放在参数列表之后。
+KCP 的入口函数通常写成 `main() -> i32`。函数体使用花括号，返回类型放在参数列表之后。
 
 ```cp
 main() -> i32
@@ -55,7 +55,7 @@ main() -> i32
 
 ## 表达式和控制流
 
-cp 使用 `if`、`while`、`do while` 和范围 `for`。布尔逻辑使用 `and`、`or`、`not`。
+KCP 使用 `if`、`while`、`do while` 和范围 `for`。布尔逻辑使用 `and`、`or`、`not`。
 
 ```cp
 sum_to(end: i32) -> i32
@@ -179,7 +179,7 @@ add(left, right) -> i32
 
 ## 所有权、借用和移动
 
-cp 默认按普通 copy 语义传值。需要借用时显式写 `ref` / `const ref`，需要转移所有权时显式写 `move`，需要在泛型中保留实参值类别时写 `forward`。
+KCP 默认按普通 copy 语义传值。需要借用时显式写 `ref` / `const ref`，需要转移所有权时显式写 `move`，需要在泛型中保留实参值类别时写 `forward`。
 
 ```cp
 take(value: string move&) -> string

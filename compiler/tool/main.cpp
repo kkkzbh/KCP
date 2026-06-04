@@ -76,7 +76,7 @@ auto import_roots(std::string_view executable) -> std::vector<std::filesystem::p
 auto print_help(std::ostream& output) -> void
 {
     output
-        << "usage: cp [options] <input.cp>...\n"
+        << "usage: kcp [options] <input.cp>...\n"
         << "\n"
         << "output control:\n"
         << "  -o, --output <path>      output path, default a.out\n"
@@ -278,7 +278,7 @@ auto run_command(std::vector<std::string> const& arguments, bool verbose) -> boo
 auto unique_temp_path(std::string_view suffix) -> std::filesystem::path
 {
     auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
-    auto name = std::format("cp-{}{}", stamp, suffix);
+    auto name = std::format("kcp-{}{}", stamp, suffix);
     return std::filesystem::temp_directory_path() / name;
 }
 

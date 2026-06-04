@@ -1,6 +1,6 @@
 # 类型转换
 
-本文档记录 cp 的显式转换语法。类型转换的可转换性规则见 [type_system.md](type_system.md)。
+本文档记录 KCP 的显式转换语法。类型转换的可转换性规则见 [type_system.md](type_system.md)。
 
 只设计显式转换，不采用宽泛的 C++ 式隐式转换。
 

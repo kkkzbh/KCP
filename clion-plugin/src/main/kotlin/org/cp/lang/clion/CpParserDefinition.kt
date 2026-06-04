@@ -54,7 +54,7 @@ class CpParserDefinition : ParserDefinition {
 class CpFile(viewProvider: FileViewProvider) : PsiFileBase(viewProvider, CpLanguage) {
     override fun getFileType() = CpFileType.INSTANCE
 
-    override fun toString(): String = "cp 文件"
+    override fun toString(): String = "KCP 文件"
 }
 
 open class CpPsiElement(node: ASTNode) : ASTWrapperPsiElement(node), Navigatable {

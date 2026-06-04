@@ -1,6 +1,6 @@
 ---
 name: cp-code-style
-description: Code-writing style and validation workflow for the /home/kkkzbh/code/cp compiler-lab repo. Use before editing C++ modules, tests, CMake, or project documentation that replaces code_style.md.
+description: Code-writing style and validation workflow for the /home/kkkzbh/code/cp KCP compiler repo. Use before editing C++ modules, tests, CMake, or project documentation that replaces code_style.md.
 ---
 
 # CP Code Style

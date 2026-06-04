@@ -28,7 +28,7 @@ class CpGotoDeclarationHandler : GotoDeclarationHandler {
         }
         val element = sourceElement?.cpNavigationElementNearOffset(offset) ?: return null
         if (element.containingFile?.language != CpLanguage) {
-            CpNavigationLog.debug { "goto handler ignored non-cp source=${element.cpDebug()}" }
+            CpNavigationLog.debug { "goto handler ignored non-KCP source=${element.cpDebug()}" }
             return null
         }
 
@@ -45,7 +45,7 @@ class CpDirectNavigationProvider : DirectNavigationProvider {
         CpNavigationLog.debug { "direct provider source=${element.cpDebug()}" }
         val source = element.cpNavigationElementNearOffset(element.textRange.endOffset) ?: return null
         if (source.containingFile?.language != CpLanguage) {
-            CpNavigationLog.debug { "direct provider ignored non-cp source=${source.cpDebug()}" }
+            CpNavigationLog.debug { "direct provider ignored non-KCP source=${source.cpDebug()}" }
             return null
         }
         val target = cpResolveDeclarationForAction(source, null)

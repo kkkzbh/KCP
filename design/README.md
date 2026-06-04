@@ -1,6 +1,6 @@
 # design 文档站
 
-`design/` 是 cp 语言的设计资料和 VitePress 文档站根目录。公开网站页面以 `index.md` 和 `docs/index.md` 为入口；本 `README.md` 只作为仓库内维护说明，不参与 VitePress 构建。
+`design/` 是 KCP 语言的设计资料和 VitePress 文档站根目录。公开网站页面以 `index.md` 和 `docs/index.md` 为入口；本 `README.md` 只作为仓库内维护说明，不参与 VitePress 构建。
 
 ## 目录关系
 
@@ -11,7 +11,7 @@
 - `.vitepress/config.mts`：VitePress 站点配置，维护导航栏、侧边栏、本地搜索和 Markdown 渲染规则。
 - `package.json`：文档站的本地预览、构建和 Cloudflare Pages 部署脚本。
 
-仓库根目录的 `std/` 保存标准库源码。`docs/` 中的标准库说明应和这些普通 cp 模块保持一致。
+仓库根目录的 `std/` 保存标准库源码。`docs/` 中的标准库说明应和这些普通 KCP 模块保持一致。
 
 ## 本地命令
 
@@ -28,7 +28,7 @@ npm run preview
 
 ## 部署
 
-Cloudflare Pages 项目名为 `cp-docs`，生产入口域名为 `cp.kkkzbh.cn`。
+Cloudflare Pages 项目名为 `kcp-docs`，生产入口域名为 `kcp.kkkzbh.cn`。
 
 常规部署脚本：
 

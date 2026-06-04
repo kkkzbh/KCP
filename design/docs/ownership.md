@@ -1,10 +1,10 @@
 # 所有权、借用与移动
 
-本文档记录 cp 的所有权前置语义：显式借用、显式移动、`like` const 转发、移动引用、特殊成员函数和能力推导。引用和指针的基础类型规则见 [type_system.md](type_system.md)，结构体构造、析构和成员函数见 [struct.md](struct.md)。
+本文档记录 KCP 的所有权前置语义：显式借用、显式移动、`like` const 转发、移动引用、特殊成员函数和能力推导。引用和指针的基础类型规则见 [type_system.md](type_system.md)，结构体构造、析构和成员函数见 [struct.md](struct.md)。
 
 ## 设计目标
 
-cp 默认保持普通值语义：
+KCP 默认保持普通值语义：
 
 ```cp
 let b = a; // copy

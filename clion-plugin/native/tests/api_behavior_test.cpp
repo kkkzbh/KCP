@@ -618,7 +618,7 @@ R"(> i32 {
         invalid_out,
         invalid_err);
     assert_true(invalid_code == 2, "invalid cli arguments should fail");
-    assert_true(contains(invalid_err.view(), "usage: cp-lexer-helper"),
+    assert_true(contains(invalid_err.view(), "usage: kcp-lexer-helper"),
         "invalid cli arguments should print usage");
 
     return 0;

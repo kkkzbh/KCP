@@ -47,7 +47,7 @@ def print_summary(report: Path, minimum: float | None) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Summarize JaCoCo coverage for the cp CLion plugin.")
+    parser = argparse.ArgumentParser(description="Summarize JaCoCo coverage for the KCP CLion plugin.")
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--minimum", type=float)
     args = parser.parse_args()

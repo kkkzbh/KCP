@@ -56,7 +56,7 @@ truncate(self) -> open_options;
 append(self) -> open_options;
 ```
 
-`open_options{}` 的 bitset 值为 0。标准库不在 cp 层验证 `read` / `write` / `append` / `truncate` 的组合是否合法，也不自动补默认读写模式；调用者应传入 runtime 能解释的组合。
+`open_options{}` 的 bitset 值为 0。标准库不在 KCP 层验证 `read` / `write` / `append` / `truncate` 的组合是否合法，也不自动补默认读写模式；调用者应传入 runtime 能解释的组合。
 
 ## file
 
@@ -91,7 +91,7 @@ file.close(self&) -> expected<usize, io_error>
 
 ## runtime ABI
 
-cp 侧 runtime 声明位于 `std.detail.runtime`：
+KCP 侧 runtime 声明位于 `std.detail.runtime`：
 
 ```cp
 export extern "C" cp_file_open(path: char const*, path_len: usize, flags: u8) -> u8*;
@@ -100,7 +100,7 @@ export extern "C" cp_file_read(handle: u8*, data: u8*, len: usize, out_len: usiz
 export extern "C" cp_file_write(handle: u8*, data: u8 const*, len: usize, out_len: usize*) -> i32;
 ```
 
-仓库 runtime 的 C++ 声明当前使用 `std::uint64_t` 承接 cp 侧的 `usize` 长度参数：
+仓库 runtime 的 C++ 声明当前使用 `std::uint64_t` 承接 KCP 侧的 `usize` 长度参数：
 
 ```cpp
 extern "C" std::uint8_t* cp_file_open(char const* path, std::uint64_t path_len, std::uint8_t flags);

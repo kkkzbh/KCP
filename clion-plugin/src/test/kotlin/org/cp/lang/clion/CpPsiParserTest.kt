@@ -576,10 +576,18 @@ class CpPsiParserTest : BasePlatformTestCase() {
     fun testRealLabAndStdCompilerSyntaxDoNotFlattenPsi() {
         val repoRoot = repoRoot()
         val grammar = parse(Files.readString(repoRoot.resolve("lab/parser/grammar.cp")))
-        assertTrue(grammar.descendants(CpElements.TEMPLATE_IF_STATEMENT).isNotEmpty())
-        assertTrue(grammar.descendants(CpElements.TEMPLATE_FOR_STATEMENT).isNotEmpty())
         val grammarErrors = grammar.collectPsiErrors()
         assertTrue("lab/parser/grammar.cp should not produce PSI errors: $grammarErrors", grammarErrors.isEmpty())
+
+        val sources = parse(Files.readString(repoRoot.resolve("std/ranges/sources.cp")))
+        assertTrue(sources.descendants(CpElements.TEMPLATE_IF_STATEMENT).isNotEmpty())
+        val sourcesErrors = sources.collectPsiErrors()
+        assertTrue("std/ranges/sources.cp should not produce PSI errors: $sourcesErrors", sourcesErrors.isEmpty())
+
+        val format = parse(Files.readString(repoRoot.resolve("std/io/format.cp")))
+        assertTrue(format.descendants(CpElements.TEMPLATE_FOR_STATEMENT).isNotEmpty())
+        val formatErrors = format.collectPsiErrors()
+        assertTrue("std/io/format.cp should not produce PSI errors: $formatErrors", formatErrors.isEmpty())
 
         val btreeStorage = parse(Files.readString(repoRoot.resolve("std/collections/detail/btree_storage.cp")))
         assertTrue(btreeStorage.descendants(CpElements.TYPE_REFERENCE).any { it.text == "storage [K; 39]" })

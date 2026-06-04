@@ -24,12 +24,12 @@ val pluginId = providers.gradleProperty("pluginId").get()
 val pluginName = providers.gradleProperty("pluginName").get()
 val repoRoot = layout.projectDirectory.dir("..")
 val nativeBuildDir = repoRoot.dir("build-clion-plugin-native")
-val nativeHelperPath = nativeBuildDir.file("artifacts/native/linux-x86_64/cp-lexer-helper")
-val nativeCompilerPath = nativeBuildDir.file("compiler/cp")
+val nativeHelperPath = nativeBuildDir.file("artifacts/native/linux-x86_64/kcp-lexer-helper")
+val nativeCompilerPath = nativeBuildDir.file("compiler/kcp")
 val nativeRuntimePath = nativeBuildDir.file("runtime/libcp_runtime.a")
 val stagedNativeDir = layout.buildDirectory.dir("staged-native/linux-x86_64")
-val stagedNativeHelper = stagedNativeDir.map { it.file("cp-lexer-helper") }
-val stagedNativeCompiler = stagedNativeDir.map { it.file("cp") }
+val stagedNativeHelper = stagedNativeDir.map { it.file("kcp-lexer-helper") }
+val stagedNativeCompiler = stagedNativeDir.map { it.file("kcp") }
 val stagedNativeRuntime = stagedNativeDir.map { it.file("libcp_runtime.a") }
 val stagedStdlibDir = stagedNativeDir.map { it.dir("std") }
 val clionLocalPath = providers.gradleProperty("clionLocalPath")
@@ -69,8 +69,8 @@ intellijPlatform {
         name = providers.gradleProperty("pluginName")
         version = providers.gradleProperty("pluginVersion")
         description = """
-            为 cp 实验语言提供丰富高亮和解析器/语义诊断。
-            编辑器词法分析在 CLion 内运行，项目级前端分析委托给原生 cp 辅助程序。
+            为 KCP 语言提供丰富高亮和解析器/语义诊断。
+            编辑器词法分析在 CLion 内运行，项目级前端分析委托给原生 KCP 辅助程序。
         """.trimIndent()
 
         ideaVersion {
@@ -85,7 +85,7 @@ jacoco {
 
 val configureNativeHelper by tasks.registering(Exec::class) {
     group = "native"
-    description = "Configure the native cp lexer helper build."
+    description = "Configure the native KCP lexer helper build."
 
     inputs.file(repoRoot.file("CMakeLists.txt"))
     inputs.dir(repoRoot.dir("diagnostic"))
@@ -107,7 +107,7 @@ val configureNativeHelper by tasks.registering(Exec::class) {
 
 val buildNativeHelper by tasks.registering(Exec::class) {
     group = "native"
-    description = "Build the native cp lexer helper."
+    description = "Build the native KCP lexer helper."
 
     dependsOn(configureNativeHelper)
     inputs.file(nativeBuildDir.file("CMakeCache.txt"))
@@ -132,7 +132,7 @@ val buildNativeHelper by tasks.registering(Exec::class) {
 
 val buildNativeCompiler by tasks.registering(Exec::class) {
     group = "native"
-    description = "Build the native cp compiler used by run configurations."
+    description = "Build the native KCP compiler used by run configurations."
 
     dependsOn(configureNativeHelper)
     inputs.file(nativeBuildDir.file("CMakeCache.txt"))
@@ -148,14 +148,14 @@ val buildNativeCompiler by tasks.registering(Exec::class) {
     commandLine(
         "cmake",
         "--build", nativeBuildDir.asFile.absolutePath,
-        "--target", "cp",
+        "--target", "kcp",
         "-j4",
     )
 }
 
 val stageNativeHelper by tasks.registering {
     group = "native"
-    description = "Stage the native cp lexer helper for plugin packaging."
+    description = "Stage the native KCP lexer helper for plugin packaging."
 
     dependsOn(buildNativeHelper)
     inputs.file(nativeHelperPath)
@@ -172,7 +172,7 @@ val stageNativeHelper by tasks.registering {
 
 val stageNativeCompiler by tasks.registering {
     group = "native"
-    description = "Stage the native cp compiler and runtime for plugin packaging."
+    description = "Stage the native KCP compiler and runtime for plugin packaging."
 
     dependsOn(buildNativeCompiler)
     inputs.file(nativeCompilerPath)
@@ -194,7 +194,7 @@ val stageNativeCompiler by tasks.registering {
 
 val stageStdlib by tasks.registering(Sync::class) {
     group = "native"
-    description = "Stage the cp standard library for run configurations."
+    description = "Stage the KCP standard library for run configurations."
 
     from(repoRoot.dir("std"))
     into(stagedStdlibDir)
@@ -212,11 +212,11 @@ tasks.named("prepareSandbox").configure {
             .toPath()
         Files.createDirectories(targetDir)
 
-        val helper = targetDir.resolve("cp-lexer-helper")
+        val helper = targetDir.resolve("kcp-lexer-helper")
         Files.copy(stagedNativeHelper.get().asFile.toPath(), helper, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES)
         helper.toFile().setExecutable(true)
 
-        val compiler = targetDir.resolve("cp")
+        val compiler = targetDir.resolve("kcp")
         Files.copy(stagedNativeCompiler.get().asFile.toPath(), compiler, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.COPY_ATTRIBUTES)
         compiler.toFile().setExecutable(true)
 

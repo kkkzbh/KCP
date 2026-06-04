@@ -88,7 +88,7 @@ class CpEditorSupportTest {
     fun colorSettingsPageDescribesAllCustomHighlightTags() {
         val page = CpColorSettingsPage()
 
-        assertEquals("cp", page.displayName)
+        assertEquals("KCP", page.displayName)
         assertNull(page.icon)
         assertTrue(page.highlighter is CpSyntaxHighlighter)
         assertTrue(page.demoText.contains("<typeParameter>T</typeParameter>"))

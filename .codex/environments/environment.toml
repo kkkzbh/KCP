@@ -1,11 +1,11 @@
 version = 1
-name = "cp"
+name = "KCP"
 
 [setup]
 script = ""
 
 [[actions]]
-name = "Build and Install kcp"
+name = "Build and Install KCP"
 icon = "tool"
 command = "bash .codex/scripts/build-install-kcp.sh"
 platform = "linux"

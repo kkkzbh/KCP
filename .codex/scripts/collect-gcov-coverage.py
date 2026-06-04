@@ -123,7 +123,7 @@ def print_summary(covered: int, total: int, by_root: dict[str, tuple[int, int]])
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Collect gcov line coverage for cp C++ sources.")
+    parser = argparse.ArgumentParser(description="Collect gcov line coverage for KCP C++ sources.")
     parser.add_argument("--repo-root", type=Path, required=True)
     parser.add_argument("--build-dir", type=Path, required=True)
     parser.add_argument("--minimum", type=float)

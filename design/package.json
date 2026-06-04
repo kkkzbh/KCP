@@ -1,13 +1,13 @@
 {
-  "name": "cp-language-docs",
+  "name": "kcp-language-docs",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vitepress dev --host 127.0.0.1",
     "build": "vitepress build",
     "preview": "vitepress preview --host 127.0.0.1",
-    "cf:project": "wrangler pages project create cp-docs --production-branch main",
-    "deploy:pages": "npm run build && wrangler pages deploy .vitepress/dist --project-name cp-docs --branch main --commit-dirty=true"
+    "cf:project": "wrangler pages project create kcp-docs --production-branch main",
+    "deploy:pages": "npm run build && wrangler pages deploy .vitepress/dist --project-name kcp-docs --branch main --commit-dirty=true"
   },
   "devDependencies": {
     "vitepress": "latest",

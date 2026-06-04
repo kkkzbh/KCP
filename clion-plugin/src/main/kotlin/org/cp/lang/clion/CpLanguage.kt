@@ -7,9 +7,9 @@ import javax.swing.Icon
 object CpLanguage : Language("cp")
 
 class CpFileType private constructor() : LanguageFileType(CpLanguage) {
-    override fun getName(): String = "cp"
+    override fun getName(): String = "KCP"
 
-    override fun getDescription(): String = "cp 源文件"
+    override fun getDescription(): String = "KCP 源文件"
 
     override fun getDefaultExtension(): String = "cp"
 

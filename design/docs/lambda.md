@@ -1,10 +1,10 @@
 # Lambda 与函数值
 
-本文档记录 cp 的函数值、函数指针、lambda 和闭包设计。普通函数声明、返回类型推导和块表达式规则分别见 [type_system.md](type_system.md) 与 [struct.md](struct.md)。
+本文档记录 KCP 的函数值、函数指针、lambda 和闭包设计。普通函数声明、返回类型推导和块表达式规则分别见 [type_system.md](type_system.md) 与 [struct.md](struct.md)。
 
 ## 函数类型
 
-cp 区分函数类型和函数指针类型：
+KCP 区分函数类型和函数指针类型：
 
 ```cp
 f(i32, i32) -> i32

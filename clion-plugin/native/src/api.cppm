@@ -1857,7 +1857,7 @@ auto parse_resolve_request(std::string_view text, std::ostream& error) -> std::o
 
 auto usage(std::ostream& error) -> void
 {
-    error << "usage: cp-lexer-helper <analyze|tokens|inspect|resolve> --stdin [--filename <name>] --format json\n";
+    error << "usage: kcp-lexer-helper <analyze|tokens|inspect|resolve> --stdin [--filename <name>] --format json\n";
 }
 
 struct cli_request

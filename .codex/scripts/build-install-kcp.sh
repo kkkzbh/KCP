@@ -10,9 +10,9 @@ else
     cmake -S . -B build
 fi
 
-cmake --build build --target cp -j "$(nproc)"
+cmake --build build --target kcp -j "$(nproc)"
 
-install -Dm755 build/compiler/cp "$HOME/.local/bin/kcp"
+install -Dm755 build/compiler/kcp "$HOME/.local/bin/kcp"
 install -Dm644 build/runtime/libcp_runtime.a "$HOME/.local/lib/kcp/libcp_runtime.a"
 
 rm -rf "$HOME/.local/share/kcp/std"

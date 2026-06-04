@@ -119,7 +119,7 @@ auto check_binary_exit(test_tools const& tools) -> void
     write_source(source, "main() -> i32 { return 42; }");
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should emit a binary");
+    test_parser::assert_true(status == 0, "KCP should emit a binary");
     test_parser::assert_true(std::filesystem::exists(app), "binary output should exist");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "binary should return 42");
 }
@@ -145,7 +145,7 @@ auto check_short_circuit_binary(test_tools const& tools) -> void
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile short-circuit binary");
+    test_parser::assert_true(status == 0, "KCP should compile short-circuit binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 0, "short-circuit binary should not evaluate the skipped operand");
 }
 
@@ -165,7 +165,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile extern C binary");
+    test_parser::assert_true(status == 0, "KCP should compile extern C binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "extern C binary should call libc abs");
 }
 
@@ -201,7 +201,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile member calls with default arguments");
+    test_parser::assert_true(status == 0, "KCP should compile member calls with default arguments");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 5, "member default argument should use the declared expression");
 }
 
@@ -226,7 +226,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile static local binary");
+    test_parser::assert_true(status == 0, "KCP should compile static local binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 12, "static local should keep its value across calls");
 }
 
@@ -252,7 +252,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile struct field defaults");
+    test_parser::assert_true(status == 0, "KCP should compile struct field defaults");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 44, "struct field defaults should fill omitted fields");
 }
 
@@ -276,7 +276,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile UFCS receiver implicit conversion");
+    test_parser::assert_true(status == 0, "KCP should compile UFCS receiver implicit conversion");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "UFCS receiver should be converted before the call");
 }
 
@@ -306,7 +306,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile ordinary calls that fall back to first-argument UFCS methods");
+    test_parser::assert_true(status == 0, "KCP should compile ordinary calls that fall back to first-argument UFCS methods");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "first-argument UFCS method call should pass receiver explicitly");
 }
 
@@ -319,7 +319,7 @@ auto check_emit_ll(test_tools const& tools) -> void
     write_source(source, "main() -> i32 { return 42; }");
 
     auto status = compile(tools, { source.string(), "--emit", "ll", "-o", output.string() });
-    test_parser::assert_true(status == 0, "cp should emit LLVM IR");
+    test_parser::assert_true(status == 0, "KCP should emit LLVM IR");
     auto text = read_text(output);
     test_parser::assert_true(text.contains("define") and text.contains("@main"), "LLVM IR should define main");
     test_parser::assert_true(text.contains("ret i32 42"), "LLVM IR should return 42");
@@ -338,7 +338,7 @@ auto check_emit_obj(test_tools const& tools) -> void
     write_source(source, "main() -> i32 { return 42; }");
 
     auto status = compile(tools, { source.string(), "--emit", "obj", "-o", object.string() });
-    test_parser::assert_true(status == 0, "cp should emit object code");
+    test_parser::assert_true(status == 0, "KCP should emit object code");
     test_parser::assert_true(std::filesystem::exists(object), "object output should exist");
     test_parser::assert_true(
         run_status({ tools.clang.string(), object.string(), "-o", app.string() }) == 0,
@@ -357,26 +357,26 @@ auto check_cli_option_surface(test_tools const& tools) -> void
     auto mir = dir / "mir.err";
     write_source(source, "main() -> i32 { return 42; }");
 
-    test_parser::assert_true(run_stdout({ tools.cp.string(), "--help" }, stdout_path) == 0, "cp --help should succeed");
+    test_parser::assert_true(run_stdout({ tools.cp.string(), "--help" }, stdout_path) == 0, "KCP --help should succeed");
     test_parser::assert_true(read_text(stdout_path).contains("--emit"), "help output should describe emit mode");
 
-    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string() }, stderr_path)) == 2, "cp should reject missing inputs");
+    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string() }, stderr_path)) == 2, "KCP should reject missing inputs");
     test_parser::assert_true(read_text(stderr_path).contains("expected at least one input file"), "missing input should explain the problem");
 
-    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), "--unknown" }, stderr_path)) == 2, "cp should reject unknown options");
+    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), "--unknown" }, stderr_path)) == 2, "KCP should reject unknown options");
     test_parser::assert_true(read_text(stderr_path).contains("unexpected option"), "unknown option should explain the problem");
 
-    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), "--emit", "bad", source.string() }, stderr_path)) == 2, "cp should reject unknown emit kinds");
+    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), "--emit", "bad", source.string() }, stderr_path)) == 2, "KCP should reject unknown emit kinds");
     test_parser::assert_true(read_text(stderr_path).contains("unknown emit kind"), "bad emit kind should explain the problem");
 
-    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), "--clang" }, stderr_path)) == 2, "cp should reject missing --clang argument");
+    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), "--clang" }, stderr_path)) == 2, "KCP should reject missing --clang argument");
     test_parser::assert_true(read_text(stderr_path).contains("--clang requires an argument"), "missing --clang value should explain the problem");
 
     auto status = compile(tools, { source.string(), "-o", app.string(), "--dump-mir" });
-    test_parser::assert_true(status == 0, "cp should compile while dumping MIR");
+    test_parser::assert_true(status == 0, "KCP should compile while dumping MIR");
     test_parser::assert_true(std::filesystem::exists(app), "dump MIR compile should still write the binary");
 
-    test_parser::assert_true(run_stderr({ tools.cp.string(), source.string(), "--emit", "ll", "--dump-mir", "-o", (dir / "answer.ll").string() }, mir) == 0, "cp should dump MIR on stderr");
+    test_parser::assert_true(run_stderr({ tools.cp.string(), source.string(), "--emit", "ll", "--dump-mir", "-o", (dir / "answer.ll").string() }, mir) == 0, "KCP should dump MIR on stderr");
     test_parser::assert_true(read_text(mir).contains("func main"), "dump MIR output should include main");
 }
 
@@ -390,7 +390,7 @@ auto check_multi_input(test_tools const& tools) -> void
     write_source(main, "import math; main() -> i32 { return add(20, 22); }");
 
     auto status = compile(tools, { math.string(), main.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile multiple inputs together");
+    test_parser::assert_true(status == 0, "KCP should compile multiple inputs together");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "multi-input binary should return 42");
 }
 
@@ -445,7 +445,7 @@ auto check_keep_ll(test_tools const& tools) -> void
     write_source(source, "main() -> i32 { return 42; }");
 
     auto status = compile(tools, { source.string(), "-o", app.string(), "--keep-ll", ll.string() });
-    test_parser::assert_true(status == 0, "cp should emit binary while keeping LLVM IR");
+    test_parser::assert_true(status == 0, "KCP should emit binary while keeping LLVM IR");
     test_parser::assert_true(std::filesystem::exists(app), "binary should exist when keeping LLVM IR");
     test_parser::assert_true(std::filesystem::exists(ll), "kept LLVM IR should exist");
     test_parser::assert_true(
@@ -463,7 +463,7 @@ auto check_keep_obj(test_tools const& tools) -> void
     write_source(source, "main() -> i32 { return 42; }");
 
     auto status = compile(tools, { source.string(), "-o", app.string(), "--keep-obj", object.string() });
-    test_parser::assert_true(status == 0, "cp should emit binary while keeping object code");
+    test_parser::assert_true(status == 0, "KCP should emit binary while keeping object code");
     test_parser::assert_true(std::filesystem::exists(app), "binary should exist when keeping object code");
     test_parser::assert_true(std::filesystem::exists(object), "kept object should exist");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "kept-object binary should return 42");
@@ -495,7 +495,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile range-for sum");
+    test_parser::assert_true(status == 0, "KCP should compile range-for sum");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 7, "range-for sum should return 7");
 }
 
@@ -547,7 +547,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile range-for binding modes");
+    test_parser::assert_true(status == 0, "KCP should compile range-for binding modes");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 110, "range-for value/ref/const-ref bindings should have distinct runtime behavior");
 }
 
@@ -574,7 +574,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile array index reads and writes");
+    test_parser::assert_true(status == 0, "KCP should compile array index reads and writes");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 29, "array index binary should return indexed values");
 }
 
@@ -594,7 +594,7 @@ auto check_tuple_member_binary(test_tools const& tools) -> void
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile tuple member reads and writes");
+    test_parser::assert_true(status == 0, "KCP should compile tuple member reads and writes");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "tuple member binary should return selected values");
 }
 
@@ -632,7 +632,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile while and do-while flow");
+    test_parser::assert_true(status == 0, "KCP should compile while and do-while flow");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 6, "flow binary should return 6");
 }
 
@@ -671,7 +671,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile labeled range-for");
+    test_parser::assert_true(status == 0, "KCP should compile labeled range-for");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "labeled range-for should return 42");
 }
 
@@ -683,7 +683,7 @@ auto check_types_example_emit_ll(test_tools const& tools) -> void
     auto source = tools.fixture_examples / "types" / "main.cp";
 
     auto status = compile(tools, { source.string(), "--emit", "ll", "-o", output.string() });
-    test_parser::assert_true(status == 0, "cp should emit LLVM IR for types example");
+    test_parser::assert_true(status == 0, "KCP should emit LLVM IR for types example");
     test_parser::assert_true(
         run_status({ tools.llvm_as.string(), output.string(), "-o", bitcode.string() }) == 0,
         "llvm-as should accept types example LLVM IR"
@@ -724,7 +724,7 @@ auto check_fixture_examples(test_tools const& tools) -> void
         ll_args.insert(ll_args.end(), { "--emit", "ll", "-o", output.string() });
 
         auto ll_status = compile(tools, ll_args);
-        test_parser::assert_true(ll_status == 0, std::format("cp should emit LLVM IR for {} example", group.name));
+        test_parser::assert_true(ll_status == 0, std::format("KCP should emit LLVM IR for {} example", group.name));
         test_parser::assert_true(
             run_status({ tools.llvm_as.string(), output.string(), "-o", bitcode.string() }) == 0,
             std::format("llvm-as should accept {} example LLVM IR", group.name)
@@ -738,7 +738,7 @@ auto check_fixture_examples(test_tools const& tools) -> void
         bin_args.insert(bin_args.end(), { "-o", app.string() });
 
         auto bin_status = compile(tools, bin_args);
-        test_parser::assert_true(bin_status == 0, std::format("cp should emit binary for {} example", group.name));
+        test_parser::assert_true(bin_status == 0, std::format("KCP should emit binary for {} example", group.name));
         test_parser::assert_true(std::filesystem::exists(app), std::format("{} example binary should exist", group.name));
         test_parser::assert_true(
             exit_code(run_status({ app.string() })) == group.expected_exit,
@@ -769,7 +769,7 @@ auto check_const_double_pointer_reference_alias(test_tools const& tools) -> void
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile i32 const**& alias assignment");
+    test_parser::assert_true(status == 0, "KCP should compile i32 const**& alias assignment");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 11, "i32 const**& should alias pp");
 }
 
@@ -795,7 +795,7 @@ auto check_mutable_double_pointer_reference_write(test_tools const& tools) -> vo
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile mutable i32**& writes");
+    test_parser::assert_true(status == 0, "KCP should compile mutable i32**& writes");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 13, "i32**& should write through pp");
 }
 
@@ -822,7 +822,7 @@ auto check_i64_triple_pointer_read_write(test_tools const& tools) -> void
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile i64*** read/write");
+    test_parser::assert_true(status == 0, "KCP should compile i64*** read/write");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "i64*** should read and write final pointee");
 }
 
@@ -850,7 +850,7 @@ auto check_i64_pointer_reference_slot_alias(test_tools const& tools) -> void
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile i64*& slot aliasing");
+    test_parser::assert_true(status == 0, "KCP should compile i64*& slot aliasing");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "i64*& should assign the pointer slot and write through");
 }
 
@@ -880,7 +880,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile reference parameters");
+    test_parser::assert_true(status == 0, "KCP should compile reference parameters");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 13, "reference parameter should alias caller slot");
 }
 
@@ -921,7 +921,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile copied reference-return value bindings");
+    test_parser::assert_true(status == 0, "KCP should compile copied reference-return value bindings");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "plain let should copy a reference-returned value");
 }
 
@@ -996,7 +996,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile destructor cleanup paths");
+    test_parser::assert_true(status == 0, "KCP should compile destructor cleanup paths");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 44, "destructors should run on block, break, and continue paths");
 }
 
@@ -1029,7 +1029,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "--emit", "ll", "-o", output.string() });
-    test_parser::assert_true(status == 0, "cp should emit LLVM IR for return cleanup");
+    test_parser::assert_true(status == 0, "KCP should emit LLVM IR for return cleanup");
     auto text = read_text(output);
     auto call = text.find("call void @cp.local.guard.guard.");
     auto ret = call == std::string::npos ? std::string::npos : text.find("ret i32", call);
@@ -1072,7 +1072,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile NRVO destructor binary");
+    test_parser::assert_true(status == 0, "KCP should compile NRVO destructor binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "NRVO should not destroy the returned local in the callee");
 }
 
@@ -1104,7 +1104,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile function pointer memory binary");
+    test_parser::assert_true(status == 0, "KCP should compile function pointer memory binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "function pointer memory binary should return 42");
 }
 
@@ -1144,7 +1144,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile storage memory binary");
+    test_parser::assert_true(status == 0, "KCP should compile storage memory binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "storage slots should work with construct_at and destroy_at");
 }
 
@@ -1166,7 +1166,7 @@ auto check_pointer_difference_binary(test_tools const& tools) -> void
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile pointer difference binary");
+    test_parser::assert_true(status == 0, "KCP should compile pointer difference binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "pointer difference should count elements");
 }
 
@@ -1210,7 +1210,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile update expression binary");
+    test_parser::assert_true(status == 0, "KCP should compile update expression binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "update expressions should write back and preserve prefix/postfix values");
 }
 
@@ -1235,7 +1235,7 @@ auto check_decltype_ref_destructure_binary(test_tools const& tools) -> void
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile decltype/ref/destructure binary");
+    test_parser::assert_true(status == 0, "KCP should compile decltype/ref/destructure binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "decltype/ref/destructure binary should return 42");
 }
 
@@ -1262,7 +1262,7 @@ auto check_lambda_binary(test_tools const& tools) -> void
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile lambda binary");
+    test_parser::assert_true(status == 0, "KCP should compile lambda binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "lambda binary should return 42");
 }
 
@@ -1308,7 +1308,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile direct calls through callable fields");
+    test_parser::assert_true(status == 0, "KCP should compile direct calls through callable fields");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "callable fields should support function values and captured closures");
 }
 
@@ -1331,7 +1331,7 @@ auto check_nested_inferred_lambda_binary(test_tools const& tools) -> void
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile nested inferred lambda binary");
+    test_parser::assert_true(status == 0, "KCP should compile nested inferred lambda binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 3, "nested inferred lambda should return 3");
 }
 
@@ -1356,7 +1356,7 @@ auto check_generic_lambda_binary(test_tools const& tools) -> void
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile generic lambda binary");
+    test_parser::assert_true(status == 0, "KCP should compile generic lambda binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "generic lambda binary should return 42");
 }
 
@@ -1431,7 +1431,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile lambda capture mode binary");
+    test_parser::assert_true(status == 0, "KCP should compile lambda capture mode binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "lambda capture mode binary should return 42");
 }
 
@@ -1455,7 +1455,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile generic struct binary");
+    test_parser::assert_true(status == 0, "KCP should compile generic struct binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "generic struct binary should return 42");
 }
 
@@ -1483,7 +1483,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile const generic struct binary");
+    test_parser::assert_true(status == 0, "KCP should compile const generic struct binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "const generic struct binary should return selected value");
 }
 
@@ -1520,7 +1520,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile generic function binary");
+    test_parser::assert_true(status == 0, "KCP should compile generic function binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 22, "generic function binary should return monomorphized value");
 }
 
@@ -1552,7 +1552,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile template if binary");
+    test_parser::assert_true(status == 0, "KCP should compile template if binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "template if binary should emit only selected branches");
 }
 
@@ -1581,7 +1581,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile inferred parameter generic binary");
+    test_parser::assert_true(status == 0, "KCP should compile inferred parameter generic binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "inferred parameter generic binary should return 42");
 }
 
@@ -1604,7 +1604,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile const generic array binary");
+    test_parser::assert_true(status == 0, "KCP should compile const generic array binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "const generic array binary should return selected value");
 }
 
@@ -1634,7 +1634,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { math.string(), main.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile imported generic function binary");
+    test_parser::assert_true(status == 0, "KCP should compile imported generic function binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "imported generic function binary should return 42");
 }
 
@@ -1699,7 +1699,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile parameter pack binary");
+    test_parser::assert_true(status == 0, "KCP should compile parameter pack binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "parameter pack binary should return 42");
 }
 
@@ -1734,7 +1734,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile variant match parameter pack binary");
+    test_parser::assert_true(status == 0, "KCP should compile variant match parameter pack binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "variant match parameter pack binary should return 42");
 }
 
@@ -1772,7 +1772,7 @@ first_nonzero<T...>(values: T...)
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile forward parameter-pack inferred-return binary");
+    test_parser::assert_true(status == 0, "KCP should compile forward parameter-pack inferred-return binary");
     test_parser::assert_true(
         exit_code(run_status({ app.string() })) == 42,
         "forward parameter-pack inferred-return binary should return 42"
@@ -1822,7 +1822,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile variant match type-pack inferred-return binary");
+    test_parser::assert_true(status == 0, "KCP should compile variant match type-pack inferred-return binary");
     test_parser::assert_true(
         exit_code(run_status({ app.string() })) == 42,
         "variant match type-pack inferred-return binary should return 42"
@@ -1851,7 +1851,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile callable type-pack return binary");
+    test_parser::assert_true(status == 0, "KCP should compile callable type-pack return binary");
     test_parser::assert_true(
         exit_code(run_status({ app.string() })) == 42,
         "callable type-pack return binary should return 42"
@@ -1926,7 +1926,7 @@ R"(main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile string index binary");
+    test_parser::assert_true(status == 0, "KCP should compile string index binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "string index binary should read first char");
 }
 
@@ -1983,7 +1983,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile string range-for binary");
+    test_parser::assert_true(status == 0, "KCP should compile string range-for binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "string range-for should iterate chars");
 }
 
@@ -2014,7 +2014,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile string comparison binary");
+    test_parser::assert_true(status == 0, "KCP should compile string comparison binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "string comparison binary should use lexicographic str operators");
 }
 
@@ -2108,7 +2108,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile string copy/move binary");
+    test_parser::assert_true(status == 0, "KCP should compile string copy/move binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "string copy/move binary should preserve ownership");
 }
 
@@ -2130,7 +2130,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile std.io nul string binary");
+    test_parser::assert_true(status == 0, "KCP should compile std.io nul string binary");
     test_parser::assert_true(exit_code(run_stdout({ app.string() }, output)) == 0, "std.io nul string binary should run");
     test_parser::assert_true(read_text(output) == std::string("a\0b", 3uz), "std.io should not truncate at nul");
 }
@@ -2195,7 +2195,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile std.io print binary");
+    test_parser::assert_true(status == 0, "KCP should compile std.io print binary");
     test_parser::assert_true(exit_code(run_stdout({ app.string() }, output)) == 0, "std.io print binary should run");
     test_parser::assert_true(
         read_text(output) == (
@@ -2291,7 +2291,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile std.io format error binary");
+    test_parser::assert_true(status == 0, "KCP should compile std.io format error binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "std.io format errors should be observable");
 }
 
@@ -2337,7 +2337,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile std.fs file IO binary");
+    test_parser::assert_true(status == 0, "KCP should compile std.fs file IO binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 0, "std.fs binary should write and read file data");
     test_parser::assert_true(read_text(data) == "cp-io", "std.fs binary should leave expected file contents");
 }
@@ -2405,7 +2405,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile operator overload binary");
+    test_parser::assert_true(status == 0, "KCP should compile operator overload binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "operator overload binary should return computed value");
 }
 
@@ -2446,7 +2446,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile builtin operator escape binary");
+    test_parser::assert_true(status == 0, "KCP should compile builtin operator escape binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "builtin operator escape binary should return computed value");
 }
 
@@ -2508,7 +2508,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile custom update operator overload binary");
+    test_parser::assert_true(status == 0, "KCP should compile custom update operator overload binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "custom update operator overload binary should return computed value");
 }
 
@@ -2624,7 +2624,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile std sort binary");
+    test_parser::assert_true(status == 0, "KCP should compile std sort binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "std sort binary should return sorted checksum");
 }
 
@@ -2689,7 +2689,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile forward reference binary");
+    test_parser::assert_true(status == 0, "KCP should compile forward reference binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "forward reference binary should preserve forwarding and const expression semantics");
 }
 
@@ -2716,7 +2716,7 @@ main() -> i32
         write_source(source, text);
 
         auto status = compile(tools, { source.string(), "-o", app.string() });
-        test_parser::assert_true(status == 0, "cp should compile iota through its public range modules");
+        test_parser::assert_true(status == 0, "KCP should compile iota through its public range modules");
         test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "public iota imports should expose iterable support");
     }
 }
@@ -2759,7 +2759,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile custom incrementable iota binary");
+    test_parser::assert_true(status == 0, "KCP should compile custom incrementable iota binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "custom incrementable iota should iterate by prefix ++");
 }
 
@@ -2805,7 +2805,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile composed std.ranges pipelines");
+    test_parser::assert_true(status == 0, "KCP should compile composed std.ranges pipelines");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "std.ranges pipelines should compose through UFCS");
 }
 
@@ -2868,7 +2868,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile std map/set binary");
+    test_parser::assert_true(status == 0, "KCP should compile std map/set binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 41, "std map/set binary should return ordered-container checksum");
 }
 
@@ -2924,7 +2924,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile defaulted comparison map/set binary");
+    test_parser::assert_true(status == 0, "KCP should compile defaulted comparison map/set binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "defaulted comparison should order map/set keys lexicographically");
 }
 
@@ -2982,7 +2982,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile direct enum/defaulted comparison binary");
+    test_parser::assert_true(status == 0, "KCP should compile direct enum/defaulted comparison binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "enum and defaulted comparison should produce weak_ordering values");
 }
 
@@ -3091,7 +3091,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile B-tree map/set stress binary");
+    test_parser::assert_true(status == 0, "KCP should compile B-tree map/set stress binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "B-tree map/set stress binary should preserve ordering, rank, nth, and remove");
 }
 
@@ -3633,7 +3633,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile miniC compiler-lab workload binary");
+    test_parser::assert_true(status == 0, "KCP should compile miniC compiler-lab workload binary");
     test_parser::assert_true(
         exit_code(run_status({ app.string() })) == 42,
         "miniC compiler-lab workload should cover lexer, recursive descent LL(1), LR(1) items, and quads"
@@ -3828,7 +3828,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile LL(1) FIRST/FOLLOW/SELECT workload");
+    test_parser::assert_true(status == 0, "KCP should compile LL(1) FIRST/FOLLOW/SELECT workload");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 41, "LL(1) workload should compute expected SELECT sizes");
 }
 
@@ -3935,7 +3935,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile semantic analyzer scope workload");
+    test_parser::assert_true(status == 0, "KCP should compile semantic analyzer scope workload");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "semantic scope workload should handle shadowing and diagnostics");
 }
 
@@ -4018,7 +4018,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile LR(1) action/goto table workload");
+    test_parser::assert_true(status == 0, "KCP should compile LR(1) action/goto table workload");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 142, "LR(1) table workload should preserve action and item ordering");
 }
 
@@ -4037,7 +4037,7 @@ auto check_panic_assert_binary(test_tools const& tools) -> void
 })"
     );
     auto assert_true_status = compile(tools, { assert_true_source.string(), "-o", assert_true_app.string() });
-    test_parser::assert_true(assert_true_status == 0, "cp should compile assert(true)");
+    test_parser::assert_true(assert_true_status == 0, "KCP should compile assert(true)");
     test_parser::assert_true(exit_code(run_status({ assert_true_app.string() })) == 42, "assert(true) should continue");
 
     auto panic_source = dir / "panic.cp";
@@ -4051,7 +4051,7 @@ auto check_panic_assert_binary(test_tools const& tools) -> void
 })"
     );
     auto panic_status = compile(tools, { panic_source.string(), "-o", panic_app.string() });
-    test_parser::assert_true(panic_status == 0, "cp should compile panic binary");
+    test_parser::assert_true(panic_status == 0, "KCP should compile panic binary");
     test_parser::assert_true(exit_code(run_stderr({ panic_app.string() }, panic_stderr)) != 0, "panic binary should fail");
     test_parser::assert_true(read_text(panic_stderr).contains("panic: boom"), "panic should write message to stderr");
 
@@ -4067,7 +4067,7 @@ auto check_panic_assert_binary(test_tools const& tools) -> void
 })"
     );
     auto assert_false_status = compile(tools, { assert_false_source.string(), "-o", assert_false_app.string() });
-    test_parser::assert_true(assert_false_status == 0, "cp should compile assert(false)");
+    test_parser::assert_true(assert_false_status == 0, "KCP should compile assert(false)");
     test_parser::assert_true(exit_code(run_stderr({ assert_false_app.string() }, assert_false_stderr)) != 0, "assert(false) should fail");
     test_parser::assert_true(read_text(assert_false_stderr).contains("panic: bad"), "assert(false) should write message to stderr");
 
@@ -4136,7 +4136,7 @@ main() -> i32
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
-    test_parser::assert_true(status == 0, "cp should compile checked string indexing");
+    test_parser::assert_true(status == 0, "KCP should compile checked string indexing");
     test_parser::assert_true(exit_code(run_stderr({ app.string() }, stderr_path)) != 0, "out-of-bounds string index should panic");
     test_parser::assert_true(read_text(stderr_path).contains("string index out of bounds"), "index panic should use contract message");
 
@@ -4153,7 +4153,7 @@ main() -> i32
 })"
     );
     auto array_status = compile(tools, { array_source.string(), "-o", array_app.string() });
-    test_parser::assert_true(array_status == 0, "cp should compile checked array indexing");
+    test_parser::assert_true(array_status == 0, "KCP should compile checked array indexing");
     test_parser::assert_true(exit_code(run_stderr({ array_app.string() }, array_stderr)) != 0, "out-of-bounds array index should panic");
     test_parser::assert_true(read_text(array_stderr).contains("array index out of bounds"), "array index panic should use contract message");
 }

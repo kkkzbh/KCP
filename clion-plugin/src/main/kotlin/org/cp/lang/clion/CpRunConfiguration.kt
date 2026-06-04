@@ -81,8 +81,8 @@ import javax.swing.JPanel
 
 class CpRunConfigurationType : ConfigurationTypeBase(
     ID,
-    "cp",
-    "从 main 函数运行 cp 源文件",
+    "KCP",
+    "从 main 函数运行 KCP 源文件",
     NotNullLazyValue.createValue { AllIcons.RunConfigurations.Application },
 ) {
     init {
@@ -214,15 +214,15 @@ class CpRunConfiguration(project: Project, factory: ConfigurationFactory, name: 
 
     override fun checkConfiguration() {
         val source = mainFile.toPathOrNull()
-            ?: throw RuntimeConfigurationError("请选择 cp main 源文件")
+            ?: throw RuntimeConfigurationError("请选择 KCP main 源文件")
         if (!Files.isRegularFile(source)) {
-            throw RuntimeConfigurationError("cp main 源文件不存在：$mainFile")
+            throw RuntimeConfigurationError("KCP main 源文件不存在：$mainFile")
         }
         if (source.fileName.toString().substringAfterLast('.', "") != CpFileType.INSTANCE.defaultExtension) {
-            throw RuntimeConfigurationError("cp main 源文件必须使用 .cp 扩展名")
+            throw RuntimeConfigurationError("KCP main 源文件必须使用 .cp 扩展名")
         }
         if (CpRunPaths.resolveCompiler(project, compilerPath, source) == null) {
-            throw RuntimeConfigurationError("找不到 cp 编译器；请构建编译器目标或设置编译器路径")
+            throw RuntimeConfigurationError("找不到 KCP 编译器；请构建编译器目标或设置编译器路径")
         }
         val resolvedWorkingDirectory = CpRunPaths.resolveWorkingDirectory(project, workingDirectory, source)
         if (!Files.isDirectory(resolvedWorkingDirectory)) {
@@ -301,13 +301,13 @@ private class CpRunConfigurationEditor(project: Project) : SettingsEditor<CpRunC
         mainFileField.addBrowseFolderListener(
             project,
             FileChooserDescriptorFactory.singleFile()
-                .withTitle("选择 cp main 源文件")
-                .withExtensionFilter("cp 源文件", CpFileType.INSTANCE.defaultExtension),
+                .withTitle("选择 KCP main 源文件")
+                .withExtensionFilter("KCP 源文件", CpFileType.INSTANCE.defaultExtension),
         )
         compilerPathField.addBrowseFolderListener(
             project,
             FileChooserDescriptorFactory.singleFile()
-                .withTitle("选择 cp 编译器"),
+                .withTitle("选择 KCP 编译器"),
         )
         commonProgramParametersPanel.setProgramParametersLabel("程序实参：")
         addRow(0, "编译器路径：", compilerPathField)
@@ -450,17 +450,17 @@ private class CpRunCommandLineState(environment: ExecutionEnvironment, private v
     CommandLineState(environment) {
     override fun startProcess(): ProcessHandler {
         val source = configuration.mainFile.toPathOrNull()
-            ?: throw ExecutionException("请选择 cp main 源文件")
+            ?: throw ExecutionException("请选择 KCP main 源文件")
         val compiler = CpRunPaths.resolveCompiler(configuration.project, configuration.compilerPath, source)
-            ?: throw ExecutionException("找不到 cp 编译器")
+            ?: throw ExecutionException("找不到 KCP 编译器")
         val executable = CpRunPaths.resolveBuildOutput(configuration.project, source)
         if (!Files.isRegularFile(executable)) {
             if (!configuration.runCpBuild()) {
-                throw ExecutionException("cp 构建失败；请检查编译器路径、源文件和编译选项")
+                throw ExecutionException("KCP 构建失败；请检查编译器路径、源文件和编译选项")
             }
         }
         if (!Files.isRegularFile(executable)) {
-            throw ExecutionException("cp 构建没有生成可执行文件：$executable")
+            throw ExecutionException("KCP 构建没有生成可执行文件：$executable")
         }
         val stdlibRoot = CpRunPaths.resolveStdlibRoot(configuration.project, source, compiler)
         val workingDirectory = CpRunPaths.resolveWorkingDirectory(configuration.project, configuration.workingDirectory, source)
@@ -495,13 +495,13 @@ private fun CpRunConfiguration.runCpBuild(): Boolean {
             progress.finish(SuccessResultImpl())
             true
         } else {
-            val message = "cp build failed with exit code ${output.exitCode}"
+            val message = "KCP build failed with exit code ${output.exitCode}"
             CP_BUILD_LOG.warn("$message\n${output.stdout}\n${output.stderr}")
             progress.finish(FailureResultImpl(message))
             false
         }
     }.getOrElse {
-        CP_BUILD_LOG.warn("cp build failed", it)
+        CP_BUILD_LOG.warn("KCP build failed", it)
         val message = it.localizedMessage ?: it.javaClass.simpleName
         progress.output("$message\n", ProcessOutputType.STDERR)
         progress.finish(FailureResultImpl(message, it))
@@ -530,9 +530,9 @@ private fun BuildProgress<BuildProgressDescriptor>.writeOutput(text: String, out
 
 private fun CpRunConfiguration.createBuildInvocation(): CpBuildInvocation {
     val source = mainFile.toPathOrNull()
-        ?: throw ExecutionException("请选择 cp main 源文件")
+        ?: throw ExecutionException("请选择 KCP main 源文件")
     val compiler = CpRunPaths.resolveCompiler(project, compilerPath, source)
-        ?: throw ExecutionException("找不到 cp 编译器")
+        ?: throw ExecutionException("找不到 KCP 编译器")
     val executable = CpRunPaths.resolveBuildOutput(project, source)
     Files.createDirectories(executable.parent)
     val stdlibRoot = CpRunPaths.resolveStdlibRoot(project, source, compiler)
@@ -599,9 +599,9 @@ internal object CpRunPaths {
     fun resolveCompiler(project: Project, configured: String, source: Path): Path? =
         sequenceOf(
             configured.toPathOrNull(),
-            System.getProperty("cp.compiler.path").toPathOrNull(),
+            System.getProperty("kcp.compiler.path").toPathOrNull(),
             System.getenv("KCP").toPathOrNull(),
-            pluginNativePath("cp"),
+            pluginNativePath("kcp"),
         )
             .plus(repoCompilerCandidates(project, source))
             .plus(
@@ -642,7 +642,7 @@ internal object CpRunPaths {
         val projectKey = stableHash(projectBase?.toAbsolutePath()?.normalize()?.toString() ?: "default").take(16)
         val sourceKey = stableHash(normalizedSource.toString()).take(16)
         val executableName = normalizedSource.fileName.toString().removeSuffix(".${CpFileType.INSTANCE.defaultExtension}")
-        return Path.of(PathManager.getSystemPath(), "cp-run", projectKey, sourceKey, executableName)
+        return Path.of(PathManager.getSystemPath(), "kcp-run", projectKey, sourceKey, executableName)
     }
 
     internal fun resolveSourceClosure(source: Path, roots: List<Path>, moduleSearchRoots: List<Path> = roots): List<Path> {
@@ -658,9 +658,9 @@ internal object CpRunPaths {
             files = knownFiles.values.toList(),
         )
         val resolved = CpResolvedRequestCache.resolve(request, knownFiles)
-            ?: throw ExecutionException("cp 源文件依赖解析失败：$normalizedSource")
+            ?: throw ExecutionException("KCP 源文件依赖解析失败：$normalizedSource")
         if (resolved.files.isEmpty()) {
-            throw ExecutionException("cp 源文件依赖解析结果为空：$normalizedSource")
+            throw ExecutionException("KCP 源文件依赖解析结果为空：$normalizedSource")
         }
         return resolved.files.map { Path.of(it.path) }
     }
@@ -729,9 +729,9 @@ internal object CpRunPaths {
                 directory.parentsFromSelf()
                     .flatMap { root ->
                         sequenceOf(
-                            root.resolve("build-clion-plugin-native/compiler/cp"),
-                            root.resolve("build/compiler/cp"),
-                            root.resolve("cmake-build-debug/compiler/cp"),
+                            root.resolve("build-clion-plugin-native/compiler/kcp"),
+                            root.resolve("build/compiler/kcp"),
+                            root.resolve("cmake-build-debug/compiler/kcp"),
                         )
                     }
             }

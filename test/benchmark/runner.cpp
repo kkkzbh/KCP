@@ -126,7 +126,7 @@ auto coverage_links_gcov() -> bool
 
 auto compile_command(language const& value, std::filesystem::path const& source, std::filesystem::path const& output) -> std::vector<std::string>
 {
-    if(value.name == "cp") {
+    if(value.name == "kcp") {
         auto command = std::vector<std::string>{
             value.compiler.string(),
             source.string(),
@@ -300,16 +300,16 @@ auto print_summary(std::vector<run_measurement> const& measurements) -> void
 auto main(int argc, char** argv) -> int
 {
     if(argc < 5) {
-        std::cerr << "usage: cp_benchmark_runner <cp> <c++ compiler> <rustc> <cases-dir> [case...]\n";
+        std::cerr << "usage: kcp_benchmark_runner <kcp> <c++ compiler> <rustc> <cases-dir> [case...]\n";
         return 2;
     }
 
     auto languages = std::vector<language> {
         { .name = "c++", .compiler = argv[2], .extension = "cpp" },
-        { .name = "cp", .compiler = argv[1], .extension = "cp" },
+        { .name = "kcp", .compiler = argv[1], .extension = "cp" },
         { .name = "rust", .compiler = argv[3], .extension = "rs" },
     };
-    if(not require_tool("cp compiler", languages[1uz].compiler)
+    if(not require_tool("KCP compiler", languages[1uz].compiler)
         or not require_tool("C++ compiler", languages[0uz].compiler)
         or not require_tool("rustc", languages[2uz].compiler)) {
         return 2;
@@ -361,7 +361,7 @@ auto main(int argc, char** argv) -> int
     }
 
     auto cases_dir = std::filesystem::path{ argv[4] };
-    auto output_dir = std::filesystem::temp_directory_path() / std::format("cp-benchmark-{}", std::chrono::steady_clock::now().time_since_epoch().count());
+    auto output_dir = std::filesystem::temp_directory_path() / std::format("kcp-benchmark-{}", std::chrono::steady_clock::now().time_since_epoch().count());
     std::filesystem::create_directories(output_dir);
 
     auto measurements = std::vector<run_measurement>{};

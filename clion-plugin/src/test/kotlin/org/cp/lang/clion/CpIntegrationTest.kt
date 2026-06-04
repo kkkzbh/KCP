@@ -22,9 +22,9 @@ class CpIntegrationTest {
     @Test
     fun fileTypeMetadataMatchesPluginContract() {
         assertEquals("cp", CpLanguage.id)
-        assertEquals("cp", CpFileType.INSTANCE.name)
+        assertEquals("KCP", CpFileType.INSTANCE.name)
         assertEquals("cp", CpFileType.INSTANCE.defaultExtension)
-        assertEquals("cp 源文件", CpFileType.INSTANCE.description)
+        assertEquals("KCP 源文件", CpFileType.INSTANCE.description)
     }
 
     @Test
@@ -472,7 +472,7 @@ class CpIntegrationTest {
 
     @Test
     fun runSourceClosureLeavesStdlibImportsForCompiler() {
-        val root = Files.createTempDirectory("cp-run-sources")
+        val root = Files.createTempDirectory("kcp-run-sources")
         try {
             val project = root.resolve("project")
             val stdlib = root.resolve("stdlib")
@@ -496,7 +496,7 @@ class CpIntegrationTest {
 
     @Test
     fun runSourceClosureResolvesSiblingAggregateModuleByDeclaration() {
-        val root = Files.createTempDirectory("cp-run-sources")
+        val root = Files.createTempDirectory("kcp-run-sources")
         try {
             val project = root.resolve("project")
             writeSource(project.resolve("main.cp"), "import math.x;\nmain() -> i32 { return add(1, 2); }\n")
@@ -516,7 +516,7 @@ class CpIntegrationTest {
 
     @Test
     fun runSourceClosureResolvesNestedFolderAggregateModules() {
-        val root = Files.createTempDirectory("cp-run-sources")
+        val root = Files.createTempDirectory("kcp-run-sources")
         try {
             val project = root.resolve("project")
             writeSource(project.resolve("main.cp"), "import parser.lr;\nmain() -> i32 { return parse(); }\n")
@@ -536,7 +536,7 @@ class CpIntegrationTest {
 
     @Test
     fun runSourceClosureResolvesImportsByExportedModuleDeclaration() {
-        val root = Files.createTempDirectory("cp-run-sources")
+        val root = Files.createTempDirectory("kcp-run-sources")
         try {
             val project = root.resolve("project")
             writeSource(project.resolve("main.cp"), "import parser.lr.table;\nmain() -> i32 { return build_parser_tables(); }\n")
@@ -562,7 +562,7 @@ class CpIntegrationTest {
 
     @Test
     fun runSourceClosureCacheInvalidatesWhenImportsChange() {
-        val root = Files.createTempDirectory("cp-run-sources")
+        val root = Files.createTempDirectory("kcp-run-sources")
         try {
             val project = root.resolve("project")
             val main = project.resolve("main.cp")
@@ -598,26 +598,26 @@ class CpIntegrationTest {
     @Test
     fun buildCommandLineIncludesCompileOptionsBeforeSources() {
         val commandLine = buildCpBuildCommandLine(
-            compiler = Path.of("/tool/cp"),
+            compiler = Path.of("/tool/kcp"),
             sources = listOf(Path.of("/project/main.cp"), Path.of("/project/math.cp")),
             compileOptions = "--release --clang-arg -O0",
-            executable = Path.of("/tmp/cp run/main"),
+            executable = Path.of("/tmp/kcp run/main"),
             workingDirectory = Path.of("/project"),
         )
 
-        assertEquals("/tool/cp", commandLine.exePath)
+        assertEquals("/tool/kcp", commandLine.exePath)
         assertEquals(
-            listOf("--release", "--clang-arg", "-O0", "/project/main.cp", "/project/math.cp", "-o", "/tmp/cp run/main"),
+            listOf("--release", "--clang-arg", "-O0", "/project/main.cp", "/project/math.cp", "-o", "/tmp/kcp run/main"),
             commandLine.parametersList.list,
         )
     }
 
     @Test
     fun runCommandLineParsesProgramArgumentsAndRuntimeEnvironment() {
-        val input = Files.createTempFile("cp-run-input", ".txt")
+        val input = Files.createTempFile("kcp-run-input", ".txt")
         try {
             val commandLine = buildCpRunCommandLine(
-                executable = Path.of("/tmp/cp-run/main"),
+                executable = Path.of("/tmp/kcp-run/main"),
                 programArguments = """alpha "two words"""",
                 workingDirectory = Path.of("/project"),
                 envs = mapOf("CASE" to "1"),
@@ -626,7 +626,7 @@ class CpIntegrationTest {
                 emulateTerminal = false,
             )
 
-            assertEquals("/tmp/cp-run/main", commandLine.exePath)
+            assertEquals("/tmp/kcp-run/main", commandLine.exePath)
             assertEquals(listOf("alpha", "two words"), commandLine.parametersList.list)
             assertEquals("1", commandLine.environment["CASE"])
             assertFalse(commandLine.isPassParentEnvironment)
@@ -639,13 +639,13 @@ class CpIntegrationTest {
     @Test
     fun runCommandLineCanRequestPtyTerminal() {
         val commandLine = buildCpRunCommandLine(
-            executable = Path.of("/tmp/cp-run/main"),
+            executable = Path.of("/tmp/kcp-run/main"),
             programArguments = "",
             workingDirectory = Path.of("/project"),
             emulateTerminal = true,
         )
 
-        assertEquals("/tmp/cp-run/main", commandLine.exePath)
+        assertEquals("/tmp/kcp-run/main", commandLine.exePath)
         assertTrue(commandLine is com.intellij.execution.configurations.PtyCommandLine)
     }
 
@@ -653,7 +653,7 @@ class CpIntegrationTest {
     fun runConfigurationEditorRoundTripsPrimaryFields() {
         val configuration = newCpRunConfiguration()
         configuration.mainFile = "/project/main.cp"
-        configuration.compilerPath = "/tool/cp"
+        configuration.compilerPath = "/tool/kcp"
         configuration.compileOptions = "--release"
         configuration.programArguments = "alpha beta"
         configuration.emulateTerminal = true
@@ -664,7 +664,7 @@ class CpIntegrationTest {
         editor.applyTo(configuration)
 
         assertEquals("/project/main.cp", configuration.mainFile)
-        assertEquals("/tool/cp", configuration.compilerPath)
+        assertEquals("/tool/kcp", configuration.compilerPath)
         assertEquals("--release", configuration.compileOptions)
         assertEquals("alpha beta", configuration.programArguments)
         assertTrue(configuration.emulateTerminal)
@@ -673,10 +673,10 @@ class CpIntegrationTest {
 
     @Test
     fun runConfigurationValidationAcceptsExplicitCompilerAndWorkingDirectory() {
-        val root = Files.createTempDirectory("cp-run-config")
+        val root = Files.createTempDirectory("kcp-run-config")
         try {
             val source = root.resolve("main.cp")
-            val compiler = root.resolve("cp")
+            val compiler = root.resolve("kcp")
             writeSource(source, "main() -> i32 { return 0; }\n")
             Files.writeString(compiler, "#!/usr/bin/env sh\nexit 0\n")
             compiler.toFile().setExecutable(true)
@@ -700,10 +700,10 @@ class CpIntegrationTest {
 
     @Test
     fun runPathsDiscoverRuntimeAndStdlibBesideCompilerAndSource() {
-        val root = Files.createTempDirectory("cp-run-paths")
+        val root = Files.createTempDirectory("kcp-run-paths")
         try {
             val project = root.resolve("project")
-            val tool = root.resolve("tool/bin/cp")
+            val tool = root.resolve("tool/bin/kcp")
             val runtime = root.resolve("tool/bin/libcp_runtime.a")
             val source = project.resolve("main.cp")
             val stdlib = project.resolve("std")
@@ -731,7 +731,7 @@ class CpIntegrationTest {
     fun runConfigurationPersistsClionSingleFileFields() {
         val configuration = newCpRunConfiguration()
         configuration.mainFile = "/project/main.cp"
-        configuration.compilerPath = "/tool/cp"
+        configuration.compilerPath = "/tool/kcp"
         configuration.compileOptions = "--release"
         configuration.workingDirectory = "/project"
         configuration.programArguments = "1 2"
@@ -747,7 +747,7 @@ class CpIntegrationTest {
         copy.readExternal(element)
 
         assertEquals("/project/main.cp", copy.mainFile)
-        assertEquals("/tool/cp", copy.compilerPath)
+        assertEquals("/tool/kcp", copy.compilerPath)
         assertEquals("--release", copy.compileOptions)
         assertEquals("/project", copy.workingDirectory)
         assertEquals("1 2", copy.programArguments)
@@ -814,7 +814,7 @@ class CpIntegrationTest {
         val output = CpRunPaths.resolveBuildOutput(project, source)
 
         assertFalse(output.startsWith(project))
-        assertTrue(output.toString().contains("cp-run"))
+        assertTrue(output.toString().contains("kcp-run"))
     }
 
     @Test

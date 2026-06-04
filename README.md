@@ -1,25 +1,25 @@
-# cp
+# KCP
 
-`cp` is a compiler project for the cp programming language. The repository contains the language design, frontend, semantic analysis, IR and LLVM lowering, runtime support, standard library, examples, documentation, and CLion integration.
+KCP is a compiler project for the KCP programming language. The repository contains the language design, frontend, semantic analysis, IR and LLVM lowering, runtime support, standard library, examples, documentation, and CLion integration.
 
-![cp in CLion](docs/assets/readme/clion-demo.png)
+![KCP in CLion](docs/assets/readme/clion-demo.png)
 
 ## Overview
 
 The compiler is organized as a staged native-code toolchain:
 
 - `source`, `preprocessor`, and `lexer` preserve source locations and produce diagnostics-friendly token streams.
-- `parser` builds the cp syntax tree from modules, declarations, statements, expressions, and types.
+- `parser` builds the KCP syntax tree from modules, declarations, statements, expressions, and types.
 - `semantic` resolves names, checks types, instantiates generics, validates concepts, and lowers language rules into typed compiler state.
 - `codegen` translates checked programs through IR and LLVM.
 - `runtime` defines the ABI surface used by generated programs.
-- `std` provides the first standard library modules written in cp.
+- `std` provides the first standard library modules written in KCP.
 
 The project also includes a documentation site, runnable examples, regression tests, and an IntelliJ/CLion language plugin.
 
 ## Language
 
-cp is a statically typed systems language with explicit modules, value-oriented aggregates, generic programming, and predictable low-level interop.
+KCP is a statically typed systems language with explicit modules, value-oriented aggregates, generic programming, and predictable low-level interop.
 
 Current language areas include:
 
@@ -64,7 +64,7 @@ More examples are available under `design/examples/`.
 
 ## Standard Library
 
-The standard library is implemented as ordinary cp modules. It currently includes:
+The standard library is implemented as ordinary KCP modules. It currently includes:
 
 - `std.core`: `optional`, `expected`, iterator protocols
 - `std.memory`: raw buffers and spans
@@ -89,9 +89,9 @@ The standard library is implemented as ordinary cp modules. It currently include
 | `semantic/` | semantic analysis, types, generics, and language rules |
 | `codegen/` | IR and LLVM code generation |
 | `runtime/` | runtime ABI documentation and support |
-| `std/` | cp standard library source |
+| `std/` | KCP standard library source |
 | `design/` | language documentation and examples |
-| `clion-plugin/` | CLion plugin for cp language support |
+| `clion-plugin/` | CLion plugin for KCP language support |
 | `test/` | compiler, library, parser, lexer, and integration tests |
 
 ## Building

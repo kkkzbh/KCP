@@ -1,6 +1,6 @@
 # 错误处理
 
-本文档记录 cp 第一版错误处理边界：可恢复失败通过普通库类型表达，调用者违反前置条件通过 `assert` 表达，不可恢复终止通过 `panic` 表达。`optional<T>`、`expected<T,E>` 的类型规则见 [variant.md](variant.md)，函数返回和控制流规则见 [flow.md](flow.md)。
+本文档记录 KCP 第一版错误处理边界：可恢复失败通过普通库类型表达，调用者违反前置条件通过 `assert` 表达，不可恢复终止通过 `panic` 表达。`optional<T>`、`expected<T,E>` 的类型规则见 [variant.md](variant.md)，函数返回和控制流规则见 [flow.md](flow.md)。
 
 ## 错误分类
 

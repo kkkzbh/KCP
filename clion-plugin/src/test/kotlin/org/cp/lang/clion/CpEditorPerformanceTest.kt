@@ -274,15 +274,15 @@ class CpEditorPerformanceTest : BasePlatformTestCase() {
             ),
             LabNavigationCase(
                 activePath = "lab/parser/grammar.cp",
-                context = "template if(read_type<decltype(value)> == grammar_symbol)",
+                context = "symbols1(first: grammar_symbol)",
                 sourceText = "grammar_symbol",
                 targetPath = "lab/parser/symbol.cp",
                 targetText = "grammar_symbol",
                 targetType = CpElements.TYPE_NAME,
             ),
             LabNavigationCase(
-                activePath = "lab/parser/grammar.cp",
-                context = "else template if(read_type<decltype(value)> == token_kind)",
+                activePath = "lab/parser/symbol.cp",
+                context = "export token_rank(kind: token_kind) -> i32",
                 sourceText = "token_kind",
                 targetPath = "lab/lexer/token.cp",
                 targetText = "token_kind",
@@ -290,10 +290,10 @@ class CpEditorPerformanceTest : BasePlatformTestCase() {
             ),
             LabNavigationCase(
                 activePath = "lab/parser/table.cp",
-                context = ": grammar)",
-                sourceText = "grammar",
-                targetPath = "lab/parser/grammar.cp",
-                targetText = "grammar",
+                context = "states: vector<item_set>;",
+                sourceText = "item_set",
+                targetPath = "lab/parser/table.cp",
+                targetText = "item_set",
                 targetType = CpElements.TYPE_NAME,
             ),
             LabNavigationCase(
@@ -322,7 +322,7 @@ class CpEditorPerformanceTest : BasePlatformTestCase() {
             ),
             LabNavigationCase(
                 activePath = "lab/parser/table.cp",
-                context = "builder{make_minic_grammar()}",
+                context = "let grammar = make_minic_grammar();",
                 sourceText = "make_minic_grammar",
                 targetPath = "lab/parser/grammar.cp",
                 targetText = "make_minic_grammar",
@@ -330,10 +330,10 @@ class CpEditorPerformanceTest : BasePlatformTestCase() {
             ),
             LabNavigationCase(
                 activePath = "lab/parser/table.cp",
-                context = "let target_items = go(states[state_index], symbol);",
-                sourceText = "go",
+                context = "let target_items = item_set{ .items = goto_items(grammar, states[state_index].items, symbol, first_sets) };",
+                sourceText = "goto_items",
                 targetPath = "lab/parser/table.cp",
-                targetText = "go",
+                targetText = "goto_items",
                 targetType = CpElements.FUNCTION_NAME,
             ),
             LabNavigationCase(
@@ -354,10 +354,10 @@ class CpEditorPerformanceTest : BasePlatformTestCase() {
             ),
             LabNavigationCase(
                 activePath = "lab/parser/grammar.cp",
-                context = "symbols.push_back(grammar_symbol_of(value));",
-                sourceText = "grammar_symbol_of",
+                context = "add_production(grammar, nonterminal_kind::augmented, symbols1(symbol_nonterminal(nonterminal_kind::program)));",
+                sourceText = "symbols1",
                 targetPath = "lab/parser/grammar.cp",
-                targetText = "grammar_symbol_of",
+                targetText = "symbols1",
                 targetType = CpElements.FUNCTION_NAME,
             ),
             LabNavigationCase(
@@ -451,7 +451,7 @@ class CpEditorPerformanceTest : BasePlatformTestCase() {
         val source = sourceElement(
             LabNavigationCase(
                 activePath = "lab/parser/table.cp",
-                context = "builder{make_minic_grammar()}",
+                context = "let grammar = make_minic_grammar();",
                 sourceText = "make_minic_grammar",
                 targetPath = "lab/parser/grammar.cp",
                 targetText = "make_minic_grammar",

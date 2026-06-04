@@ -1,6 +1,6 @@
 # 迭代
 
-本文档记录 cp 的迭代协议。迭代协议建立在 `concept`、泛型 `variant` 和 `requires` 类型约束之上，不引入运行时多态。
+本文档记录 KCP 的迭代协议。迭代协议建立在 `concept`、泛型 `variant` 和 `requires` 类型约束之上，不引入运行时多态。
 
 目标是定义统一的 range-for 语义：用户层范围表达式必须是 `iterable` / `const_iterable`，循环内部再调用 `.iter()` 取得有状态 `iterator` 游标。
 

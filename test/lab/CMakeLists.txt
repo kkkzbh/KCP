@@ -91,16 +91,16 @@ set_target_properties(lab_semantic_ir_behavior_test PROPERTIES
     CXX_SCAN_FOR_MODULES ON
 )
 
-add_dependencies(lab_lexer_behavior_test cp)
-add_dependencies(lab_parser_behavior_test cp)
-add_dependencies(lab_operator_precedence_behavior_test cp)
-add_dependencies(lab_semantic_ir_behavior_test cp)
+add_dependencies(lab_lexer_behavior_test kcp)
+add_dependencies(lab_parser_behavior_test kcp)
+add_dependencies(lab_operator_precedence_behavior_test kcp)
+add_dependencies(lab_semantic_ir_behavior_test kcp)
 
 add_test(
     NAME lab_lexer_behavior
     COMMAND ${CMAKE_SOURCE_DIR}/test/run_isolated.sh
         $<TARGET_FILE:lab_lexer_behavior_test>
-        $<TARGET_FILE:cp>
+        $<TARGET_FILE:kcp>
         ${CMAKE_SOURCE_DIR}/lab
 )
 
@@ -108,7 +108,7 @@ add_test(
     NAME lab_parser_behavior
     COMMAND ${CMAKE_SOURCE_DIR}/test/run_isolated.sh
         $<TARGET_FILE:lab_parser_behavior_test>
-        $<TARGET_FILE:cp>
+        $<TARGET_FILE:kcp>
         ${CMAKE_SOURCE_DIR}/lab
 )
 
@@ -116,7 +116,7 @@ add_test(
     NAME lab_operator_precedence_behavior
     COMMAND ${CMAKE_SOURCE_DIR}/test/run_isolated.sh
         $<TARGET_FILE:lab_operator_precedence_behavior_test>
-        $<TARGET_FILE:cp>
+        $<TARGET_FILE:kcp>
         ${CMAKE_SOURCE_DIR}/lab
 )
 
@@ -124,7 +124,7 @@ add_test(
     NAME lab_semantic_ir_behavior
     COMMAND ${CMAKE_SOURCE_DIR}/test/run_isolated.sh
         $<TARGET_FILE:lab_semantic_ir_behavior_test>
-        $<TARGET_FILE:cp>
+        $<TARGET_FILE:kcp>
         ${CMAKE_SOURCE_DIR}/lab
 )
 

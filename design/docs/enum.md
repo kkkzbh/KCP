@@ -1,6 +1,6 @@
 # enum
 
-本文档记录 cp 第一版强类型 `enum`。`enum` 是单个整数命名值集合；`variant` 是 tagged union，见 [variant.md](variant.md)。
+本文档记录 KCP 第一版强类型 `enum`。`enum` 是单个整数命名值集合；`variant` 是 tagged union，见 [variant.md](variant.md)。
 
 ## 语法总览
 

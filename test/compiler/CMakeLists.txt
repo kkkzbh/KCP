@@ -53,13 +53,13 @@ set_target_properties(compiler_import_resolver_test PROPERTIES
     CXX_SCAN_FOR_MODULES ON
 )
 
-add_dependencies(compiler_behavior_test cp)
+add_dependencies(compiler_behavior_test kcp)
 
 add_test(
     NAME compiler_behavior
     COMMAND ${CMAKE_SOURCE_DIR}/test/run_isolated.sh
         $<TARGET_FILE:compiler_behavior_test>
-        $<TARGET_FILE:cp>
+        $<TARGET_FILE:kcp>
         ${CP_TEST_CLANG}
         ${CP_TEST_LLVM_AS}
         ${CMAKE_SOURCE_DIR}/test/fixtures/examples

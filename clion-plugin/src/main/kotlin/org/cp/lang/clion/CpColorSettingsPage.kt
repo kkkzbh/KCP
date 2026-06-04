@@ -96,7 +96,7 @@ class CpColorSettingsPage : ColorSettingsPage {
 
     override fun getColorDescriptors(): Array<ColorDescriptor> = ColorDescriptor.EMPTY_ARRAY
 
-    override fun getDisplayName(): String = "cp"
+    override fun getDisplayName(): String = "KCP"
 
     private companion object {
         val DESCRIPTORS: Array<AttributesDescriptor> = arrayOf(

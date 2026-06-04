@@ -1,4 +1,4 @@
-rootProject.name = "cp-clion-plugin"
+rootProject.name = "kcp-clion-plugin"
 
 plugins {
     id("org.gradle.toolchains.foojay-resolver-convention") version "1.0.0"

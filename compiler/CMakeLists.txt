@@ -21,14 +21,14 @@ set_target_properties(cp_import_resolver PROPERTIES
     CXX_SCAN_FOR_MODULES ON
 )
 
-add_executable(cp)
+add_executable(kcp)
 
-target_sources(cp
+target_sources(kcp
     PRIVATE
         tool/main.cpp
 )
 
-target_link_libraries(cp
+target_link_libraries(kcp
     PRIVATE
         cp_import_resolver
         diagnostic
@@ -39,15 +39,15 @@ target_link_libraries(cp
         stdc++exp
 )
 
-add_dependencies(cp cp_runtime)
+add_dependencies(kcp cp_runtime)
 
-target_compile_definitions(cp
+target_compile_definitions(kcp
     PRIVATE
         CP_RUNTIME_LIBRARY_PATH="$<TARGET_FILE:cp_runtime>"
         CP_STDLIB_ROOT_PATH="${CMAKE_SOURCE_DIR}/std"
 )
 
-set_target_properties(cp PROPERTIES
+set_target_properties(kcp PROPERTIES
     CXX_STANDARD 26
     CXX_EXTENSIONS OFF
     CXX_MODULE_STD ON
