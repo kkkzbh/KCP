@@ -1829,6 +1829,114 @@ main() -> i32
     );
 }
 
+auto check_contextual_variant_match_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("contextual-variant-match");
+    auto source = dir / "contextual_variant_match.cp";
+    auto app = dir / "contextual_variant_match";
+    write_source(
+        source,
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+pick(value: optional<i32>) -> i64
+{
+    let widened: i64 = match value {
+        .some(item) => item,
+        .none => 0,
+    };
+    return widened;
+}
+
+touch(value: optional<i32>)
+{
+    return match value {
+        .some(item) => {},
+        .none => {},
+    };
+}
+
+touch_types<T...>(values: T...)
+{
+    template fo)" "r" R"( (type U : T...) {
+        return;
+    }
+}
+
+main() -> i32
+{
+    touch(optional<i32>::none);
+    touch_types();
+    touch_types(1);
+    return pick(optional<i32>::some(42)) as i32;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "KCP should compile contextual variant match binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "contextual variant match binary should return 42");
+}
+
+auto check_nested_parameter_pack_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("nested-parameter-pack");
+    auto source = dir / "nested_parameter_pack.cp";
+    auto app = dir / "nested_parameter_pack";
+    write_source(
+        source,
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+inc(value: i32) -> i32
+{
+    return value + 1;
+}
+
+same_bool(value: bool) -> bool
+{
+    return value;
+}
+
+count_callbacks<T...>(callbacks: (f(T) -> T)...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let callback : callbacks...) {
+        total = total + 1;
+    }
+    return total;
+}
+
+count_options<T...>(values: optional<T>...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        match value {
+            .some(item) => {
+                total = total + 1;
+            },
+            .none => {},
+        };
+    }
+    return total;
+}
+
+main() -> i32
+{
+    return count_callbacks(inc, same_bool)
+        + count_options(optional<i32>::some(1), optional<bool>::none)
+        + 38;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "KCP should compile nested parameter-pack binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "nested parameter-pack binary should return 42");
+}
+
 auto check_callable_type_pack_return_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("callable-type-pack-return");
@@ -4222,6 +4330,8 @@ auto main(int argc, char** argv) -> int
     check_variant_match_parameter_pack_binary(tools);
     check_forward_parameter_pack_inferred_return_binary(tools);
     check_variant_match_type_pack_inferred_return_binary(tools);
+    check_contextual_variant_match_binary(tools);
+    check_nested_parameter_pack_binary(tools);
     check_callable_type_pack_return_binary(tools);
     check_direct_iterator_range_for_rejected_binary(tools);
     check_string_index_binary(tools);

@@ -2747,6 +2747,110 @@ main() -> i32
     );
 }
 
+auto check_variant_match_result_semantics() -> void
+{
+    auto contextual_result = analyze_one(
+        "variant_match_contextual_result.cp",
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+main() -> i32
+{
+    let value = optional<i32>::some(21);
+    let widened: i64 = match value {
+        .some(item) => item,
+        .none => panic("missing"),
+    };
+    return (widened + 21) as i32;
+})"
+    );
+    test_parser::assert_true(
+        contextual_result.accepted(),
+        "match arms should convert to an explicit contextual result type");
+
+    {
+        auto sources = source_manager{};
+        auto parsed = parse_source(
+            sources,
+            "variant_match_unit_inferred_return.cp",
+            R"(variant event {
+    empty;
+    value(i32);
+}
+
+touch(value: event)
+{
+    return match value {
+        .value(item) => {},
+        .empty => {},
+    };
+}
+
+main()
+{
+    touch(event::empty);
+})"
+        );
+        auto checked = analyze_single(sources, parsed);
+        test_parser::assert_true(checked.accepted(), "unit match result should feed inferred function return");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "touch") == semantic_type_ids::unit,
+            "unit match return should infer unit");
+    }
+
+    auto empty_type_pack_unit = analyze_one(
+        "empty_type_pack_unit_return.cp",
+        R"(touch_types<T...>(values: T...)
+{
+    template for(type U : T...) {
+        return;
+    }
+}
+
+main()
+{
+    touch_types();
+    touch_types(1);
+})"
+    );
+    test_parser::assert_true(
+        empty_type_pack_unit.accepted(),
+        "empty and non-empty type-pack template-for returns should infer unit");
+
+    using enum diagnostic_kind;
+    expect_diagnostic(
+        "variant_match_contextual_result_type_mismatch.cp",
+        "variant optional<T> { none; some(T); } main() { let value = optional<i32>::some(1); let out: i64 = match value { .some(item) => item, .none => true, }; }",
+        type_mismatch
+    );
+    expect_diagnostic(
+        "variant_pack_match_mixed_payload_return.cp",
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+first_present<T...>(values: optional<T>...)
+{
+    template for(let value : values...) {
+        return match value {
+            .some(item) => item,
+            .none => panic("missing"),
+        };
+    }
+    return panic("empty");
+}
+
+main()
+{
+    let value = first_present(optional<i32>::some(1), optional<bool>::some(true));
+})",
+        return_type_mismatch
+    );
+}
+
 auto check_parameter_pack_semantics() -> void
 {
     auto result = analyze_one(
@@ -2956,6 +3060,74 @@ main() -> i32
         "parameter packs should infer type arguments through arrays, tuples, and generic structs"
     );
 
+    auto nested_pack_result = analyze_one(
+        "nested_parameter_pack_inference.cp",
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+inc(value: i32) -> i32
+{
+    return value + 1;
+}
+
+same_bool(value: bool) -> bool
+{
+    return value;
+}
+
+count_pointers<T...>(values: T*...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + 1;
+    }
+    return total;
+}
+
+count_callbacks<T...>(callbacks: (f(T) -> T)...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let callback : callbacks...) {
+        total = total + 1;
+    }
+    return total;
+}
+
+count_storage<T...>(values: storage [T; 2]...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + 1;
+    }
+    return total;
+}
+
+count_optional<T...>(values: optional<T>...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + 1;
+    }
+    return total;
+}
+
+main() -> i32
+{
+    let value = 1;
+    let flag = true;
+    return count_pointers(&value, &flag)
+        + count_callbacks(inc, same_bool)
+        + count_storage(storage [i32; 2]{}, storage [bool; 2]{})
+        + count_optional(optional<i32>::some(1), optional<bool>::some(false));
+})"
+    );
+    test_parser::assert_true(
+        nested_pack_result.accepted(),
+        "parameter packs should infer through pointer, function, storage, and variant shapes"
+    );
+
     auto fixed_prefix_pack_result = analyze_one(
         "fixed_prefix_parameter_pack_inference.cp",
         R"(head_plus_count<Head, Tail...>(head: Head, tail: Tail...)
@@ -3036,6 +3208,21 @@ main() -> i32
         "parameter_pack_mixed_inferred_return.cp",
         "first<T...>(values: T...) { template fo" "r (let value : values...) { return value; } } main() { let value = first(1, true); }",
         return_type_mismatch
+    );
+    expect_diagnostic(
+        "parameter_pack_tuple_element_conflict.cp",
+        "bad<T...>(values: (T, T)...) -> i32 { return 0; } main() -> i32 { let mixed = (1, true); return bad(mixed); }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "parameter_pack_function_type_conflict.cp",
+        "inc(value: i32) -> i32 { return value; } bad(value: bool) -> i32 { return 0; } count<T...>(callbacks: (f(T) -> T)...) -> i32 { return 0; } main() -> i32 { return count(inc, bad); }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "parameter_pack_fixed_prefix_conflict.cp",
+        "bad<Head, Tail...>(head: Head, tail: Tail...) -> i32 { return 0; } main() -> i32 { return bad<bool>(1); }",
+        invalid_type_argument
     );
     expect_diagnostic(
         "parameter_pack_empty_inferred_return.cp",
@@ -5235,6 +5422,7 @@ auto main() -> int
     check_struct_field_default_semantics();
     check_generic_struct_semantics();
     check_generic_function_semantics();
+    check_variant_match_result_semantics();
     check_parameter_pack_semantics();
     check_template_if_semantics();
     check_concept_semantics();

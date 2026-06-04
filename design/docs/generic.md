@@ -606,7 +606,7 @@ debug<T...>(values: T...)
 - 对具体实例来说，非空参数包的 `return` 按展开次数逐次贡献返回类型；空参数包展开零次，因此展开体内的 `return` 不贡献任何返回类型。
 - `template for(let value : values...)` 只能遍历当前函数实例的值参数包，不能遍历数组、元组、range 或普通局部变量。
 - `template for(type U : T...)` 只能遍历当前函数实例的类型参数包；`U` 是类型别名，不是运行时值。
-- `break` 和 `continue` 不允许直接作用于 `template for`，因为它不是运行时循环，也不能穿透 `template for` 去控制外层运行时循环。
+- `break` 和 `continue` 不允许直接作用于 `template for`，因为它不是运行时循环。如果 `template for` 展开体内又声明了普通运行时循环，`break` / `continue` 可以控制这个内层循环；但不能穿透 `template for` 去控制外层运行时循环。
 - 展开后的语句按普通语义检查；依赖类型或依赖表达式可以延迟到实例化后检查。
 
 ## template if
@@ -1127,3 +1127,62 @@ main() -> i32
 - 泛型 concept `impl`：`impl<T> comparable for vector<T> requires T: comparable`
 - 显式 concept 实参：`impl partial_eq<str> for string_like`
 - 单态化代码生成
+
+## 当前不支持和实现边界
+
+本节把第一版实现边界集中列出，避免把设计目标误读成已经可用能力。
+
+类型参数包当前只作为函数、泛型 lambda 和泛型 concept 的最后一个类型参数使用：
+
+```cp
+sum<T...>(values: T...) -> i32      // 支持：函数类型参数包和值参数包
+concept callable<Args...> { }       // 支持：concept 类型参数包
+```
+
+下面这些不是当前公开能力：
+
+```cp
+struct tuple<T...> { }              // 错误：struct 不能声明类型参数包
+variant choice<T...> { none; }      // 错误：variant 不能声明类型参数包
+impl<T...> box<i32> { }             // 错误：impl 不能声明类型参数包
+impl<T...> mark for item { }        // 错误：concept impl 不能声明类型参数包
+```
+
+值参数包必须是函数或泛型 lambda 的最后一个普通参数，并且必须由同一个函数级类型参数包驱动。不能写非尾部值包、多个值包，也不能把固定类型写成重复参数：
+
+```cp
+bad<T...>(values: T..., last: i32)  // 错误：值参数包必须在最后
+bad(values: i32...)                 // 错误：值参数包需要类型参数包
+bad<T..., U>()                      // 错误：类型参数包必须在最后
+bad<T...>(values: T... = 1)         // 错误：参数包不能有默认值
+```
+
+类型参数包不能当作单个类型使用，也不能用空类型实参列表显式调用：
+
+```cp
+bad<T...>(values: T...) -> T        // 错误：T... 不是一个单独类型 T
+touch_types<>()                     // 错误：当前语法没有空类型实参列表
+touch_types()                       // 支持：没有普通实参时推导为空包
+touch_types<i32>()                  // 支持：显式给出非空类型包
+```
+
+类型实参列表中的 pack expansion 只支持裸类型包名：
+
+```cp
+make<F, Args...>()                  // 支持：Args... 插入实参列表
+make<F, Args..., bool>()            // 支持：展开后追加固定类型
+read_type<Args...>                  // 错误：read_type 不是可变类型实参查询
+box<Args...>                        // 错误：普通类型构造器不提供 pack expansion 语义
+call_result<F, box<Args>...>        // 错误：不是裸包名
+```
+
+`template for` 只遍历当前实例中的参数包，不遍历运行时集合：
+
+```cp
+template for(let value : values...) // 支持：值参数包
+template for(type U : T...)         // 支持：类型参数包
+template for(let value : array...)  // 错误：数组不是值参数包
+template for(type U : concept_pack...) // 错误：concept 参数包不能展开
+```
+
+空包展开零次，因此展开体内的 `return` 不会贡献返回类型。非空包按展开后每个普通语句检查，`return;` 作为 `unit` 参与推导，`return value;` 按当前元素的具体类型参与推导；同一函数实例中混合不兼容返回类型会报错。

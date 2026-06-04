@@ -309,7 +309,7 @@ main()
 }
 ```
 
-省略返回类型时，语义分析收集函数体中的所有 `return value;` 并统一出返回类型。没有任何带值 `return` 时，函数返回类型推导为内部 `unit`。
+省略返回类型时，语义分析收集函数体中的所有 `return` 并统一出返回类型。`return value;` 贡献 `value` 的表达式类型，`return;` 贡献内部 `unit`。函数体中没有任何 `return` 时，返回类型同样推导为 `unit`。
 
 返回类型推导不通过额外括号保留引用。`return (x);` 与 `return x;` 等价，都会按普通表达式读出规则推导返回类型。需要返回引用时，显式写 `return ref x;` 或 `return const ref x;`，借用表达式规则见 [ownership.md](ownership.md)。
 
@@ -318,22 +318,22 @@ main()
 - 可以从当前函数之后声明的函数调用继续推导；`main() { return f(); } f() { return 1; }` 合法。
 - 已显式声明返回类型的递归函数不需要推导；`f() -> i32 { return f(); }` 合法。
 - 没有显式返回类型的直接递归或互递归函数不能只靠自身调用推出类型，会报 `cannot_infer_return_type`。
-- 多个 `return value;` 的值类型必须能统一；例如多个整数字面量可统一为 `i32`，`return 1;` 与 `return true;` 不能统一。
-- `return;` 不贡献值类型。函数中没有任何带值 `return` 时推导为 `unit`。
-- `if`、`while`、`do while`、范围 `for`、`match`、`template for` 展开体和被选中的 `template if` 分支中的 `return value;` 都参与推导。
+- 多个正常返回观察值必须能统一。相同类型直接统一；整数族按公共整数类型统一；浮点族按更高 rank 的浮点类型统一；不同族、不同名义类型或 `unit` 与普通值类型混用不能统一。
+- `return;` 作为 `unit` 参与统一。只有全部正常返回都是 `unit`，或者函数体没有任何 `return` 时，才推导为 `unit`。`if(flag) { return; } return 1;` 不能推导成 `i32`，会报 `cannot_infer_return_type`。
+- `if`、`while`、`do while`、范围 `for`、`match`、`template for` 展开体和被选中的 `template if` 分支中的 `return` 都参与推导。
 - 未被选中的 `template if` 分支不参与推导，也不要求其中的名字和类型有效。
-- `!` never 表达式可以流入任何返回类型；例如 `match` 的一个分支返回 `panic(...)`，其它分支返回 `i32` 时，整体可推导为 `i32`。
+- `!` never 表达式不决定普通返回类型；例如 `match` 的一个分支返回 `panic(...)`，其它分支返回 `i32` 时，整体可推导为 `i32`。如果所有观察到的返回都是 `!`，则函数返回类型推导为 `!`。
 - 关联函数调用和成员访问按普通语义检查后参与推导；例如 `return box::make(1);` 可以推导为 `box`。
 - `return ref x;` 和 `return const ref x;` 才能推导引用返回；普通 `return x;` 读取出值类型。
 
-泛型函数省略返回类型时，推导发生在每个具体函数实例上，而不是为泛型定义本身产生一个全局返回类型。也就是说，先确定类型实参、替换参数类型、选择 `template if` 分支并展开 `template for`，再收集该实例中的 `return value;`。固有 `impl` 或 concept `impl` 中的泛型成员函数同样按具体成员函数实例推导；`impl<T> box<T> { value_or(self const&, fallback: T) { ... } }` 在 `box<i32>` 上调用时推导的是该 `i32` 实例的返回类型。
+泛型函数省略返回类型时，推导发生在每个具体函数实例上，而不是为泛型定义本身产生一个全局返回类型。也就是说，先确定类型实参、替换参数类型、选择 `template if` 分支并展开 `template for`，再收集该实例中的 `return`。固有 `impl` 或 concept `impl` 中的泛型成员函数同样按具体成员函数实例推导；`impl<T> box<T> { value_or(self const&, fallback: T) { ... } }` 在 `box<i32>` 上调用时推导的是该 `i32` 实例的返回类型。
 
 如果当前实例的返回表达式依赖另一个省略返回类型的泛型函数调用，编译器先推导被调泛型函数的具体实例返回类型，再把这个类型用于当前表达式检查。这个顺序对泛型 `variant` 的 `match` 尤其重要：被调函数可以先推导出 `choice<T>` 这样的具体 variant 类型，随后当前函数的 `match` 才能把 `.case(payload)` 绑定成替换后的 payload 类型，并用 arm 表达式继续推导当前函数返回类型。
 
 参数包相关规则：
 
-- `template for` 展开体中的 `return` 按具体展开后的语句参与推导。
-- 值参数包或类型参数包为空时，展开体执行零次，因此展开体内的 `return` 不贡献返回类型。
+- `template for` 展开体中的 `return` 按具体展开后的语句参与推导；`return;` 仍贡献 `unit`。
+- 值参数包或类型参数包为空时，展开体执行零次，因此展开体内的 `return` 不贡献返回类型。若函数只有一个空展开且没有其它 `return`，则该实例返回 `unit`；如果后面有 fallback `return 0;`，则按 fallback 推导。
 - `match` 出现在 `template for` 内时，先按当前 pack 元素替换泛型 `variant` payload 类型，再按普通 `match` arm 类型统一规则推导表达式类型。
 - 同一个具体函数实例中，多个展开产生的返回类型仍必须统一；例如 `first<T...>(values: T...) { template for(let value : values...) { return value; } }` 只有在该实例所有 `value` 的读出类型能统一时才合法。
 - 泛型 lambda 当前不做返回类型推导，必须显式写 `-> R`，见 [lambda.md](lambda.md)。

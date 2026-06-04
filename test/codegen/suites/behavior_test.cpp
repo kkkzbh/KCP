@@ -405,6 +405,60 @@ answer() -> i32
     test_parser::assert_true(emitted.ir.contains("extractvalue"), "LLVM IR should still extract the matched variant payload");
 }
 
+auto check_contextual_and_unit_return_variant_match_codegen() -> void
+{
+    auto sources = source_manager{};
+    auto parsed = parse_source(
+        sources,
+        "contextual_unit_match.cp",
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+fail() -> !
+{
+    return panic("missing");
+}
+
+pick(value: optional<i32>) -> i64
+{
+    let widened: i64 = match value {
+        .some(item) => item,
+        .none => fail(),
+    };
+    return widened;
+}
+
+touch(value: optional<i32>)
+{
+    return match value {
+        .some(item) => {},
+        .none => {},
+    };
+}
+
+main() -> i32
+{
+    touch(optional<i32>::none);
+    return pick(optional<i32>::some(42)) as i32;
+})");
+    auto checked = analyze_single(sources, parsed);
+    test_parser::assert_true(checked.accepted(), "contextual and unit-return match source should pass semantic analysis");
+
+    auto ir = emit_ir(sources, parsed, checked);
+    test_parser::assert_true(ir.accepted, ir.error.empty() ? "IR emission should pass" : ir.error);
+    auto text = dump_ir(ir.module);
+    test_parser::assert_true(text.contains("match.arm."), "contextual match should lower to match arms");
+    test_parser::assert_true(text.contains("cast"), "contextual match arm should materialize an integer conversion");
+    test_parser::assert_true(text.contains("func touch("), "unit-return match function should be emitted");
+
+    auto emitted = emit_llvm_ir(ir.module);
+    test_parser::assert_true(emitted.verified, emitted.error.empty() ? "LLVM module should verify" : emitted.error);
+    test_parser::assert_true(emitted.ir.contains("i64 @pick"), "LLVM IR should keep the contextual i64 match result");
+    test_parser::assert_true(emitted.ir.contains("void @touch"), "LLVM IR should infer unit return for unit match");
+}
+
 auto check_function_pointer_and_memory_codegen() -> void
 {
     auto sources = source_manager{};
@@ -776,6 +830,72 @@ main() -> i32
     test_parser::assert_true(emitted.ir.contains("define internal i32 @cp.base.first_some.mono."), "LLVM IR should define the module-qualified pack instance");
 }
 
+auto check_nested_parameter_pack_codegen() -> void
+{
+    auto sources = source_manager{};
+    auto parsed = parse_source(
+        sources,
+        "nested_parameter_pack_codegen.cp",
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+inc(value: i32) -> i32
+{
+    return value + 1;
+}
+
+same_bool(value: bool) -> bool
+{
+    return value;
+}
+
+count_callbacks<T...>(callbacks: (f(T) -> T)...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let callback : callbacks...) {
+        total = total + 1;
+    }
+    return total;
+}
+
+count_options<T...>(values: optional<T>...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        match value {
+            .some(item) => {
+                total = total + 1;
+            },
+            .none => {},
+        };
+    }
+    return total;
+}
+
+main() -> i32
+{
+    return count_callbacks(inc, same_bool)
+        + count_options(optional<i32>::some(1), optional<bool>::none)
+        + 38;
+})");
+    auto checked = analyze_single(sources, parsed);
+    test_parser::assert_true(checked.accepted(), "nested parameter-pack source should pass semantic analysis");
+
+    auto ir = emit_ir(sources, parsed, checked);
+    test_parser::assert_true(ir.accepted, ir.error.empty() ? "IR emission should pass" : ir.error);
+    auto text = dump_ir(ir.module);
+    test_parser::assert_true(text.contains("func count_callbacks.mono."), "MIR dump should contain function-type pack instance");
+    test_parser::assert_true(text.contains("func count_options.mono."), "MIR dump should contain variant pack instance");
+    test_parser::assert_true(text.contains("match.arm."), "MIR dump should lower match arms inside a mixed variant pack");
+
+    auto emitted = emit_llvm_ir(ir.module);
+    test_parser::assert_true(emitted.verified, emitted.error.empty() ? "LLVM module should verify" : emitted.error);
+    test_parser::assert_true(emitted.ir.contains("define internal i32 @count_callbacks.mono."), "LLVM IR should define function-type pack instance");
+    test_parser::assert_true(emitted.ir.contains("define internal i32 @count_options.mono."), "LLVM IR should define variant pack instance");
+}
+
 auto check_destructure_template_ref_and_empty_for_codegen() -> void
 {
     auto sources = source_manager{};
@@ -930,6 +1050,7 @@ auto main() -> int
     check_variant_match_codegen();
     check_variant_match_wildcard_payload_codegen();
     check_unit_variant_match_codegen();
+    check_contextual_and_unit_return_variant_match_codegen();
     check_function_pointer_and_memory_codegen();
     check_new_delete_codegen();
     check_generic_function_codegen();
@@ -938,6 +1059,7 @@ auto main() -> int
     check_default_initialization_and_operator_codegen();
     check_variant_match_type_pack_inferred_return_codegen();
     check_module_variant_pack_codegen();
+    check_nested_parameter_pack_codegen();
     check_destructure_template_ref_and_empty_for_codegen();
     check_generic_function_tuple_storage_substitution_codegen();
     check_generic_struct_field_substitution_codegen();

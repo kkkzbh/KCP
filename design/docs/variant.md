@@ -316,7 +316,35 @@ let area = match event_value {
 
 上例中 `_` 同时覆盖 `none` 和 `cancelled(str)`；`cancelled` 的 `str` payload 在 `_` arm 中不可访问。需要访问 payload 时必须写对应 case pattern。
 
-`match` 每个分支的表达式结果类型必须能统一。统一规则沿用现有返回类型推导和块表达式规则。
+`match` 每个分支的表达式结果必须能落到同一个结果类型。当前实现按目标类型检查，而不是做双向 common-type 搜索：
+
+- 如果 `match` 处在有上下文类型的位置，例如 `let value: i64 = match ...`、`return match ...` 且函数已知返回类型为 `i64`、或把 `match` 作为某个 `i64` 参数传入调用，则每个非 `!` arm 都必须能隐式转换到该上下文类型。
+- 如果没有上下文类型，第一个非 `!` arm 的表达式类型成为 `match` 结果类型；后续非 `!` arm 必须能隐式转换到这个类型。
+- `!` arm 不决定结果类型；所有 arm 都是 `!` 时，整个 `match` 的类型为 `!`。
+- 所有可正常完成的 arm 都是 `unit` 时，`match` 的类型为 `unit`。
+
+因此，想让无上下文的 `match` 产生某个更具体的结果类型时，应在左侧声明、函数返回类型或第一个普通 arm 上给出目标：
+
+```cp
+let widened: i64 = match value {
+    .some(item) => item,
+    .none => 0,
+};
+
+let explicit = match value {
+    .some(item) => item as i64,
+    .none => 0,
+};
+```
+
+不同名义类型、`unit` 和普通值类型、或不能按隐式转换规则落到目标类型的 arm 不能混用：
+
+```cp
+match value {
+    .some(item) => item,
+    .none => true, // 错误：bool 不能作为前一 arm 的 i32 结果
+}
+```
 
 arm 右侧必须是表达式，不是任意语句列表。可以直接写普通表达式、函数调用、`panic(...)`、另一个 `match`，也可以写块表达式：
 
@@ -357,7 +385,7 @@ payload pattern 绑定是当前 arm 表达式里的局部名字。它不能带 `
 
 `_` 是通配 arm，不绑定 payload。当前实现按源码顺序检查 arm，并把第一个 `_` 当作兜底分支；后续 arm 仍会被语义检查，但运行时不可达。因此 `_` 应只写一次并放在最后。
 
-如果某个 arm 的表达式类型为 `!`，它不决定 `match` 的结果类型；其它可返回 arm 决定结果类型。所有 arm 都是 `!` 时，整个 `match` 的类型为 `!`。没有可返回值的普通 arm 时，结果类型按 `unit` 处理。
+如果某个 arm 的表达式类型为 `!`，它不决定 `match` 的结果类型；其它可正常完成的 arm 决定结果类型。所有 arm 都是 `!` 时，整个 `match` 的类型为 `!`。没有可返回值的普通 arm 时，结果类型按 `unit` 处理。
 
 `match` 只能面对 case 名或 `_`，不能匹配内部 tag 数字，也不能依赖 case 声明顺序。tag 编号是编译器内部细节，不进入源语言语义。
 
