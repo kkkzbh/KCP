@@ -274,12 +274,17 @@ auto shell_quote(std::string_view value) -> std::string
 
 auto shell_join(std::vector<std::string> const& arguments) -> std::string
 {
-    return (
+    auto command = (
         arguments
         | std::views::transform([](std::string const& value) { return shell_quote(value); })
         | std::views::join_with(' ')
         | std::ranges::to<std::string>()
     );
+#ifdef _WIN32
+    return std::format("\"{}\"", command);
+#else
+    return command;
+#endif
 }
 
 auto run_command(std::vector<std::string> const& arguments, bool verbose) -> bool
