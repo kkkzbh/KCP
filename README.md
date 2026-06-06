@@ -75,21 +75,28 @@ The release ZIP is also attached to GitHub releases as `kcp-clion-plugin-<versio
 
 ### Windows
 
+Install MSYS2, open a CLANG64 shell, and install Clang:
+
+```bash
+pacman -S --needed mingw-w64-clang-x86_64-clang
+```
+
 Download `kcp-<version>-windows-x86_64.zip` from the release page and extract it. The archive contains:
 
 - `bin/kcp.exe`
-- `lib/kcp/cp_runtime.lib`
+- the DLLs needed by `kcp.exe`
+- `lib/kcp/libcp_runtime.a`
 - `lib/kcp/std`
 
-Add the extracted `bin` directory to `PATH`, or run `bin\kcp.exe` directly:
+Add the extracted `bin` directory and the MSYS2 CLANG64 toolchain directory to `PATH`, or run `bin\kcp.exe` directly from a CLANG64 shell:
 
 ```powershell
 Expand-Archive .\kcp-0.1.0-windows-x86_64.zip -DestinationPath .\kcp
-$env:PATH = "$PWD\kcp\kcp-0.1.0-windows-x86_64\bin;$env:PATH"
+$env:PATH = "$PWD\kcp\kcp-0.1.0-windows-x86_64\bin;C:\msys64\clang64\bin;$env:PATH"
 kcp --help
 ```
 
-KCP uses `clang` to turn generated LLVM IR into objects and executables. Install LLVM/Clang and keep `clang.exe` on `PATH` before compiling programs.
+KCP uses `clang` to turn generated LLVM IR into objects and executables. The current Windows release is built for the MSYS2 CLANG64 environment, so use that `clang.exe` when compiling programs.
 
 ## Quick Start
 

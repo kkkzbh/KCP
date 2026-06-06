@@ -185,51 +185,68 @@ jobs:
           "version=$version" >> $env:GITHUB_OUTPUT
 
       - name: Install build dependencies
-        shell: pwsh
-        run: |
-          python -m pip install --upgrade cmake ninja
-          choco install llvm -y --no-progress
-          "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: CLANG64
+          update: true
+          install: >-
+            git
+            zip
+            mingw-w64-clang-x86_64-cmake
+            mingw-w64-clang-x86_64-clang
+            mingw-w64-clang-x86_64-libffi
+            mingw-w64-clang-x86_64-libxml2
+            mingw-w64-clang-x86_64-llvm
+            mingw-w64-clang-x86_64-ninja
+            mingw-w64-clang-x86_64-zlib
 
       - name: Configure KCP release build
-        shell: pwsh
+        shell: msys2 {0}
         run: |
-          $llvmRoot = "C:\Program Files\LLVM"
-          cmake -S . -B build-windows -G Ninja `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DCMAKE_C_COMPILER="$llvmRoot\bin\clang.exe" `
-            -DCMAKE_CXX_COMPILER="$llvmRoot\bin\clang++.exe" `
-            -DLLVM_DIR="$llvmRoot\lib\cmake\llvm" `
-            -DCP_DEFAULT_RUNTIME_LIBRARY_PATH="" `
-            -DCP_DEFAULT_STDLIB_ROOT_PATH=""
+          cmake -S . -B build-windows -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=/clang64/bin/clang.exe \
+            -DCMAKE_CXX_COMPILER=/clang64/bin/clang++.exe \
+            -DLLVM_DIR=/clang64/lib/cmake/llvm \
+            -DCP_DEFAULT_RUNTIME_LIBRARY_PATH= \
+            -DCP_DEFAULT_STDLIB_ROOT_PATH=
 
       - name: Build KCP
+        shell: msys2 {0}
         run: cmake --build build-windows --target kcp -j2
 
       - name: Package Windows ZIP
-        shell: pwsh
+        shell: msys2 {0}
         run: |
-          $version = "${{ steps.version.outputs.version }}"
-          $root = "dist\windows\kcp-$version-windows-x86_64"
-          New-Item -ItemType Directory -Force "$root\bin", "$root\lib\kcp" | Out-Null
-          Copy-Item "build-windows\compiler\kcp.exe" "$root\bin\kcp.exe"
-          Copy-Item "build-windows\runtime\cp_runtime.lib" "$root\lib\kcp\cp_runtime.lib"
-          Copy-Item "std" "$root\lib\kcp\std" -Recurse
-          @"
+          version="${{ steps.version.outputs.version }}"
+          root="dist/windows/kcp-$version-windows-x86_64"
+          mkdir -p "$root/bin" "$root/lib/kcp"
+          cp build-windows/compiler/kcp.exe "$root/bin/kcp.exe"
+          cp build-windows/runtime/libcp_runtime.a "$root/lib/kcp/libcp_runtime.a"
+          cp -R std "$root/lib/kcp/std"
+          ldd "$root/bin/kcp.exe" \
+            | awk '/\/clang64\// { print $3 }' \
+            | sort -u \
+            | xargs -r -I{} cp -n "{}" "$root/bin/"
+          cat > "$root/README.txt" <<EOF
           KCP $version for Windows x86_64
 
-          Add the bin directory to PATH or run bin\kcp.exe directly.
-          Generated binaries are linked with clang, so LLVM/Clang must be available on PATH.
-          "@ | Set-Content -Encoding UTF8 "$root\README.txt"
-          Compress-Archive -Path $root -DestinationPath "dist\windows\kcp-$version-windows-x86_64.zip" -Force
+          Install MSYS2, open the CLANG64 shell, and install clang:
+              pacman -S --needed mingw-w64-clang-x86_64-clang
+
+          Add this package's bin directory and C:\msys64\clang64\bin to PATH.
+          Then run kcp from PowerShell, cmd, or the CLANG64 shell.
+          EOF
+          (cd dist/windows && zip -r "kcp-$version-windows-x86_64.zip" "kcp-$version-windows-x86_64")
 
       - name: Smoke test Windows package
-        shell: pwsh
+        shell: msys2 {0}
         run: |
-          $version = "${{ steps.version.outputs.version }}"
-          $package = "dist\windows\kcp-$version-windows-x86_64"
-          & "$package\bin\kcp.exe" --help
-          @"
+          version="${{ steps.version.outputs.version }}"
+          package="dist/windows/kcp-$version-windows-x86_64"
+          export PATH="$PWD/$package/bin:$PATH"
+          "$package/bin/kcp.exe" --help
+          cat > hello.cp <<'EOF'
           import std;
 
           main() -> i32
@@ -237,9 +254,9 @@ jobs:
               println("hello from {}", "KCP");
               return 0;
           }
-          "@ | Set-Content -Encoding UTF8 "hello.cp"
-          & "$package\bin\kcp.exe" hello.cp -o hello.exe --verbose
-          & ".\hello.exe"
+          EOF
+          "$package/bin/kcp.exe" hello.cp -o hello.exe --verbose
+          ./hello.exe
 
       - name: Upload Windows package artifacts
         uses: actions/upload-artifact@v4

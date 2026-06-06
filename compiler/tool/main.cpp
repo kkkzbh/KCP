@@ -357,9 +357,12 @@ auto runtime_library_path(std::string_view executable) -> std::optional<std::str
         path = std::filesystem::absolute(std::filesystem::path{ executable }, error);
     }
     if(not error) {
-        auto const package_runtime = path.parent_path() / "../lib/kcp/cp_runtime.lib";
-        if(std::filesystem::is_regular_file(package_runtime, error)) {
-            return package_runtime.string();
+        auto constexpr filenames = std::array<std::string_view, 2uz>{ "cp_runtime.lib", "libcp_runtime.a" };
+        for(auto const& filename : filenames) {
+            auto const package_runtime = path.parent_path() / "../lib/kcp" / filename;
+            if(std::filesystem::is_regular_file(package_runtime, error)) {
+                return package_runtime.string();
+            }
         }
     }
     return std::nullopt;
