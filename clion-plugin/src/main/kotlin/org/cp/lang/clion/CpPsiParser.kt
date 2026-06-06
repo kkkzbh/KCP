@@ -1329,6 +1329,20 @@ private class CpBuilder(
         val marker = builder.mark()
         expect(CpTypes.L_BRACE, "expected '{'")
         while (!builder.eof() && !at(CpTypes.R_BRACE)) {
+            when {
+                contextual("template") && lookAhead(1) == CpTypes.KW_FOR -> {
+                    parseTemplateForStatement()
+                    continue
+                }
+                contextual("template") && lookAhead(1) == CpTypes.KW_IF -> {
+                    parseTemplateIfStatement()
+                    continue
+                }
+                contextual("type") && lookAhead(1) == CpTypes.IDENTIFIER && lookAhead(2) == CpTypes.EQUAL -> {
+                    parseTypeAlias(CpElements.TYPE_ALIAS_STATEMENT)
+                    continue
+                }
+            }
             if (startsExpression()) {
                 val expression = parseExpression()
                 if (consume(CpTypes.SEMICOLON)) {

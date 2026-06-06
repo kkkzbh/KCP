@@ -499,6 +499,46 @@ class CpPsiParserTest : BasePlatformTestCase() {
         assertTrue(file.collectPsiErrors().isEmpty())
     }
 
+    fun testForwardParameterPackVariantMatchBuildsStructuredPsi() {
+        val file = parse(
+            """
+            variant calc_result<T> {
+                empty;
+                total(T);
+            }
+
+            read(value: i32) -> i32
+            {
+                return value;
+            }
+
+            sum_forward<T...>(values: T forward&...) -> calc_result<i32>
+            {
+                let total = 0;
+                template for(let value : values...) {
+                    total = total + read(forward value);
+                }
+                return calc_result<i32>::total(total);
+            }
+
+            main() -> i32
+            {
+                return match sum_forward(10, 20, 12) {
+                    .total(value) => value,
+                    .empty => 0,
+                };
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(1, file.descendants(CpElements.VARIANT_DECLARATION).size)
+        assertEquals(1, file.descendants(CpElements.MATCH_EXPRESSION).size)
+        assertEquals(1, file.descendants(CpElements.TEMPLATE_FOR_STATEMENT).size)
+        assertTrue(file.descendants(CpElements.GENERIC_PARAMETER).any { it.text == "T..." })
+        assertTrue(file.descendants(CpElements.TYPE_REFERENCE).any { it.text == "T forward&" })
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
     fun testCallableTypePackReturnBuildsStructuredPsi() {
         val file = parse(
             """
@@ -547,6 +587,147 @@ class CpPsiParserTest : BasePlatformTestCase() {
         assertTrue(file.collectPsiErrors().isEmpty())
     }
 
+    fun testMetaReexportGenericLambdaVariantPackBuildsStructuredPsi() {
+        val file = parse(
+            """
+            export module meta_wrap;
+
+            export import std.meta;
+
+            variant optional<T> {
+                none;
+                some(T);
+            }
+
+            main() -> i32
+            {
+                let callback = f<T...>(values: optional<T>...) -> i32 {
+                    let total = 0;
+                    template for(let value : values...) {
+                        total = total + match value {
+                            .some(item) => 1,
+                            .none => 0,
+                        };
+                    }
+                    return total;
+                };
+                type result = call_result<decltype(callback), optional<i32>, optional<bool>>;
+                let value: result = callback(optional<i32>::some(1), optional<bool>::none);
+                return value + 41;
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(1, file.descendants(CpElements.MODULE_HEADER).size)
+        assertEquals(1, file.descendants(CpElements.IMPORT_DECLARATION).size)
+        assertEquals(1, file.descendants(CpElements.VARIANT_DECLARATION).size)
+        assertEquals(1, file.descendants(CpElements.LAMBDA_EXPRESSION).size)
+        assertEquals(1, file.descendants(CpElements.TEMPLATE_FOR_STATEMENT).size)
+        assertEquals(1, file.descendants(CpElements.MATCH_EXPRESSION).size)
+        assertTrue(file.descendants(CpElements.TYPE_REFERENCE).any {
+            it.text == "call_result<decltype(callback), optional<i32>, optional<bool>>"
+        })
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
+    fun testVariantMatchTemplatePackReturnArmsBuildStructuredPsi() {
+        val file = parse(
+            """
+            variant optional<T> {
+                none;
+                some(T);
+            }
+
+            first<T...>(values: optional<T>...)
+            {
+                template for(let value : values...) {
+                    match value {
+                        .some(item) => {
+                            return item;
+                        },
+                        .none => {
+                            return 0;
+                        },
+                    };
+                }
+                return 0;
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(1, file.descendants(CpElements.VARIANT_DECLARATION).size)
+        assertEquals(1, file.descendants(CpElements.TEMPLATE_FOR_STATEMENT).size)
+        assertEquals(1, file.descendants(CpElements.MATCH_EXPRESSION).size)
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
+    fun testTypePackVariantMatchReturnBuildsStructuredPsi() {
+        val file = parse(
+            """
+            variant optional<T> {
+                none;
+                some(T);
+            }
+
+            first_i32<T...>()
+            {
+                template for(type U : T...) {
+                    template if(U == i32) {
+                        let value = optional<i32>::some(42);
+                        return match value {
+                            .some(item) => item,
+                            .none => 0,
+                        };
+                    }
+                }
+                return 0;
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(1, file.descendants(CpElements.VARIANT_DECLARATION).size)
+        assertEquals(1, file.descendants(CpElements.TEMPLATE_FOR_STATEMENT).size)
+        assertEquals(1, file.descendants(CpElements.TEMPLATE_IF_STATEMENT).size)
+        assertEquals(1, file.descendants(CpElements.MATCH_EXPRESSION).size)
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
+    fun testVariantMatchArmTypeAliasTemplateIfBuildsStructuredPsi() {
+        val file = parse(
+            """
+            variant optional<T> {
+                none;
+                some(T);
+            }
+
+            first_i32<T...>(values: optional<T>...)
+            {
+                template for(let value : values...) {
+                    return match value {
+                        .some(item) => {
+                            type current = decltype(item);
+                            template if(current == i32) {
+                                return item;
+                            } else {
+                                return 0;
+                            }
+                        },
+                        .none => 0,
+                    };
+                }
+                return 0;
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(1, file.descendants(CpElements.VARIANT_DECLARATION).size)
+        assertEquals(1, file.descendants(CpElements.TEMPLATE_FOR_STATEMENT).size)
+        assertEquals(1, file.descendants(CpElements.TEMPLATE_IF_STATEMENT).size)
+        assertEquals(1, file.descendants(CpElements.TYPE_ALIAS_STATEMENT).size)
+        assertEquals(1, file.descendants(CpElements.MATCH_EXPRESSION).size)
+        assertTrue(file.collectPsiErrors().isEmpty())
+    }
+
     fun testIncompleteVariantMatchTemplatePackArmDoesNotTrapRecovery() {
         val file = parse(
             """
@@ -570,6 +751,168 @@ class CpPsiParserTest : BasePlatformTestCase() {
 
         assertEquals(1, file.descendants(CpElements.VARIANT_DECLARATION).size)
         assertEquals(1, file.descendants(CpElements.MATCH_EXPRESSION).size)
+        assertTrue(file.collectPsiErrors().isNotEmpty())
+    }
+
+    fun testMalformedVariantMatchTemplatePackArmsRecoverWithoutStalling() {
+        val file = parse(
+            """
+            variant packet<T> {
+                empty;
+                pair(T, T);
+            }
+
+            count<T...>(values: T...) -> i32
+            {
+                let total = 0;
+                return match packet<i32>::pair(1, 2) {
+                    => 0,
+                    .pair( => 1,
+                    .empty => template for(let item : values...) {
+                        total = total + 1;
+                    },
+                };
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(1, file.descendants(CpElements.VARIANT_DECLARATION).size)
+        assertEquals(1, file.descendants(CpElements.MATCH_EXPRESSION).size)
+        assertTrue(file.descendants(CpElements.FUNCTION).any { it.text.contains("count<T...>") })
+        assertTrue(file.collectPsiErrors().isNotEmpty())
+    }
+
+    fun testWildcardVariantMatchPackRecoveryKeepsFollowingFunction() {
+        val file = parse(
+            """
+            variant optional<T> {
+                none;
+                some(T);
+            }
+
+            count<T...>(values: optional<T>...) -> i32
+            {
+                return match optional<i32>::some(1) {
+                    _ => {
+                        template for(let value : values...) {
+                            return 0;
+                        }
+                        return 0;
+                    },
+                    .some(item => item,
+                };
+            }
+
+            after() -> i32
+            {
+                return 1;
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(1, file.descendants(CpElements.VARIANT_DECLARATION).size)
+        assertTrue(file.descendants(CpElements.MATCH_EXPRESSION).isNotEmpty())
+        assertTrue(file.descendants(CpElements.TEMPLATE_FOR_STATEMENT).isNotEmpty())
+        assertTrue(file.descendants(CpElements.FUNCTION).any { it.text.contains("after") })
+        assertTrue(file.collectPsiErrors().isNotEmpty())
+    }
+
+    fun testNestedMalformedVariantMatchTypePackRecoveryKeepsFollowingFunction() {
+        val file = parse(
+            """
+            import std.meta;
+
+            variant packet<T> {
+                empty;
+                pair(T, T);
+            }
+
+            count<F, Args...>(values: packet<Args>...) -> i32
+            requires F: callable<Args...>
+            {
+                template for(let value : values...) {
+                    return match value {
+                        .pair(left, right) => match packet<i32>::pair(left, right) {
+                            .pair(inner, => inner,
+                            _ => template for(type U : Args...) {
+                                return 0;
+                            },
+                        },
+                        .empty => 0,
+                    };
+                }
+                return 0;
+            }
+
+            after() -> i32
+            {
+                return 1;
+            }
+            """.trimIndent(),
+        )
+
+        assertTrue(file.descendants(CpElements.MATCH_EXPRESSION).isNotEmpty())
+        assertTrue(file.descendants(CpElements.FUNCTION).any { it.text.contains("after") })
+        assertTrue(file.collectPsiErrors().isNotEmpty())
+    }
+
+    fun testUnclosedNestedVariantMatchTypePackRecoveryReachesEof() {
+        val file = parse(
+            """
+            variant packet<T> {
+                empty;
+                pair(T, T);
+            }
+
+            count<Args...>(values: packet<Args>...) -> i32
+            {
+                template for(let value : values...) {
+                    return match value {
+                        .pair(left, right) => match packet<i32>::pair(left, right) {
+                            .pair(inner, other) => inner,
+                            _ => template for(type U : Args...) {
+                                return 0;
+                            },
+            """.trimIndent(),
+        )
+
+        assertEquals(1, file.descendants(CpElements.VARIANT_DECLARATION).size)
+        assertTrue(file.descendants(CpElements.MATCH_EXPRESSION).isNotEmpty())
+        assertTrue(file.descendants(CpElements.TEMPLATE_FOR_STATEMENT).isNotEmpty())
+        assertTrue(file.collectPsiErrors().isNotEmpty())
+    }
+
+    fun testVariantMatchPackMissingCommaAndArrowRecoveryKeepsFollowingFunction() {
+        val file = parse(
+            """
+            variant optional<T> {
+                none;
+                some(T);
+            }
+
+            count<T...>(values: optional<T>...) -> i32
+            {
+                template for(let value : values...) {
+                    return match value {
+                        .some(item) => item
+                        .none 0,
+                        _ => 0,
+                    };
+                }
+                return 0;
+            }
+
+            after() -> i32
+            {
+                return 1;
+            }
+            """.trimIndent(),
+        )
+
+        assertEquals(1, file.descendants(CpElements.VARIANT_DECLARATION).size)
+        assertTrue(file.descendants(CpElements.MATCH_EXPRESSION).isNotEmpty())
+        assertTrue(file.descendants(CpElements.TEMPLATE_FOR_STATEMENT).isNotEmpty())
+        assertTrue(file.descendants(CpElements.FUNCTION).any { it.text.contains("after") })
         assertTrue(file.collectPsiErrors().isNotEmpty())
     }
 
