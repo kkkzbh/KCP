@@ -4,6 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <malloc.h>
+#endif
+
 namespace {
 auto constexpr open_read = uint8_t{1u << 0u};
 auto constexpr open_write = uint8_t{1u << 1u};
@@ -82,6 +86,13 @@ extern "C" auto cp_alloc(uint64_t elem_size, uint64_t align, uint64_t count) -> 
     auto bytes = checked_allocation_size(elem_size, count);
     auto alignment = normalized_alignment(align);
 
+#ifdef _WIN32
+    auto result = _aligned_malloc(bytes, alignment);
+    if(result == nullptr) {
+        abort();
+    }
+    return result;
+#else
     if(alignment <= alignof(max_align_t)) {
         auto result = malloc(bytes);
         if(result == nullptr) {
@@ -95,11 +106,16 @@ extern "C" auto cp_alloc(uint64_t elem_size, uint64_t align, uint64_t count) -> 
         abort();
     }
     return result;
+#endif
 }
 
 extern "C" auto cp_free(void* ptr) -> void
 {
+#ifdef _WIN32
+    _aligned_free(ptr);
+#else
     free(ptr);
+#endif
 }
 
 extern "C" {
