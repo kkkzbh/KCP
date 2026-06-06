@@ -1,0 +1,5 @@
+[kcp]
+name=KCP
+baseurl=https://kkkzbh.github.io/KCP/fedora/latest/
+enabled=1
+gpgcheck=0

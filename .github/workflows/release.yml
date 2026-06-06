@@ -185,3 +185,66 @@ jobs:
         with:
           files: dist/github-release/*
           generate_release_notes: true
+
+  fedora-repository:
+    name: Fedora repository
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+    needs:
+      - linux-packages
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download Linux packages
+        uses: actions/download-artifact@v4
+        with:
+          name: kcp-linux-packages
+          path: dist/linux-packages
+
+      - name: Install repository tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y createrepo-c
+
+      - name: Publish Fedora repository
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git ls-remote --exit-code --heads "https://github.com/${GITHUB_REPOSITORY}.git" gh-pages >/dev/null 2>&1; then
+            git clone --depth 1 --branch gh-pages "https://github.com/${GITHUB_REPOSITORY}.git" pages
+          else
+            mkdir pages
+            git -C pages init
+            git -C pages checkout -b gh-pages
+          fi
+
+          git -C pages remote remove origin >/dev/null 2>&1 || true
+          git -C pages remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          mkdir -p "pages/fedora/${VERSION}"
+          cp dist/linux-packages/*.rpm "pages/fedora/${VERSION}/"
+          createrepo_c "pages/fedora/${VERSION}"
+
+          rm -rf pages/fedora/latest
+          mkdir -p pages/fedora
+          cp -a "pages/fedora/${VERSION}" pages/fedora/latest
+          touch pages/.nojekyll
+
+          git -C pages add .nojekyll fedora
+          if git -C pages diff --cached --quiet; then
+            echo "Fedora repository is already current."
+            exit 0
+          fi
+          git -C pages commit -m "release: publish Fedora repository ${VERSION}"
+          git -C pages push origin gh-pages
