@@ -242,7 +242,7 @@ main() -> i32
 
 当前 source 入口包括 `iota(begin, end)`、`empty<T>()`、`single(value)` 和 `repeat(value)`。`iota` 只提供二参半开范围，不提供 `iota(end)`；它靠 `==` 判断结束、靠前置 `++` 推进，不使用 `<` / `<=`。`empty<T>()` 需要显式元素类型。`single` / `repeat` 的 item 是值类型，不是引用；它们会把保存的 value 复制进 iterator，`repeat` 还会在每次 `next()` 复制 value。有限重复用 `repeat(value).take(count)`，当前没有 `repeat(value, count)` 二参重载。
 
-当前 lazy adapter 包括 `take(count)`、`drop(count)`、`filter(predicate)`、`transform(mapper)`、`enumerate()`、`zip(other)` 和 `concat(other)`。adapter 只保存 source view 和 callable / 另一个 range，不会立即拉取全部元素；每次 `.iter()` 会重新创建内部 iterator。`filter` 保留原 item 类型，`transform` 才改变 item 类型；当前没有名为 `map` 的 adapter，也没有 `flat_map`、`cycle`、`reverse`、`chunk`、`windows`、`flatten` 或 `take_while`。`zip` 两侧任一结束就结束；`concat` 要求两侧 item 类型完全相同。
+当前 lazy adapter 包括 `take(count)`、`drop(count)`、`filter(predicate)`、`transform(mapper)`、`enumerate()`、`zip(other)` 和 `concat(other)`。adapter 只保存 source view 和 callable / 另一个 range，不会立即拉取全部元素；每次 `.iter()` 会重新创建内部 iterator。`filter` 保留原 item 类型，`transform` 才改变 item 类型；当前没有名为 `map` 的 adapter，也没有 `flat_map`、`cycle`、`reverse`、`chunk`、`flatten` 或 `take_while`。`zip` 两侧任一结束就结束；`concat` 要求两侧 item 类型完全相同。
 
 需要注意：range-for 的内建数组路径不等同于 ranges UFCS。`for(let x : array)` 是编译器支持；`array.count()`、`array.filter(...)` 则依赖 `std.ranges.sources` 中的数组 `iterable` / `const_iterable` impl，因此需要导入 `std.ranges` 或更高层的 `std`。`str` 也是类似的边界：`for(let ch : text)` 可用，但当前 `text: str` 不能稳定作为 ranges adapter / terminal receiver；需要字符串参与 ranges 时使用 `string` 或手写循环。
 

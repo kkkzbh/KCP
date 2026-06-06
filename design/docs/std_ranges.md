@@ -175,7 +175,7 @@ filter<R, P>(source: R forward&, predicate: P)
 - `concat(left, right)` 要求两侧 `iter_item` 完全相同；`T&` 和 `T const&`、`i32` 和 `i64` 都不是同一个 item 类型。
 - `concat` 每次 `.iter()` 会立即分别创建左、右两个 iterator，但 `next()` 会一直消费左侧，直到左侧第一次返回 `.none` 后才把内部 `left_done` 置为 true 并开始消费右侧。左侧若是无限 range，右侧永远不会被拉取；左侧结束后不会再回头检查左侧是否后来又有元素。
 - 当前没有 `map` / `flat_map` adapter；映射元素使用 `transform(mapper)`，`map<K,V>` 这个名字留给关联容器。
-- 当前没有 `cycle`、`reverse`、`chunk`、`windows`、`flatten` 或 `take_while`。
+- 当前没有 `cycle`、`reverse`、`chunk`、`flatten` 或 `take_while`。
 
 ## Terminals
 
