@@ -27,6 +27,7 @@ enum class emit_kind : std::uint8_t
 struct cli_options
 {
     std::vector<std::string> inputs{};
+    std::string executable{};
     std::string output{ "a.out" };
     emit_kind emit{ emit_kind::bin };
     std::optional<std::string> keep_ll{};
@@ -65,6 +66,8 @@ auto import_roots(std::string_view executable) -> std::vector<std::filesystem::p
     }
     if(not error) {
         path = path.parent_path();
+        auto const executable_dir = path;
+        roots.emplace_back(executable_dir / "../lib/kcp/std");
         for(auto depth = 0uz; depth < 5uz and not path.empty(); ++depth) {
             roots.emplace_back(path);
             path = path.parent_path();
@@ -244,6 +247,18 @@ auto print_diagnostic(source_manager const& sources, diagnostic const& value) ->
 
 auto shell_quote(std::string_view value) -> std::string
 {
+#ifdef _WIN32
+    auto output = std::string{ "\"" };
+    for(auto character : value) {
+        if(character == '"') {
+            output += "\\\"";
+        } else {
+            output += character;
+        }
+    }
+    output += '"';
+    return output;
+#else
     auto output = std::string{ "'" };
     for(auto character : value) {
         if(character == '\'') {
@@ -254,6 +269,7 @@ auto shell_quote(std::string_view value) -> std::string
     }
     output += '\'';
     return output;
+#endif
 }
 
 auto shell_join(std::vector<std::string> const& arguments) -> std::string
@@ -314,7 +330,7 @@ auto append_release_args(std::vector<std::string>& output, cli_options const& op
 
 auto resolve_tool_path(std::string const& tool) -> std::string
 {
-    if(tool.find('/') != std::string::npos) {
+    if(tool.find('/') != std::string::npos or tool.find('\\') != std::string::npos) {
         return tool;
     }
     auto candidate = std::filesystem::path{ "/usr/bin" } / tool;
@@ -325,7 +341,7 @@ auto resolve_tool_path(std::string const& tool) -> std::string
     return tool;
 }
 
-auto runtime_library_path() -> std::optional<std::string>
+auto runtime_library_path(std::string_view executable) -> std::optional<std::string>
 {
     if(auto const* path = std::getenv("CP_RUNTIME_LIBRARY_PATH")) {
         if(std::string_view{ path }.size() != 0uz) {
@@ -334,6 +350,17 @@ auto runtime_library_path() -> std::optional<std::string>
     }
     if constexpr(std::string_view{ CP_RUNTIME_LIBRARY_PATH }.size() != 0uz) {
         return std::string{ CP_RUNTIME_LIBRARY_PATH };
+    }
+    auto error = std::error_code{};
+    auto path = std::filesystem::weakly_canonical(std::filesystem::path{ executable }, error);
+    if(error) {
+        path = std::filesystem::absolute(std::filesystem::path{ executable }, error);
+    }
+    if(not error) {
+        auto const package_runtime = path.parent_path() / "../lib/kcp/cp_runtime.lib";
+        if(std::filesystem::is_regular_file(package_runtime, error)) {
+            return package_runtime.string();
+        }
     }
     return std::nullopt;
 }
@@ -358,7 +385,7 @@ auto link_binary(cli_options const& options, std::filesystem::path const& input_
     append_release_args(command, options);
     append_all(command, options.clang_args);
     command.emplace_back(input_path.string());
-    if(auto runtime = runtime_library_path()) {
+    if(auto runtime = runtime_library_path(options.executable)) {
         command.emplace_back(*runtime);
     }
     command.emplace_back("-o");
@@ -438,6 +465,7 @@ auto main(int argc, char** argv) -> int
         print_help(std::cerr);
         return 2;
     }
+    parsed_options.options.executable = argv[0];
     auto const& options = parsed_options.options;
     if(options.help) {
         print_help(std::cout);

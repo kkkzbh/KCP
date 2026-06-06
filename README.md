@@ -75,12 +75,21 @@ The release ZIP is also attached to GitHub releases as `kcp-clion-plugin-<versio
 
 ### Windows
 
-Windows packages are not published yet. The planned release shape is:
+Download `kcp-<version>-windows-x86_64.zip` from the release page and extract it. The archive contains:
 
-- a GitHub Release `.exe` installer or portable `.zip` containing `kcp.exe`, the runtime archive, and `std`
-- a `winget` manifest after the Windows artifact is stable and installable without manual path repair
+- `bin/kcp.exe`
+- `lib/kcp/cp_runtime.lib`
+- `lib/kcp/std`
 
-The main blocker is validating the compiler, runtime archive, standard library discovery, and `clang` linking path on Windows CI. Until that is done, Linux packages are the supported install path.
+Add the extracted `bin` directory to `PATH`, or run `bin\kcp.exe` directly:
+
+```powershell
+Expand-Archive .\kcp-0.1.0-windows-x86_64.zip -DestinationPath .\kcp
+$env:PATH = "$PWD\kcp\kcp-0.1.0-windows-x86_64\bin;$env:PATH"
+kcp --help
+```
+
+KCP uses `clang` to turn generated LLVM IR into objects and executables. Install LLVM/Clang and keep `clang.exe` on `PATH` before compiling programs.
 
 ## Quick Start
 

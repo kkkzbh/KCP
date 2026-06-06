@@ -165,12 +165,96 @@ jobs:
             -PjavaToolchainVersion=25 \
             -PclionLocalPath=
 
+  windows-packages:
+    name: Windows packages
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Resolve release version
+        id: version
+        shell: pwsh
+        run: |
+          if("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = "${{ inputs.version }}"
+          } else {
+            $version = "${env:GITHUB_REF_NAME}".TrimStart("v")
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Install build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade cmake ninja
+          choco install llvm -y --no-progress
+          "C:\Program Files\LLVM\bin" >> $env:GITHUB_PATH
+
+      - name: Configure KCP release build
+        shell: pwsh
+        run: |
+          $llvmRoot = "C:\Program Files\LLVM"
+          cmake -S . -B build-windows -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_COMPILER="$llvmRoot\bin\clang.exe" `
+            -DCMAKE_CXX_COMPILER="$llvmRoot\bin\clang++.exe" `
+            -DLLVM_DIR="$llvmRoot\lib\cmake\llvm" `
+            -DCP_DEFAULT_RUNTIME_LIBRARY_PATH="" `
+            -DCP_DEFAULT_STDLIB_ROOT_PATH=""
+
+      - name: Build KCP
+        run: cmake --build build-windows --target kcp -j2
+
+      - name: Package Windows ZIP
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $root = "dist\windows\kcp-$version-windows-x86_64"
+          New-Item -ItemType Directory -Force "$root\bin", "$root\lib\kcp" | Out-Null
+          Copy-Item "build-windows\compiler\kcp.exe" "$root\bin\kcp.exe"
+          Copy-Item "build-windows\runtime\cp_runtime.lib" "$root\lib\kcp\cp_runtime.lib"
+          Copy-Item "std" "$root\lib\kcp\std" -Recurse
+          @"
+          KCP $version for Windows x86_64
+
+          Add the bin directory to PATH or run bin\kcp.exe directly.
+          Generated binaries are linked with clang, so LLVM/Clang must be available on PATH.
+          "@ | Set-Content -Encoding UTF8 "$root\README.txt"
+          Compress-Archive -Path $root -DestinationPath "dist\windows\kcp-$version-windows-x86_64.zip" -Force
+
+      - name: Smoke test Windows package
+        shell: pwsh
+        run: |
+          $version = "${{ steps.version.outputs.version }}"
+          $package = "dist\windows\kcp-$version-windows-x86_64"
+          & "$package\bin\kcp.exe" --help
+          @"
+          import std;
+
+          main() -> i32
+          {
+              println("hello from {}", "KCP");
+              return 0;
+          }
+          "@ | Set-Content -Encoding UTF8 "hello.cp"
+          & "$package\bin\kcp.exe" hello.cp -o hello.exe --verbose
+          & ".\hello.exe"
+
+      - name: Upload Windows package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kcp-windows-packages
+          path: dist/windows/*.zip
+          if-no-files-found: error
+
   github-release:
     name: GitHub release
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
     needs:
       - linux-packages
       - clion-plugin
+      - windows-packages
     runs-on: ubuntu-latest
 
     steps:
