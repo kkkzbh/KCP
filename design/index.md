@@ -2,6 +2,9 @@
 
 这里是 KCP 语言文档的读者入口。文档分成两层：先读导览页建立整体认识，再按需要进入参考页查细节。
 
+本文档按当前编译器实现写作：已经可解析、可语义检查、可 lower 或标准库已经提供的能力会写成可用规则；尚未接入的语法、库接口或
+lowering 会明确标成不支持或当前限制。遇到“设计直觉”和页面细则冲突时，以对应参考页的可做/不可做边界为准。
+
 ## 推荐顺序
 
 1. 读 [语法导览](/docs/syntax)，了解 KCP 程序的基本形状。
@@ -17,20 +20,27 @@
 - [流程控制](/docs/flow)：`if`、循环、标签、`break` / `continue` 和 `return`。
 - [结构](/docs/struct)：`struct / impl`、构造、析构、成员函数、关联函数、UFCS、字段访问和块表达式。
 - [Enum](/docs/enum)：强类型整数枚举、作用域 case 和显式底层整数转换。
-- [Variant 与 match](/docs/variant)：名义和类型、case 构造、`match`、默认初始化和 tagged union 布局。
+- [Variant 与 match](/docs/variant)：名义类型、case 构造、`match`、tag + payload storage 布局和 payload 析构缺口。
 - [运算符](/docs/operator)：运算符表、内建运算符和第一版 `operator` 重载。
 - [类型转换](/docs/cast)：`as` 显式转换。
 - [Lambda 与函数值](/docs/lambda)：函数类型、函数指针、普通函数绑定、lambda、捕获和闭包边界。
 - [泛型](/docs/generic)：泛型函数、泛型类型、泛型 `impl`、参数包、`template for`、约束和实例化。
+- [元编程与反射基础](/docs/meta)：类型查询、`call_result` 和 `callable`。
 - [Concept](/docs/concept)：静态协议、关联类型、默认实现、父 concept 和 `impl Concept for Type`。
-- [所有权、借用与移动](/docs/ownership)：默认 copy、显式 `ref` / `move`、`like` const 转发 / `move&`、特殊成员和能力推导。
+- [所有权、借用与移动](/docs/ownership)：默认 copy、显式 `ref` / `move`、`like` const 转发 / `move&`、特殊成员和 concept 边界。
 
 ## 标准库
 
 - [标准库导览](/docs/stdlib)：标准库模块分层、导入方式和常见类型。
+- [标准库 core](/docs/std_core)：`optional`、`expected`、`iterator` / `iterable` 和指针 iterator。
 - [迭代](/docs/iteration)：range-for 的语言入口、`iterator` / `iterable` 协议要求和内建类型入口。
+- [标准库 memory](/docs/std_memory)：`raw_buffer`、`span` 和 `contiguous_mutable_range` 的底层连续区间边界。
+- [标准库 text](/docs/std_text)：`str` 扩展、拥有型 `string`、迭代、失效和字符串限制。
 - [标准库 collections](/docs/std_collections)：`vector`、有序唯一键 `map/set`、node 语义和 order-statistics 接口。
+- [标准库 compare](/docs/std_compare)：三路比较分类、保留 concept、`asc` / `desc` 和默认排序协议。
 - [标准库 ranges](/docs/std_ranges)：`std.ranges` 的 sources、lazy adapters、terminals、UFCS 组合和非重载命名规则。
+- [标准库 algorithm](/docs/std_algorithm)：`sort` / `stable_sort` 的连续可写 range、比较器和稳定性边界。
+- [标准库 IO](/docs/std_io)：`format` / `print` / `display` 协议、stdout/stderr 输出和格式错误边界。
 - [标准库 fs](/docs/std_fs)：`std.fs.file`、`open_options`、同步读写和 runtime 文件 ABI。
 
 ## 底层与互操作
