@@ -80,8 +80,9 @@ intellijPlatform {
         name = providers.gradleProperty("pluginName")
         version = providers.gradleProperty("pluginVersion")
         description = """
-            为 KCP 语言提供丰富高亮和解析器/语义诊断。
-            编辑器词法分析在 CLion 内运行，项目级前端分析委托给原生 KCP 辅助程序。
+            KCP Language Support adds CLion editor support for KCP source files.
+            It provides syntax highlighting, parser-backed structure, semantic diagnostics,
+            and project-aware analysis through the native KCP helper.
         """.trimIndent()
 
         ideaVersion {

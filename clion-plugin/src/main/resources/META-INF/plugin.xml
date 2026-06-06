@@ -1,10 +1,11 @@
 <idea-plugin package="org.cp.lang.clion">
     <id>org.cp.lang.cp</id>
-    <name>KCP 语言支持</name>
+    <name>KCP Language Support</name>
     <vendor>kkkzbh</vendor>
     <description><![CDATA[
-        为 KCP 语言提供 CLion 支持：文件类型注册、语法和语义高亮、
-        注释处理、括号匹配，以及原生解析器/语义诊断。
+        KCP Language Support adds CLion support for KCP source files:
+        file type registration, syntax and semantic highlighting, comments,
+        brace matching, native parsing, and semantic diagnostics.
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>

@@ -112,7 +112,7 @@ jobs:
             gcc-c++ \
             git \
             glibc-langpack-en \
-            java-25-openjdk-devel \
+            java-21-openjdk-devel \
             libffi-devel \
             libxml2-devel \
             llvm-devel \
@@ -140,7 +140,7 @@ jobs:
         run: |
           ./gradlew buildPlugin \
             -PpluginVersion="${{ steps.version.outputs.version }}" \
-            -PjavaToolchainVersion=25 \
+            -PjavaToolchainVersion=21 \
             -PclionLocalPath=
 
       - name: Upload plugin artifact
@@ -157,12 +157,12 @@ jobs:
           JETBRAINS_MARKETPLACE_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
         run: |
           if [[ -z "${JETBRAINS_MARKETPLACE_TOKEN}" ]]; then
-            echo "JETBRAINS_MARKETPLACE_TOKEN is required to publish the plugin" >&2
-            exit 1
+            echo "JETBRAINS_MARKETPLACE_TOKEN is not configured; skipping Marketplace publish."
+            exit 0
           fi
           ./gradlew publishPlugin \
             -PpluginVersion="${{ steps.version.outputs.version }}" \
-            -PjavaToolchainVersion=25 \
+            -PjavaToolchainVersion=21 \
             -PclionLocalPath=
 
   github-release:

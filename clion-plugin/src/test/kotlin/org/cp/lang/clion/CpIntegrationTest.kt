@@ -31,6 +31,8 @@ class CpIntegrationTest {
     fun pluginRegistersBuildBeforeRunTaskOnCurrentExtensionPoint() {
         val pluginXml = Files.readString(pluginXmlPath())
 
+        assertTrue(pluginXml.contains("<name>KCP Language Support</name>"))
+        assertTrue(pluginXml.contains("KCP Language Support adds CLion support"))
         assertTrue(
             pluginXml.contains("""<stepsBeforeRunProvider implementation="org.cp.lang.clion.CpBuildBeforeRunTaskProvider" />"""),
         )
