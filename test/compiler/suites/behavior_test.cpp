@@ -169,6 +169,152 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "extern C binary should call libc abs");
 }
 
+auto check_extern_c_callback_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("extern-c-callback");
+    auto source = dir / "extern_c_callback.cp";
+    auto app = dir / "extern_c_callback";
+    write_source(
+        source,
+R"(extern "C" call_cb(callback: f*(i32) -> i32, value: i32) -> i32
+{
+    return callback(value);
+}
+
+inc(value: i32) -> i32
+{
+    return value + 1;
+}
+
+main() -> i32
+{
+    return call_cb(inc, 41);
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "KCP should compile extern C callback binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "extern C callback binary should call through f* parameter");
+}
+
+auto check_block_expression_return_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("block-expression-return");
+    auto source = dir / "block_expression_return.cp";
+    auto app = dir / "block_expression_return";
+    write_source(
+        source,
+R"(from_initializer()
+{
+    let ignored: i32 = {
+        return 20;
+    };
+}
+
+from_second_initializer()
+{
+    let ignored: i32 = {
+        return 22;
+    };
+}
+
+main() -> i32
+{
+    return from_initializer() + from_second_initializer();
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "KCP should compile block-expression return binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "block-expression returns should return from the containing function");
+}
+
+auto check_concept_default_function_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("concept-default-function");
+    auto source = dir / "concept_default_function.cp";
+    auto app = dir / "concept_default_function";
+    write_source(
+        source,
+        R"(concept parser {
+    type output = i32;
+
+    parse(self const&) -> output;
+
+    has_error(self const&) -> bool
+    {
+        return false;
+    }
+}
+
+struct int_parser {
+    value: i32;
+}
+
+impl parser for int_parser {
+    parse(self const&) -> output
+    {
+        return value;
+    }
+}
+
+main() -> i32
+{
+    let parser = int_parser{ 42 };
+    if(parser.has_error()) {
+        return 0;
+    }
+    return parser.parse();
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "KCP should compile concept default function binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "concept default function binary should return 42");
+}
+
+auto check_concept_default_extension_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("concept-default-extension");
+    auto source = dir / "concept_default_extension.cp";
+    auto app = dir / "concept_default_extension";
+    write_source(
+        source,
+        R"(concept measured {
+    measure(self const&) -> i32
+    {
+        return 1;
+    }
+}
+
+variant token {
+    ready;
+}
+
+impl measured for i32 {
+}
+
+impl measured for [i32; 2] {
+}
+
+impl measured for token {
+}
+
+main() -> i32
+{
+    let values = [1, 2];
+    let value = token::ready;
+    return (10 as i32).measure() + values.measure() + value.measure() + 39;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "KCP should compile concept default extension binary");
+    test_parser::assert_true(
+        exit_code(run_status({ app.string() })) == 42,
+        "concept default extension binary should call materialized builtin, array, and variant methods");
+}
+
 auto check_member_default_argument_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("member-default-argument");
@@ -369,15 +515,67 @@ auto check_cli_option_surface(test_tools const& tools) -> void
     test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), "--emit", "bad", source.string() }, stderr_path)) == 2, "KCP should reject unknown emit kinds");
     test_parser::assert_true(read_text(stderr_path).contains("unknown emit kind"), "bad emit kind should explain the problem");
 
+    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), "--emit" }, stderr_path)) == 2, "KCP should reject missing --emit argument");
+    test_parser::assert_true(read_text(stderr_path).contains("--emit requires an argument"), "missing --emit value should explain the problem");
+
+    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), "--output" }, stderr_path)) == 2, "KCP should reject missing --output argument");
+    test_parser::assert_true(read_text(stderr_path).contains("--output requires an argument"), "missing --output value should explain the problem");
+
+    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), "--keep-ll" }, stderr_path)) == 2, "KCP should reject missing --keep-ll argument");
+    test_parser::assert_true(read_text(stderr_path).contains("--keep-ll requires an argument"), "missing --keep-ll value should explain the problem");
+
+    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), "--keep-obj" }, stderr_path)) == 2, "KCP should reject missing --keep-obj argument");
+    test_parser::assert_true(read_text(stderr_path).contains("--keep-obj requires an argument"), "missing --keep-obj value should explain the problem");
+
     test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), "--clang" }, stderr_path)) == 2, "KCP should reject missing --clang argument");
     test_parser::assert_true(read_text(stderr_path).contains("--clang requires an argument"), "missing --clang value should explain the problem");
 
-    auto status = compile(tools, { source.string(), "-o", app.string(), "--dump-mir" });
+    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), "--clang-arg" }, stderr_path)) == 2, "KCP should reject missing --clang-arg argument");
+    test_parser::assert_true(read_text(stderr_path).contains("--clang-arg requires an argument"), "missing --clang-arg value should explain the problem");
+
+    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), "--link-arg" }, stderr_path)) == 2, "KCP should reject missing --link-arg argument");
+    test_parser::assert_true(read_text(stderr_path).contains("--link-arg requires an argument"), "missing --link-arg value should explain the problem");
+
+    auto missing = dir / "missing.cp";
+    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), missing.string(), "-o", app.string() }, stderr_path)) == 2, "KCP should reject missing input files");
+    test_parser::assert_true(read_text(stderr_path).contains("failed to open"), "missing input file should explain the problem");
+
+    auto bad_preprocess = dir / "bad_preprocess.cp";
+    write_source(bad_preprocess, "main() -> i32 { return 0; } /*");
+    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), bad_preprocess.string(), "-o", app.string() }, stderr_path)) == 1, "KCP should reject preprocessor errors");
+    test_parser::assert_true(read_text(stderr_path).contains("unterminated"), "preprocessor error should be printed");
+
+    auto bad_lex = dir / "bad_lex.cp";
+    write_source(bad_lex, "main() -> i32 { return @; }");
+    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), bad_lex.string(), "-o", app.string() }, stderr_path)) == 1, "KCP should reject lexer errors");
+    test_parser::assert_true(read_text(stderr_path).contains("invalid"), "lexer error should be printed");
+
+    auto bad_parse = dir / "bad_parse.cp";
+    write_source(bad_parse, "main( -> i32 { return 0; }");
+    test_parser::assert_true(exit_code(run_stderr({ tools.cp.string(), bad_parse.string(), "-o", app.string() }, stderr_path)) == 1, "KCP should reject parser errors");
+    test_parser::assert_true(read_text(stderr_path).contains("expected"), "parser error should be printed");
+
+    auto status = compile(tools, { source.string(), "--emit", "bin", "-o", app.string(), "--dump-mir" });
     test_parser::assert_true(status == 0, "KCP should compile while dumping MIR");
     test_parser::assert_true(std::filesystem::exists(app), "dump MIR compile should still write the binary");
 
     test_parser::assert_true(run_stderr({ tools.cp.string(), source.string(), "--emit", "ll", "--dump-mir", "-o", (dir / "answer.ll").string() }, mir) == 0, "KCP should dump MIR on stderr");
     test_parser::assert_true(read_text(mir).contains("func main"), "dump MIR output should include main");
+
+    auto explicit_clang_app = dir / "explicit_clang";
+    status = compile(tools, { "--clang", tools.clang.string(), source.string(), "-o", explicit_clang_app.string() });
+    test_parser::assert_true(status == 0, "KCP should accept an explicit clang path");
+    test_parser::assert_true(exit_code(run_status({ explicit_clang_app.string() })) == 42, "explicit clang binary should return 42");
+
+    auto clang_arg_object = dir / "clang_arg.o";
+    status = compile(tools, { source.string(), "--emit", "obj", "--clang-arg", "-Wno-unused-command-line-argument", "-o", clang_arg_object.string() });
+    test_parser::assert_true(status == 0, "KCP should pass explicit clang arguments when emitting object code");
+    test_parser::assert_true(std::filesystem::exists(clang_arg_object), "clang-arg object should exist");
+
+    auto no_link_object = dir / "no_link.o";
+    status = compile(tools, { source.string(), "--no-link", "--output", no_link_object.string() });
+    test_parser::assert_true(status == 0, "KCP --no-link should emit object code");
+    test_parser::assert_true(std::filesystem::exists(no_link_object), "no-link object should exist");
 }
 
 auto check_multi_input(test_tools const& tools) -> void
@@ -1148,6 +1346,39 @@ main() -> i32
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "storage slots should work with construct_at and destroy_at");
 }
 
+auto check_new_array_delete_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("new-array-delete");
+    auto source = dir / "new_array_delete.cp";
+    auto app = dir / "new_array_delete";
+    write_source(
+        source,
+        R"(struct guard {
+    total: i32*;
+    value: i32;
+}
+
+impl guard {
+    ~guard()
+    {
+        *total = *total * 10 + value;
+    }
+}
+
+main() -> i32
+{
+    let total = 0;
+    let values = new [guard; 2]{ guard{ .total = &total, .value = 2 }, guard{ .total = &total, .value = 4 } };
+    delete values;
+    return total;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "KCP should compile new array delete binary");
+    test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "delete of an array object should destroy elements in reverse order");
+}
+
 auto check_pointer_difference_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("pointer-difference");
@@ -1358,6 +1589,46 @@ auto check_generic_lambda_binary(test_tools const& tools) -> void
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status == 0, "KCP should compile generic lambda binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "generic lambda binary should return 42");
+}
+
+auto check_generic_lambda_variant_pack_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("generic-lambda-variant-pack");
+    auto source = dir / "generic_lambda_variant_pack.cp";
+    auto app = dir / "generic_lambda_variant_pack";
+    write_source(
+        source,
+        R"(import std.meta;
+
+variant optional<T> {
+    none;
+    some(T);
+}
+
+main() -> i32
+{
+    let callback = f<T...>(values: optional<T>...) -> i32 {
+        let total = 0;
+        template for(let value : values...) {
+            total = total + match value {
+                .some(item) => item,
+                .none => 0,
+            };
+        }
+        return total;
+    };
+    type result = call_result<decltype(callback), optional<i32>, optional<i32>>;
+    let value: result = callback(optional<i32>::some(20), optional<i32>::some(22));
+    return value;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "KCP should compile generic lambda variant-pack binary");
+    test_parser::assert_true(
+        exit_code(run_status({ app.string() })) == 42,
+        "generic lambda variant-pack binary should return 42"
+    );
 }
 
 auto check_lambda_capture_mode_binaries(test_tools const& tools) -> void
@@ -1692,9 +1963,42 @@ first_nonzero<T...>(values: T...)
     return 0;
 }
 
+read(value: i32) -> i32
+{
+    return value;
+}
+
+sum_forward<T...>(values: T forward&...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + read(forward value);
+    }
+    return total;
+}
+
+sum_forward_explicit<T...>(values: T forward&...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + read(forward value);
+    }
+    return total;
+}
+
 main() -> i32
 {
-    return sum(10, 20, 9) + type_count<i32, bool, i32>() + empty() + sum_ref(0) + first_nonzero(0, 42) - 42;
+    let first = 10;
+    const second = 20;
+    let third = 1;
+    return sum(10, 20, 9)
+        + type_count<i32, bool, i32>()
+        + empty()
+        + sum_ref(0)
+        + first_nonzero(0, 42)
+        + sum_forward(first, second, 12)
+        + sum_forward_explicit<i32, i32>(move third, 0)
+        - 85;
 })"
     );
 
@@ -1829,6 +2133,46 @@ main() -> i32
     );
 }
 
+auto check_type_pack_variant_match_return_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("type-pack-variant-match-return");
+    auto source = dir / "type_pack_variant_match_return.cp";
+    auto app = dir / "type_pack_variant_match_return";
+    write_source(
+        source,
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+first_i32<T...>()
+{
+    template fo)" "r" R"( (type U : T...) {
+        template if(U == i32) {
+            let value = optional<i32>::some(42);
+            return match value {
+                .some(item) => item,
+                .none => 0,
+            };
+        }
+    }
+    return 0;
+}
+
+main() -> i32
+{
+    return first_i32<bool, i32>();
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "KCP should compile type-pack variant match return binary");
+    test_parser::assert_true(
+        exit_code(run_status({ app.string() })) == 42,
+        "type-pack variant match return binary should return 42"
+    );
+}
+
 auto check_contextual_variant_match_binary(test_tools const& tools) -> void
 {
     auto dir = unique_temp_dir("contextual-variant-match");
@@ -1877,6 +2221,43 @@ main() -> i32
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status == 0, "KCP should compile contextual variant match binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "contextual variant match binary should return 42");
+}
+
+auto check_all_never_variant_match_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("all-never-variant-match");
+    auto source = dir / "all_never_variant_match.cp";
+    auto app = dir / "all_never_variant_match";
+    write_source(
+        source,
+        R"(variant abort {
+    stop;
+    again;
+}
+
+fail(value: abort)
+{
+    return match value {
+        .stop => panic("stop"),
+        .again => unreachable(),
+    };
+}
+
+main() -> i32
+{
+    if(false) {
+        return fail(abort::stop);
+    }
+    return 42;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "KCP should compile all-never variant match binary");
+    test_parser::assert_true(
+        exit_code(run_status({ app.string() })) == 42,
+        "all-never variant match binary should return 42"
+    );
 }
 
 auto check_nested_parameter_pack_binary(test_tools const& tools) -> void
@@ -1928,13 +2309,192 @@ main() -> i32
 {
     return count_callbacks(inc, same_bool)
         + count_options(optional<i32>::some(1), optional<bool>::none)
-        + 38;
+        + 39;
 })"
     );
 
     auto status = compile(tools, { source.string(), "-o", app.string() });
     test_parser::assert_true(status == 0, "KCP should compile nested parameter-pack binary");
     test_parser::assert_true(exit_code(run_status({ app.string() })) == 42, "nested parameter-pack binary should return 42");
+}
+
+auto check_length_prefixed_variant_pack_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("length-prefixed-variant-pack");
+    auto base = dir / "base.cp";
+    auto wrap = dir / "wrap.cp";
+    auto main = dir / "main.cp";
+    auto app = dir / "length_prefixed_variant_pack";
+    write_source(
+        base,
+        R"(export module base;
+
+export variant optional<T> {
+    none;
+    some(T);
+}
+
+export count_present<N: usize, T...>(values: [optional<T>; N]...)
+{
+    let total = 0;
+    template fo)" "r" R"( (let bucket : values...) {
+        let current = bucket[0];
+        total = total + match current {
+            .some(item) => 1,
+            .none => 0,
+        };
+    }
+    return total;
+}
+
+export first_immediate<T...>(values: T...)
+{
+    template fo)" "r" R"( (let value : values...) {
+        return value;
+    }
+    return 0;
+})"
+    );
+    write_source(
+        wrap,
+        R"(export module wrap;
+
+export import base;)"
+    );
+    write_source(
+        main,
+        R"(import wrap;
+
+main() -> i32
+{
+    return count_present(
+        [optional<i32>::some(1), optional<i32>::none],
+        [optional<bool>::some(true), optional<bool>::none]
+    ) + first_immediate(40, 99);
+})"
+    );
+
+    auto status = compile(tools, { base.string(), wrap.string(), main.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "KCP should compile length-prefixed variant-pack binary");
+    test_parser::assert_true(
+        exit_code(run_status({ app.string() })) == 42,
+        "length-prefixed variant-pack binary should return 42"
+    );
+}
+
+auto check_generic_variant_pack_payload_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("generic-variant-pack-payload");
+    auto source = dir / "generic_variant_pack_payload.cp";
+    auto app = dir / "generic_variant_pack_payload";
+    write_source(
+        source,
+        R"(variant packet<T> {
+    empty;
+    pair(T, T);
+}
+
+count_pairs<T...>(values: packet<T>...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + match value {
+            .pair(left, right) => 1,
+            _ => 0,
+        };
+    }
+    return total;
+}
+
+main() -> i32
+{
+    return count_pairs(packet<i32>::pair(1, 2), packet<bool>::pair(true, false)) + 40;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "KCP should compile generic variant pack payload binary");
+    test_parser::assert_true(
+        exit_code(run_status({ app.string() })) == 42,
+        "generic variant pack payload binary should return 42"
+    );
+}
+
+auto check_generic_block_expression_return_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("generic-block-expression-return");
+    auto source = dir / "generic_block_expression_return.cp";
+    auto app = dir / "generic_block_expression_return";
+    write_source(
+        source,
+        R"(id<T>(input: T)
+{
+    return {
+        return input;
+    };
+}
+
+from_initializer<T>(input: T)
+{
+    let ignored: T = {
+        return input;
+    };
+}
+
+first_present<T...>(values: T...)
+{
+    template fo)" "r" R"( (let value : values...) {
+        let ignored = {
+            return value;
+        };
+    }
+    panic("empty");
+}
+
+main() -> i32
+{
+    return id(10) + from_initializer(11) + first_present(21);
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "KCP should compile generic block-expression return binary");
+    test_parser::assert_true(
+        exit_code(run_status({ app.string() })) == 42,
+        "generic block-expression returns should return from the containing function");
+}
+
+auto check_template_if_block_expression_return_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("template-if-block-expression-return");
+    auto source = dir / "template_if_block_expression_return.cp";
+    auto app = dir / "template_if_block_expression_return";
+    write_source(
+        source,
+        R"(from_block<T>(value: T)
+{
+    let ignored: i32 = {
+        template if(T == i32) {
+            return value;
+        } else {
+            return 7;
+        }
+        0
+    };
+    return ignored;
+}
+
+main() -> i32
+{
+    return from_block(42) + from_block(true) - 7;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "KCP should compile template-if block-expression return binary");
+    test_parser::assert_true(
+        exit_code(run_status({ app.string() })) == 42,
+        "template-if block-expression returns should return from the containing function");
 }
 
 auto check_callable_type_pack_return_binary(test_tools const& tools) -> void
@@ -1963,6 +2523,181 @@ main() -> i32
     test_parser::assert_true(
         exit_code(run_status({ app.string() })) == 42,
         "callable type-pack return binary should return 42"
+    );
+}
+
+auto check_direct_match_return_pack_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("direct-match-return-pack");
+    auto source = dir / "direct_match_return_pack.cp";
+    auto app = dir / "direct_match_return_pack";
+    write_source(
+        source,
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+first_present<T...>(values: optional<T>...)
+{
+    template fo)" "r" R"( (let value : values...) {
+        return match value {
+            .some(item) => item,
+            .none => 0,
+        };
+    }
+    return 0;
+}
+
+main() -> i32
+{
+    return first_present(optional<i32>::some(42));
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "KCP should compile direct match-return pack binary");
+    test_parser::assert_true(
+        exit_code(run_status({ app.string() })) == 42,
+        "direct match-return inside a pack expansion should return 42"
+    );
+}
+
+auto check_non_struct_impl_inferred_return_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("non-struct-impl-inferred-return");
+    auto source = dir / "non_struct_impl_inferred_return.cp";
+    auto app = dir / "non_struct_impl_inferred_return";
+    write_source(
+        source,
+        R"(variant token {
+    empty;
+    ready(i32);
+}
+
+impl token {
+    score(self const&)
+    {
+        return match self {
+            .ready(value) => value,
+            .empty => 0,
+        };
+    }
+}
+
+impl i32 {
+    double(self const&)
+    {
+        return self + self;
+    }
+}
+
+impl [i32; 2] {
+    first(self const&)
+    {
+        return self[0];
+    }
+}
+
+main() -> i32
+{
+    let value = token::ready(20);
+    let numbers = [1, 2];
+    return value.score() + (10 as i32).double() + numbers.first() + match token::ready(1) {
+        .ready(item) => item,
+        .empty => 0,
+    };
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "KCP should compile non-struct impl inferred-return binary");
+    test_parser::assert_true(
+        exit_code(run_status({ app.string() })) == 42,
+        "non-struct impl inferred-return binary should return 42"
+    );
+}
+
+auto check_generic_impl_variant_match_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("generic-impl-variant-match");
+    auto source = dir / "generic_impl_variant_match.cp";
+    auto app = dir / "generic_impl_variant_match";
+    write_source(
+        source,
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+struct box<T> {
+    value: T;
+}
+
+impl box<T> {
+    pick(self const&, fallback: T)
+    {
+        return match optional<T>::some(value) {
+            .some(item) => item,
+            .none => fallback,
+        };
+    }
+}
+
+main() -> i32
+{
+    let item = box<i32>{ 20 };
+    return item.pick(0) + 22;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "KCP should compile generic impl variant-match binary");
+    test_parser::assert_true(
+        exit_code(run_status({ app.string() })) == 42,
+        "generic impl variant-match binary should return 42"
+    );
+}
+
+auto check_implicit_impl_const_argument_variant_match_binary(test_tools const& tools) -> void
+{
+    auto dir = unique_temp_dir("implicit-impl-const-argument-variant-match");
+    auto source = dir / "implicit_impl_const_argument_variant_match.cp";
+    auto app = dir / "implicit_impl_const_argument_variant_match";
+    write_source(
+        source,
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+struct bucket<T, N: usize> {
+    values: [T; N];
+}
+
+impl bucket<T, N> {
+    pick(self const&, index: usize, fallback: T)
+    {
+        let current = optional<T>::some(values[index]);
+        return match current {
+            .some(item) => item,
+            .none => fallback,
+        };
+    }
+}
+
+main() -> i32
+{
+    let values = bucket<i32, 2>{ [20, 22] };
+    return values.pick(1, 0) + 20;
+})"
+    );
+
+    auto status = compile(tools, { source.string(), "-o", app.string() });
+    test_parser::assert_true(status == 0, "KCP should compile implicit impl const-argument variant-match binary");
+    test_parser::assert_true(
+        exit_code(run_status({ app.string() })) == 42,
+        "implicit impl const-argument variant-match binary should return 42"
     );
 }
 
@@ -4280,6 +5015,10 @@ auto main(int argc, char** argv) -> int
     check_binary_exit(tools);
     check_short_circuit_binary(tools);
     check_extern_c_binary(tools);
+    check_extern_c_callback_binary(tools);
+    check_block_expression_return_binary(tools);
+    check_concept_default_function_binary(tools);
+    check_concept_default_extension_binary(tools);
     check_member_default_argument_binary(tools);
     check_static_local_binary(tools);
     check_struct_field_default_binary(tools);
@@ -4311,6 +5050,7 @@ auto main(int argc, char** argv) -> int
     check_nrvo_return_skips_returned_local_destructor(tools);
     check_function_pointer_memory_binary(tools);
     check_storage_memory_binary(tools);
+    check_new_array_delete_binary(tools);
     check_pointer_difference_binary(tools);
     check_update_expression_binary(tools);
     check_decltype_ref_destructure_binary(tools);
@@ -4318,6 +5058,7 @@ auto main(int argc, char** argv) -> int
     check_callable_field_binary(tools);
     check_nested_inferred_lambda_binary(tools);
     check_generic_lambda_binary(tools);
+    check_generic_lambda_variant_pack_binary(tools);
     check_lambda_capture_mode_binaries(tools);
     check_generic_struct_binary(tools);
     check_const_generic_struct_binary(tools);
@@ -4330,9 +5071,19 @@ auto main(int argc, char** argv) -> int
     check_variant_match_parameter_pack_binary(tools);
     check_forward_parameter_pack_inferred_return_binary(tools);
     check_variant_match_type_pack_inferred_return_binary(tools);
+    check_type_pack_variant_match_return_binary(tools);
     check_contextual_variant_match_binary(tools);
+    check_all_never_variant_match_binary(tools);
     check_nested_parameter_pack_binary(tools);
+    check_length_prefixed_variant_pack_binary(tools);
+    check_generic_variant_pack_payload_binary(tools);
+    check_generic_block_expression_return_binary(tools);
+    check_template_if_block_expression_return_binary(tools);
     check_callable_type_pack_return_binary(tools);
+    check_direct_match_return_pack_binary(tools);
+    check_non_struct_impl_inferred_return_binary(tools);
+    check_generic_impl_variant_match_binary(tools);
+    check_implicit_impl_const_argument_variant_match_binary(tools);
     check_direct_iterator_range_for_rejected_binary(tools);
     check_string_index_binary(tools);
     check_string_iteration_binary(tools);

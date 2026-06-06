@@ -661,6 +661,15 @@ auto semantic_analyzer::instantiate_lambda(semantic_lambda_info const& lambda, s
     }
 
     auto const& source = result.symbols[lambda.function_symbol.value];
+    auto source_unit_index = source.unit_index;
+    auto source_function = source.function;
+    auto source_name = source.name;
+    auto source_span = source.span;
+    auto source_body_kind = source.body_kind;
+    auto source_struct_index = source.struct_index;
+    auto source_variant_index = source.variant_index;
+    auto source_concept_index = source.concept_index;
+    auto source_function_kind = source.function_kind;
     auto type_arguments = infer_function_type_arguments_for_call(
         lambda.function_symbol,
         std::nullopt,
@@ -668,17 +677,11 @@ auto semantic_analyzer::instantiate_lambda(semantic_lambda_info const& lambda, s
         explicit_arguments,
         span
     );
-    if(not type_arguments or not validate_function_type_arguments(source.unit_index, source.function, *type_arguments, span)) {
+    if(not type_arguments or not validate_function_type_arguments(source_unit_index, source_function, *type_arguments, span)) {
         return {};
     }
 
-    auto key = semantic_function_instance_key{ source.unit_index, source.function, *type_arguments };
-    if(auto found = result.function_instance_indices.find(key); found != result.function_instance_indices.end()) {
-        auto const& instance = result.function_instances[found->second];
-        return result.lambda_of(instance.context_index, source.unit_index, source.function);
-    }
-
-    auto source_signature_id = result.signature_of(source.unit_index, source.function);
+    auto source_signature_id = result.signature_of(source_unit_index, source_function);
     if(not source_signature_id.valid()) {
         return {};
     }
@@ -687,18 +690,25 @@ auto semantic_analyzer::instantiate_lambda(semantic_lambda_info const& lambda, s
     if(source_signature.inferred_return) {
         report(
             diagnostic_kind::cannot_infer_return_type,
-            source.span,
+            source_span,
             "generic lambda return type must be explicit for monomorphization"
         );
         return {};
     }
 
+    auto forward_bindings = forward_bindings_for_call(source_unit_index, source_function, source_signature, arguments);
+    auto key = semantic_function_instance_key{ source_unit_index, source_function, *type_arguments, forward_bindings };
+    if(auto found = result.function_instance_indices.find(key); found != result.function_instance_indices.end()) {
+        auto const& instance = result.function_instances[found->second];
+        return result.lambda_of(instance.context_index, source_unit_index, source_function);
+    }
+
     auto signature = substitute_signature_for_instance(
-        source.unit_index,
-        source.function,
+        source_unit_index,
+        source_function,
         source_signature,
         *type_arguments,
-        {},
+        forward_bindings,
         span
     );
     auto signature_id = add_signature(signature);
@@ -711,26 +721,29 @@ auto semantic_analyzer::instantiate_lambda(semantic_lambda_info const& lambda, s
     auto context_index = next_context_index++;
     auto instance_symbol = add_symbol(semantic_symbol {
         .kind = symbol_kind::function,
-        .name = std::format("{}.mono.{}", source.name, instance_index),
-        .span = source.span,
+        .name = std::format("{}.mono.{}", source_name, instance_index),
+        .span = source_span,
         .type = function_type_id,
-        .body_kind = source.body_kind,
-        .unit_index = source.unit_index,
-        .function = source.function,
-        .function_kind = source.function_kind,
+        .body_kind = source_body_kind,
+        .unit_index = source_unit_index,
+        .function = source_function,
+        .struct_index = source_struct_index,
+        .variant_index = source_variant_index,
+        .concept_index = source_concept_index,
+        .function_kind = source_function_kind,
     });
 
-    result.function_signatures.emplace(semantic_node_key{context_index, source.unit_index, source.function}, signature_id);
-    result.function_symbols.emplace(semantic_node_key{context_index, source.unit_index, source.function}, instance_symbol);
+    result.function_signatures.emplace(semantic_node_key{context_index, source_unit_index, source_function}, signature_id);
+    result.function_symbols.emplace(semantic_node_key{context_index, source_unit_index, source_function}, instance_symbol);
     result.function_instances.emplace_back(
         key,
         context_index,
         instance_symbol,
         signature_id,
-        function_substitution_map(source.unit_index, source.function, *type_arguments),
-        function_type_pack_substitution_map(source.unit_index, source.function, *type_arguments)
+        function_substitution_map(source_unit_index, source_function, *type_arguments),
+        function_type_pack_substitution_map(source_unit_index, source_function, *type_arguments)
     );
-    result.function_instance_indices.emplace(std::move(key), instance_index);
+    result.function_instance_indices.emplace(key, instance_index);
     result.function_instance_by_symbol.emplace(instance_symbol, instance_index);
 
     auto old_context = active_context_index;
@@ -741,31 +754,78 @@ auto semantic_analyzer::instantiate_lambda(semantic_lambda_info const& lambda, s
     auto old_function_context = active_function_context_index;
     auto old_substitutions = active_type_substitutions;
     auto old_pack_substitutions = active_type_pack_substitutions;
+    auto old_value_packs = std::move(active_value_packs);
+    auto old_forward_parameters = std::move(active_forward_parameters);
     auto old_self = active_self;
+    auto old_loops = loops;
+    auto old_template_for_depth = active_template_for_depth;
+    auto old_return_state = active_return_state;
 
-    auto& instance = result.function_instances[instance_index];
+    auto instance = result.function_instances[instance_index];
     active_context_index = context_index;
-    active_unit_index = source.unit_index;
-    active_unit = &units[source.unit_index];
+    active_unit_index = source_unit_index;
+    active_unit = &units[source_unit_index];
     active_ast = &active_unit->ast;
-    active_function = source.function;
+    active_function = source_function;
     active_function_context_index = context_index;
     active_type_substitutions = &instance.substitutions;
     active_type_pack_substitutions = &instance.pack_substitutions;
+    active_value_packs.clear();
+    active_forward_parameters.clear();
     active_self = {};
+    loops.clear();
+    active_template_for_depth = 0uz;
 
-    auto const& function = active_ast->node(source.function);
-    lambda_capture_stack.emplace_back(source.function);
+    auto const& function = active_ast->node(source_function);
+    lambda_capture_stack.emplace_back(source_function);
 
     push_scope();
+    auto signature_parameter_index = 0uz;
     for(auto index = 0uz; index < function.parameters.size(); ++index) {
         auto const& parameter = function.parameters[index];
+        auto name = std::string{ ast_source.slice(parameter.name) };
+        if(parameter.is_pack) {
+            auto bindings = std::vector<symbol_id>{};
+            auto const source_is_forward = source_parameter_is_forward_reference(*active_ast, parameter);
+            auto remaining_syntax_parameters = function.parameters.size() - index - 1uz;
+            auto pack_end = signature.parameters.size() >= remaining_syntax_parameters
+                ? signature.parameters.size() - remaining_syntax_parameters
+                : signature_parameter_index;
+            while(signature_parameter_index < pack_end) {
+                auto concrete_parameter_index = signature_parameter_index;
+                auto symbol = (
+                    bind_symbol (semantic_symbol {
+                        .kind = symbol_kind::parameter,
+                        .name = std::format("{}.{}", name, bindings.size()),
+                        .span = parameter.name,
+                        .type = signature.parameters[signature_parameter_index++],
+                        .is_const = parameter.is_const,
+                        .unit_index = active_unit_index,
+                        .function = active_function,
+                    })
+                );
+                if(symbol.valid()) {
+                    bindings.emplace_back(symbol);
+                    if(source_is_forward and concrete_parameter_index < instance.key.forward_bindings.size()) {
+                        active_forward_parameters.emplace(symbol, instance.key.forward_bindings[concrete_parameter_index]);
+                    }
+                }
+            }
+            active_value_packs[name] = bindings;
+            result.parameter_pack_bindings[parameter_key(parameter.name)] = std::move(bindings);
+            continue;
+        }
+        if(signature_parameter_index >= signature.parameters.size()) {
+            continue;
+        }
+
+        auto concrete_parameter_index = signature_parameter_index;
         auto parameter_symbol = (
             bind_symbol (semantic_symbol {
                 .kind = symbol_kind::parameter,
-                .name = std::string{ ast_source.slice(parameter.name) },
+                .name = name,
                 .span = parameter.name,
-                .type = signature.parameters[index],
+                .type = signature.parameters[signature_parameter_index++],
                 .is_const = parameter.is_const,
                 .unit_index = active_unit_index,
                 .function = active_function,
@@ -773,10 +833,17 @@ auto semantic_analyzer::instantiate_lambda(semantic_lambda_info const& lambda, s
         );
         if(parameter_symbol.valid()) {
             result.parameter_bindings[parameter_key(parameter.name)] = parameter_symbol;
+            if(
+                source_parameter_is_forward_reference(*active_ast, parameter)
+                and concrete_parameter_index < instance.key.forward_bindings.size()
+            ) {
+                active_forward_parameters.emplace(parameter_symbol, instance.key.forward_bindings[concrete_parameter_index]);
+            }
         }
     }
 
     auto returns = return_state{ .declared_return = signature.returns };
+    active_return_state = &returns;
     check_statement(function.body, returns);
     pop_scope();
 
@@ -787,7 +854,7 @@ auto semantic_analyzer::instantiate_lambda(semantic_lambda_info const& lambda, s
     }
 
     auto info = semantic_lambda_info {
-        .function = source.function,
+        .function = source_function,
         .function_symbol = instance_symbol,
         .closure_type = lambda.closure_type,
         .closure_struct_index = lambda.closure_struct_index,
@@ -800,17 +867,22 @@ auto semantic_analyzer::instantiate_lambda(semantic_lambda_info const& lambda, s
     if(info.closure_type.valid()) {
         info.env_symbol = add_symbol(semantic_symbol {
             .kind = symbol_kind::parameter,
-            .name = std::format("{}.env", source.name),
-            .span = source.span,
+            .name = std::format("{}.env", source_name),
+            .span = source_span,
             .type = intern_type(reference_type{ info.closure_type, true }),
             .is_const = true,
-            .unit_index = source.unit_index,
-            .function = source.function,
+            .unit_index = source_unit_index,
+            .function = source_function,
         });
     }
-    result.lambda_infos[node_key(source.function)] = info;
+    result.lambda_infos[semantic_node_key{context_index, source_unit_index, source_function}] = info;
 
+    active_return_state = old_return_state;
+    active_template_for_depth = old_template_for_depth;
+    loops = std::move(old_loops);
     active_self = old_self;
+    active_forward_parameters = std::move(old_forward_parameters);
+    active_value_packs = std::move(old_value_packs);
     active_type_pack_substitutions = old_pack_substitutions;
     active_type_substitutions = old_substitutions;
     active_function_context_index = old_function_context;

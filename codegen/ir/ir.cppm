@@ -586,6 +586,10 @@ struct function_lowerer
 
     auto emit_alloca(semantic_type_id type, std::string name) -> ir_value_id
     {
+        if(is_unit(read_type(type)) or is_never(read_type(type))) {
+            static_cast<void>(fail(std::format("alloca requires an object type for '{}'", name)));
+            return {};
+        }
         auto instruction = emit_value_instruction(ir_opcode::alloca_, type);
         instruction.name = std::move(name);
         return emit(std::move(instruction));
@@ -2661,7 +2665,7 @@ struct function_lowerer
         }
 
         auto result_type = info_of(id).type;
-        auto result_address = is_unit(result_type) ? ir_value_id{} : emit_alloca(result_type, "match.result");
+        auto result_address = (is_unit(result_type) or is_never(read_type(result_type))) ? ir_value_id{} : emit_alloca(result_type, "match.result");
         auto end_block = add_block("match.end");
         auto arm_blocks = std::vector<ir_block_id>{};
         for(auto index = 0uz; index < node.arms.size(); ++index) {

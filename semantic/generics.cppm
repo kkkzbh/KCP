@@ -13,6 +13,67 @@ auto forward_binding_for(expression_info const& argument) -> semantic_forward_bi
     return semantic_forward_binding_kind::lvalue;
 }
 
+auto semantic_analyzer::source_parameter_is_forward_reference(ast_arena const& ast, parameter_syntax const& parameter) -> bool
+{
+    if(parameter.inferred_reference_is_forward) {
+        return true;
+    }
+    if(not parameter.type) {
+        return false;
+    }
+
+    auto const& type = ast.node(*parameter.type);
+    return type.is_forward
+           and type.suffix_operators.size() == 1uz
+           and type.suffix_operators.front() == token_kind::amp;
+}
+
+auto semantic_analyzer::function_has_forward_parameter(std::size_t unit_index, function_id id) -> bool
+{
+    auto const& ast = units[unit_index].ast;
+    auto const& function = ast.node(id);
+    return std::ranges::any_of(function.parameters, [&](parameter_syntax const& parameter) {
+        return source_parameter_is_forward_reference(ast, parameter);
+    });
+}
+
+auto semantic_analyzer::forward_bindings_for_call(std::size_t unit_index, function_id id, function_signature const& signature, std::vector<expression_info> const& arguments) -> std::vector<semantic_forward_binding_kind>
+{
+    if(not function_has_forward_parameter(unit_index, id)) {
+        return {};
+    }
+
+    auto const& ast = units[unit_index].ast;
+    auto const& function = ast.node(id);
+    auto bindings = std::vector<semantic_forward_binding_kind>(
+        std::max(signature.parameters.size(), arguments.size()),
+        semantic_forward_binding_kind::lvalue
+    );
+    auto argument_index = 0uz;
+    for(auto parameter_index = 0uz; parameter_index < function.parameters.size() and argument_index < arguments.size(); ++parameter_index) {
+        auto const& parameter = function.parameters[parameter_index];
+        auto const is_forward = source_parameter_is_forward_reference(ast, parameter);
+        if(parameter.is_pack) {
+            auto remaining_parameters = function.parameters.size() - parameter_index - 1uz;
+            auto pack_end = arguments.size() >= remaining_parameters
+                ? arguments.size() - remaining_parameters
+                : argument_index;
+            while(argument_index < pack_end) {
+                if(is_forward) {
+                    bindings[argument_index] = forward_binding_for(arguments[argument_index]);
+                }
+                ++argument_index;
+            }
+            continue;
+        }
+        if(is_forward) {
+            bindings[argument_index] = forward_binding_for(arguments[argument_index]);
+        }
+        ++argument_index;
+    }
+    return bindings;
+}
+
 auto semantic_analyzer::function_key(std::size_t unit_index, function_id id) const -> return_inference_key
 {
     return return_inference_key{ unit_index, id };
@@ -90,7 +151,27 @@ auto semantic_analyzer::collect_type_pattern_parameters(ast_arena const& ast, ty
         append_generic_parameter(parameters, std::move(syntax_name), generic_parameter_syntax::kind::type);
     }
 
-    for(auto const& argument : syntax.arguments) {
+    auto argument_parameter_kind = [&](std::size_t index) {
+        if(auto symbol = resolve_type_symbol(active_unit_index, syntax_name)) {
+            auto const& value = result.symbols[symbol->value];
+            if(
+                value.struct_index != std::numeric_limits<std::uint32_t>::max()
+                and index < result.structs[value.struct_index].generic_parameters.size()
+            ) {
+                return result.structs[value.struct_index].generic_parameters[index].parameter_kind;
+            }
+            if(
+                value.variant_index != std::numeric_limits<std::uint32_t>::max()
+                and index < result.variants[value.variant_index].generic_parameters.size()
+            ) {
+                return result.variants[value.variant_index].generic_parameters[index].parameter_kind;
+            }
+        }
+        return generic_parameter_syntax::kind::type;
+    };
+
+    for(auto index = 0uz; index < syntax.arguments.size(); ++index) {
+        auto const& argument = syntax.arguments[index];
         if(not std::holds_alternative<type_argument_type_syntax>(argument)) {
             continue;
         }
@@ -117,7 +198,7 @@ auto semantic_analyzer::collect_type_pattern_parameters(ast_arena const& ast, ty
             and not resolve_type_symbol(active_unit_index, name)
         );
         if(bare_argument_type_variable) {
-            append_generic_parameter(parameters, std::move(name), generic_parameter_syntax::kind::type);
+            append_generic_parameter(parameters, std::move(name), argument_parameter_kind(index));
         }
         collect_type_pattern_parameters(ast, type, parameters);
     }
@@ -333,6 +414,9 @@ auto semantic_analyzer::function_signature_for_symbol(symbol_id symbol) const ->
 {
     if(not symbol.valid()) {
         return nullptr;
+    }
+    if(auto const* instance = result.function_instance_of(symbol)) {
+        return &result.signatures[instance->signature.value];
     }
     auto const& value = result.symbols[symbol.value];
     auto signature_id = result.signature_of(value.unit_index, value.function);
@@ -1351,6 +1435,10 @@ auto semantic_analyzer::infer_function_type_arguments_for_call(symbol_id symbol,
             if(argument_index >= type_arguments.size()) {
                 type_arguments.resize(argument_index + 1uz);
             }
+            if(type_arguments[argument_index].valid() and type_arguments[argument_index] != explicit_arguments[index]) {
+                report(diagnostic_kind::invalid_type_argument, span, "explicit type argument conflicts with inferred type");
+                return std::nullopt;
+            }
             type_arguments[argument_index] = explicit_arguments[index];
         }
     }
@@ -1470,19 +1558,7 @@ auto semantic_analyzer::instantiate_function_symbol(symbol_id symbol, std::optio
     auto forward_bindings = std::vector<semantic_forward_binding_kind>{};
     if(auto signature_id = result.signature_of(value.unit_index, value.function); signature_id.valid()) {
         auto const& signature = result.signatures[signature_id.value];
-        auto has_forward_parameter = std::ranges::any_of(signature.parameters, [&](semantic_type_id parameter) {
-            auto const* reference = std::get_if<reference_type>(&result.types.get(parameter));
-            return reference != nullptr and reference->reference_kind == reference_type::kind::forward;
-        });
-        if(has_forward_parameter) {
-            forward_bindings.resize(signature.parameters.size());
-        }
-        for(auto index = 0uz; index < arguments.size() and index < signature.parameters.size(); ++index) {
-            auto const* reference = std::get_if<reference_type>(&result.types.get(signature.parameters[index]));
-            if(reference != nullptr and reference->reference_kind == reference_type::kind::forward) {
-                forward_bindings[index] = forward_binding_for(arguments[index]);
-            }
-        }
+        forward_bindings = forward_bindings_for_call(value.unit_index, value.function, signature, arguments);
     }
     return instantiate_function(value.unit_index, value.function, *type_arguments, std::move(forward_bindings), span);
 }
@@ -1660,10 +1736,7 @@ auto semantic_analyzer::check_generic_function_call(ast_arena const& ast, call_e
             active_unit_index = old_unit_index;
         }
 
-        auto has_forward_parameter = std::ranges::any_of(template_signature.parameters, [&](semantic_type_id parameter) {
-            auto const* reference = std::get_if<reference_type>(&result.types.get(parameter));
-            return reference != nullptr and reference->reference_kind == reference_type::kind::forward;
-        });
+        auto has_forward_parameter = function_has_forward_parameter(source_unit, source_function);
         auto arguments = std::vector<expression_info>{};
         auto forward_bindings = std::vector<semantic_forward_binding_kind>{};
         if(has_forward_parameter) {
@@ -1671,13 +1744,7 @@ auto semantic_analyzer::check_generic_function_call(ast_arena const& ast, call_e
             for(auto argument : node.arguments) {
                 arguments.emplace_back(check_expression(ast, argument, std::nullopt));
             }
-            forward_bindings.resize(template_signature.parameters.size());
-            for(auto index = 0uz; index < arguments.size() and index < template_signature.parameters.size(); ++index) {
-                auto const* reference = std::get_if<reference_type>(&result.types.get(template_signature.parameters[index]));
-                if(reference != nullptr and reference->reference_kind == reference_type::kind::forward) {
-                    forward_bindings[index] = forward_binding_for(arguments[index]);
-                }
-            }
+            forward_bindings = forward_bindings_for_call(source_unit, source_function, template_signature, arguments);
         }
 
         auto const* instance = instantiate_function(source_unit, source_function, std::move(explicit_arguments), std::move(forward_bindings), node.full_span);

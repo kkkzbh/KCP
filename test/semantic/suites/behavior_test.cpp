@@ -134,6 +134,16 @@ auto expect_diagnostic(std::string_view name, std::string text, diagnostic_kind 
         std::format("{} should report {}", name, spec(kind).code));
 }
 
+auto expect_diagnostics(std::string_view name, std::string text, std::initializer_list<diagnostic_kind> kinds) -> void
+{
+    auto result = analyze_one(name, std::move(text));
+    for(auto kind : kinds) {
+        test_parser::assert_true(
+            has_diagnostic(result, kind),
+            std::format("{} should report {}", name, spec(kind).code));
+    }
+}
+
 auto check_fixture_example_group(std::initializer_list<std::string_view> names, std::initializer_list<std::string_view> std_modules = {}) -> void
 {
     auto sources = source_manager{};
@@ -740,10 +750,21 @@ struct invoker {
     offset: i32;
 }
 
+variant action {
+    apply;
+}
+
 impl invoker {
     operator ()(self const&, value: i32) -> i32
     {
         return value + offset;
+    }
+}
+
+impl action {
+    operator ()(self const&, value: i32) -> i32
+    {
+        return value + 3;
     }
 }
 
@@ -753,16 +774,43 @@ main() -> i32
         return value + 1;
     };
     let op = invoker{ 2 };
+    let act = action::apply;
     type closure_result = call_result<decltype(callback), i32>;
     type function_result = call_result<f(i32) -> i32, i32>;
     type operator_result = call_result<invoker, i32>;
+    type variant_operator_result = call_result<action, i32>;
     let from_closure: closure_result = callback(3);
     let from_function: function_result = id(4);
     let from_operator: operator_result = op(5);
-    return from_closure + from_function + from_operator;
+    let from_variant: variant_operator_result = act(6);
+    return from_closure + from_function + from_operator + from_variant;
 })"
     );
-    test_parser::assert_true(callable_meta.accepted(), "std.meta call_result should handle closures, function types, and operator ()");
+    test_parser::assert_true(callable_meta.accepted(), "std.meta call_result should handle closures, function types, and struct/variant operator ()");
+
+    auto reference_concepts = analyze_with_std_io(
+        "std_meta_reference_concepts.cp",
+        R"(import std.meta;
+
+classify<T>() -> i32
+{
+    template if(T: is_const_lvalue_reference) {
+        return 3;
+    } else template if(T: is_lvalue_reference) {
+        return 2;
+    } else template if(T: is_move_reference) {
+        return 5;
+    } else {
+        return 7;
+    }
+}
+
+main() -> i32
+{
+    return classify<i32&>() + classify<i32 const&>() + classify<i32 move&>() + classify<i32>();
+})"
+    );
+    test_parser::assert_true(reference_concepts.accepted(), "std.meta reference concepts should classify concrete reference kinds");
 
     auto callable_pack_meta = analyze_with_std_io(
         "std_meta_callable_type_pack.cp",
@@ -807,6 +855,77 @@ main() -> i32
     test_parser::assert_true(
         callable_tail_pack_meta.accepted(),
         "std.meta call_result and callable should allow fixed type arguments after an expanded pack");
+
+    auto callable_local_pack_meta = analyze_with_std_io(
+        "std_meta_local_callable_type_pack_substitution.cp",
+        R"(import std.meta;
+
+make<F, Args...>() -> i32
+requires F: callable<Args...>
+{
+    type result = call_result<F, Args...>;
+    let value: result = 42;
+    return value;
+}
+
+main() -> i32
+{
+    return make<f(i32, bool) -> i32, i32, bool>();
+})"
+    );
+    test_parser::assert_true(
+        callable_local_pack_meta.accepted(),
+        "std.meta call_result should expand substituted type packs in local aliases");
+
+    {
+        auto sources = source_manager{};
+        auto units = std::vector<parse_result>{};
+        for(auto module : std_io_modules) {
+            units.emplace_back(parse_source(sources, std::format("std/{}", module), read_std_module(module)));
+        }
+        units.emplace_back(
+            parse_source(
+                sources,
+                "meta_wrap.cp",
+                R"(export module meta_wrap;
+
+export import std.meta;)"
+            )
+        );
+        units.emplace_back(
+            parse_source(
+                sources,
+                "std_meta_reexported_generic_lambda_variant_pack.cp",
+                R"(import meta_wrap;
+
+variant optional<T> {
+    none;
+    some(T);
+}
+
+main() -> i32
+{
+    let callback = f<T...>(values: optional<T>...) -> i32 {
+        let total = 0;
+        template for(let value : values...) {
+            total = total + match value {
+                .some(item) => 1,
+                .none => 0,
+            };
+        }
+        return total;
+    };
+    type result = call_result<decltype(callback), optional<i32>, optional<bool>>;
+    let value: result = callback(optional<i32>::some(1), optional<bool>::none);
+    return value + 41;
+})"
+            )
+        );
+        auto reexported_callable_pack_meta = analyze_semantics(sources, std::span<parse_result const>{ units });
+        test_parser::assert_true(
+            reexported_callable_pack_meta.accepted(),
+            "re-exported std.meta should expose call_result for generic lambda variant packs");
+    }
 
     auto generic_meta_substitution = analyze_with_std_io(
         "generic_meta_and_associated_substitution.cp",
@@ -867,6 +986,42 @@ main() -> i32
         "std.meta type queries should not be available without importing std.meta or a re-exporting module"
     );
 
+    auto shadowed_callable = analyze_with_std_io(
+        "std_meta_user_callable_shadow_rejected.cp",
+        R"(concept callable<Args...> {
+}
+
+main()
+{
+    type raw = read_type<i32&>;
+})"
+    );
+    test_parser::assert_true(
+        has_diagnostic(shadowed_callable, diagnostic_kind::unknown_type),
+        "user-defined callable should not expose std.meta type queries"
+    );
+
+    auto shadowed_reference_concept = analyze_with_std_io(
+        "std_meta_user_reference_concept_not_builtin.cp",
+        R"(concept is_lvalue_reference {
+}
+
+accept<T>() -> i32
+requires T: is_lvalue_reference
+{
+    return 1;
+}
+
+main() -> i32
+{
+    return accept<i32&>();
+})"
+    );
+    test_parser::assert_true(
+        has_diagnostic(shadowed_reference_concept, diagnostic_kind::missing_concept_item),
+        "user-defined reference concepts should not trigger std.meta builtin concept checks"
+    );
+
     using enum diagnostic_kind;
     auto expect_std_diagnostic = [](std::string_view name, std::string text, diagnostic_kind kind) {
         auto result = analyze_with_std_io(name, std::move(text));
@@ -876,12 +1031,29 @@ main() -> i32
     };
     expect_std_diagnostic("meta_read_type_requires_type.cp", "import std.meta; main() { type bad = read_type<1>; }", invalid_type_argument);
     expect_std_diagnostic("meta_read_type_arity.cp", "import std.meta; main() { type bad = read_type<i32, bool>; }", invalid_type_argument);
+    expect_std_diagnostic(
+        "meta_read_type_pack_expansion_rejected.cp",
+        R"(import std.meta;
+
+bad<Args...>()
+{
+    type item = read_type<Args...>;
+}
+
+main()
+{
+    bad<i32>();
+})",
+        invalid_type_argument
+    );
     expect_std_diagnostic("meta_pointee_requires_pointer.cp", "import std.meta; main() { type bad = pointee<i32>; }", invalid_type_argument);
     expect_std_diagnostic("meta_tuple_element_requires_tuple.cp", "import std.meta; main() { type bad = tuple_element<i32, 0>; }", invalid_type_argument);
+    expect_std_diagnostic("meta_tuple_element_requires_const_index.cp", "import std.meta; main() { type bad = tuple_element<(i32, bool), bool>; }", invalid_type_argument);
     expect_std_diagnostic("meta_tuple_element_bounds.cp", "import std.meta; main() { type bad = tuple_element<(i32, bool), 2>; }", invalid_type_argument);
     expect_std_diagnostic("meta_call_result_requires_callable.cp", "import std.meta; main() { type bad = call_result<i32>; }", not_callable);
     expect_std_diagnostic("meta_call_result_arity.cp", "import std.meta; main() { type bad = call_result<f(i32) -> i32>; }", argument_count_mismatch);
     expect_std_diagnostic("meta_call_result_argument_type.cp", "import std.meta; main() { type bad = call_result<f(i32) -> i32, bool>; }", type_mismatch);
+    expect_std_diagnostic("meta_call_result_nontype_argument.cp", "import std.meta; main() { type bad = call_result<f(i32) -> i32, 1>; }", invalid_type_argument);
     expect_std_diagnostic(
         "meta_callable_type_pack_argument_type.cp",
         R"(import std.meta;
@@ -896,6 +1068,25 @@ main()
     accept<f(i32) -> i32, bool>();
 })",
         missing_concept_item
+    );
+    expect_std_diagnostic(
+        "meta_call_result_pack_pattern_rejected.cp",
+        R"(import std.meta;
+
+struct box<T> {
+    value: T;
+}
+
+bad<F, Args...>()
+{
+    type item = call_result<F, box<Args>...>;
+}
+
+main()
+{
+    bad<f(box<i32>) -> i32, i32>();
+})",
+        invalid_type_argument
     );
 
     auto ranges = analyze_with_std_io(
@@ -1333,6 +1524,565 @@ main()
         auto sources = source_manager{};
         auto parsed = parse_source(
             sources,
+            "block_expression_return_inference.cp",
+            R"(from_initializer()
+{
+    let ignored: i32 = {
+        return 1;
+    };
+}
+
+main() -> i32
+{
+    return from_initializer();
+})");
+        auto checked = analyze_single(sources, parsed);
+        test_parser::assert_true(checked.accepted(), "block expression returns should feed inferred function returns");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "from_initializer") == semantic_type_ids::i32,
+            "return inside a declaration initializer block should infer the function return");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto parsed = parse_source(
+            sources,
+            "initializer_scope_return_inference.cp",
+            R"(from_previous()
+{
+    let value = 41;
+    let ignored = {
+        return value + 1;
+    };
+}
+
+main() -> i32
+{
+    return from_previous();
+})");
+        auto checked = analyze_single(sources, parsed);
+        test_parser::assert_true(checked.accepted(), "initializer block return should see previous local bindings");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "from_previous") == semantic_type_ids::i32,
+            "return inside an initializer should infer from prior local bindings");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto parsed = parse_source(
+            sources,
+            "destructure_alias_inferred_return.cp",
+            R"(from_tuple()
+{
+    let pair: (i32, i32) = (20, 22);
+    let ref (left, right) = pair;
+    type item = decltype(right);
+    let copy: item = right;
+    return left + copy;
+}
+
+main() -> i32
+{
+    return from_tuple();
+})");
+        auto checked = analyze_single(sources, parsed);
+        test_parser::assert_true(checked.accepted(), "destructured bindings and local type aliases should feed inferred returns");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "from_tuple") == semantic_type_ids::i32,
+            "return inference should resolve aliases that name destructured bindings");
+    }
+
+    expect_diagnostic(
+        "initializer_return_cannot_see_declared_name.cp",
+        R"(bad()
+{
+    let value = {
+        return value;
+    };
+}
+
+main()
+{
+    bad();
+})",
+        diagnostic_kind::unknown_name
+    );
+
+    {
+        auto sources = source_manager{};
+        auto parsed = parse_source(
+            sources,
+            "block_expression_control_flow_return_inference.cp",
+            R"(variant choice {
+    left;
+    right;
+}
+
+from_if(flag: bool)
+{
+    let ignored: i32 = {
+        if(flag) {
+            return 10;
+        } else {
+            return 11;
+        }
+        0
+    };
+}
+
+from_match(value: choice)
+{
+    let ignored: i32 = {
+        match value {
+            .left => {
+                return 20;
+            },
+            .right => {
+                return 21;
+            },
+        };
+        0
+    };
+}
+
+from_loop(flag: bool)
+{
+    let ignored: i32 = {
+        while(flag) {
+            return 30;
+        }
+        return 31;
+    };
+}
+
+main() -> i32
+{
+    return from_if(true) + from_match(choice::left) + from_loop(false);
+})");
+        auto checked = analyze_single(sources, parsed);
+        test_parser::assert_true(checked.accepted(), "block expression control flow returns should feed inference");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "from_if") == semantic_type_ids::i32,
+            "if branches returning inside a block expression should infer i32");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "from_match") == semantic_type_ids::i32,
+            "match arms returning inside a block expression should infer i32");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "from_loop") == semantic_type_ids::i32,
+            "loop return inside a block expression should infer i32");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto parsed = parse_source(
+            sources,
+            "block_expression_tail_return_inference.cp",
+            R"(from_tail()
+{
+    return {
+        let value = 41;
+        (value + 1)
+    };
+}
+
+main() -> i32
+{
+    return from_tail();
+})");
+        auto checked = analyze_single(sources, parsed);
+        test_parser::assert_true(checked.accepted(), "block expression tail should feed inferred function returns");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "from_tail") == semantic_type_ids::i32,
+            "block expression tail should infer i32");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto parsed = parse_source(
+            sources,
+            "builtin_call_return_inference.cp",
+            R"(pointer_from_alloc()
+{
+    return alloc<i32>(1);
+}
+
+value_from_builtin()
+{
+    return builtin(42);
+}
+
+unit_from_free()
+{
+    let pointer = alloc<i32>(1);
+    return free(pointer);
+}
+
+unit_from_assert()
+{
+    return assert(true);
+}
+
+main() -> i32
+{
+    let pointer = pointer_from_alloc();
+    free(pointer);
+    let value: i32 = value_from_builtin();
+    unit_from_free();
+    unit_from_assert();
+    return value;
+})");
+        auto checked = analyze_single(sources, parsed);
+        test_parser::assert_true(checked.accepted(), "builtin calls should feed inferred return types");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "value_from_builtin") == semantic_type_ids::i32,
+            "builtin(value) should infer the wrapped value type");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "unit_from_free") == semantic_type_ids::unit,
+            "free should infer unit return");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "unit_from_assert") == semantic_type_ids::unit,
+            "assert should infer unit return");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto parsed = parse_source(
+            sources,
+            "storage_member_return_inference.cp",
+            R"(data_pointer(value: storage [i32; 2]&)
+{
+    return value.data();
+}
+
+readonly_pointer(value: storage [i32; 2] const&)
+{
+    return value.data();
+}
+
+main() -> i32
+{
+    let item = storage [i32; 2]{};
+    const fixed = storage [i32; 2]{};
+    let mutable: i32* = data_pointer(ref item);
+    let readonly: i32 const* = readonly_pointer(const ref fixed);
+    return 0;
+})");
+        auto checked = analyze_single(sources, parsed);
+        test_parser::assert_true(checked.accepted(), "storage member builtin calls should feed inferred return types");
+        auto mutable_return = function_return_type(sources, parsed, checked, "data_pointer");
+        auto const* mutable_pointer = std::get_if<pointer_type>(&checked.types.get(mutable_return));
+        test_parser::assert_true(
+            mutable_pointer != nullptr and mutable_pointer->pointee == semantic_type_ids::i32 and not mutable_pointer->is_const,
+            "storage data() should infer a mutable element pointer return");
+        auto readonly_return = function_return_type(sources, parsed, checked, "readonly_pointer");
+        auto const* readonly_pointer = std::get_if<pointer_type>(&checked.types.get(readonly_return));
+        test_parser::assert_true(
+            readonly_pointer != nullptr and readonly_pointer->pointee == semantic_type_ids::i32 and readonly_pointer->is_const,
+            "const storage data() should infer a const element pointer return");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto parsed = parse_source(
+            sources,
+            "callable_and_member_call_return_inference.cp",
+            R"(fallback(value: i32) -> i32
+{
+    return value + 1;
+}
+
+struct item {
+    value: i32;
+}
+
+impl item {
+    value_or<T>(self&, fallback: T)
+    {
+        return fallback;
+    }
+
+    get(self&)
+    {
+        return value_or(42);
+    }
+}
+
+from_member_fallback()
+{
+    let value = 41;
+    return value.fallback();
+}
+
+from_implicit_self_generic()
+{
+    let it = item{ .value = 0 };
+    return it.get();
+}
+
+call_callback(callback: f() -> i32)
+{
+    return callback();
+}
+
+answer() -> i32
+{
+    return 42;
+}
+
+call_closure()
+{
+    let callback = f() => 42;
+    return callback();
+}
+
+main() -> i32
+{
+    return from_member_fallback() + from_implicit_self_generic() + call_callback(answer) + call_closure() - 126;
+})");
+        auto checked = analyze_single(sources, parsed);
+        test_parser::assert_true(
+            checked.accepted(),
+            "callable, closure, member fallback, and implicit-self generic calls should feed inferred returns");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "from_member_fallback") == semantic_type_ids::i32,
+            "member-call fallback to a visible function should infer i32");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "from_implicit_self_generic") == semantic_type_ids::i32,
+            "implicit self generic method calls should infer the concrete method return");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "call_callback") == semantic_type_ids::i32,
+            "function-typed parameter calls should infer callable returns");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "call_closure") == semantic_type_ids::i32,
+            "closure calls should infer closure returns");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto parsed = parse_source(
+            sources,
+            "impl_operator_inferred_return.cp",
+            R"(struct item {
+    value: i32;
+}
+
+impl item {
+    get(self&)
+    {
+        return value;
+    }
+
+    operator +(self const&, rhs: this const&)
+    {
+        return value + rhs.value;
+    }
+}
+
+main() -> i32
+{
+    let left = item{ 20 };
+    let right = item{ 21 };
+    return left.get() + (left + right) - 20;
+})");
+        auto checked = analyze_single(sources, parsed);
+        test_parser::assert_true(
+            checked.accepted(),
+            "impl methods and operators with source bodies should allow inferred returns");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto parsed = parse_source(
+            sources,
+            "non_struct_impl_inferred_return.cp",
+            R"(variant token {
+    empty;
+    ready(i32);
+}
+
+impl token {
+    score(self const&)
+    {
+        return match self {
+            .ready(value) => value,
+            .empty => 0,
+        };
+    }
+}
+
+impl i32 {
+    double(self const&)
+    {
+        return self + self;
+    }
+}
+
+impl [i32; 2] {
+    first(self const&)
+    {
+        return self[0];
+    }
+}
+
+main() -> i32
+{
+    let value = token::ready(20);
+    let numbers = [1, 2];
+    return value.score() + (10 as i32).double() + numbers.first() + match token::ready(1) {
+        .ready(item) => item,
+        .empty => 0,
+    };
+})");
+        auto checked = analyze_single(sources, parsed);
+        test_parser::assert_true(
+            checked.accepted(),
+            "variant, builtin, and array impl source bodies should allow inferred returns");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto parsed = parse_source(
+            sources,
+            "generic_impl_variant_match_inferred_return.cp",
+            R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+struct box<T> {
+    value: T;
+}
+
+impl box<T> {
+    pick(self const&, fallback: T)
+    {
+        return match optional<T>::some(value) {
+            .some(item) => item,
+            .none => fallback,
+        };
+    }
+}
+
+main() -> i32
+{
+    let item = box<i32>{ 42 };
+    return item.pick(0);
+})");
+        auto checked = analyze_single(sources, parsed);
+        test_parser::assert_true(
+            checked.accepted(),
+            "generic impl methods should infer returns from variant matches with substituted payloads");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto parsed = parse_source(
+            sources,
+            "nested_lambda_and_partial_match_return_inference.cp",
+            R"(variant gate {
+    open;
+    closed;
+}
+
+outer(value: gate)
+{
+    let ignored: i32 = {
+        let callback = f() -> bool {
+            return true;
+        };
+        match value {
+            .open => {
+                return 40;
+            },
+            .closed => 1,
+        };
+        40
+    };
+    return ignored + 2;
+}
+
+main() -> i32
+{
+    return outer(gate::closed);
+})");
+        auto checked = analyze_single(sources, parsed);
+        test_parser::assert_true(
+            checked.accepted(),
+            "lambda returns should stay scoped while partial match returns feed outer inference");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "outer") == semantic_type_ids::i32,
+            "partial match in a block expression should keep reachable tail returns");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto parsed = parse_source(
+            sources,
+            "template_if_and_match_completion_return_inference.cp",
+            R"(variant choice {
+    left;
+    right;
+}
+
+template_if_tail()
+{
+    return {
+        template if(false) {
+            return 1;
+        } else {
+        }
+        42
+    };
+}
+
+template_if_return()
+{
+    return {
+        template if(true) {
+            return 40;
+        } else {
+            return true;
+        }
+        0
+    };
+}
+
+match_statement_tail(value: choice)
+{
+    return {
+        match value {
+            .left => {
+                return 10;
+            },
+            .right => 20,
+        };
+        32
+    };
+}
+
+main() -> i32
+{
+    return template_if_tail() + template_if_return() + match_statement_tail(choice::right) - 72;
+})");
+        auto checked = analyze_single(sources, parsed);
+        test_parser::assert_true(
+            checked.accepted(),
+            "template-if and match completion should feed block-expression return inference");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "template_if_tail") == semantic_type_ids::i32,
+            "template-if false branch should leave the block tail reachable");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "template_if_return") == semantic_type_ids::i32,
+            "template-if selected return branch should make the block expression never");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "match_statement_tail") == semantic_type_ids::i32,
+            "partial-return match expression statement should leave the following tail reachable");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto parsed = parse_source(
+            sources,
             "never_inferred_return.cp",
             R"(fail()
 {
@@ -1370,6 +2120,37 @@ main() -> i32
         test_parser::assert_true(
             function_return_type(sources, parsed, checked, "f") == semantic_type_ids::i32,
             "same integer returns should infer i32");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto parsed = parse_source(
+            sources,
+            "same_rank_integer_return_order.cp",
+            R"(signed_first(flag: bool)
+{
+    if(flag) {
+        return 1 as i32;
+    }
+    return 2 as u32;
+}
+
+unsigned_first(flag: bool)
+{
+    if(flag) {
+        return 1 as u32;
+    }
+    return 2 as i32;
+})");
+        auto checked = analyze_single(sources, parsed);
+        test_parser::assert_true(checked.accepted(), "same-rank integer return order source should pass");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "signed_first") == semantic_type_ids::i32,
+            "same-rank integer return inference should keep the first observed signed type");
+        test_parser::assert_true(
+            function_return_type(sources, parsed, checked, "unsigned_first")
+                == semantic_type_ids::builtin(builtin_type_kind::u32),
+            "same-rank integer return inference should keep the first observed unsigned type");
     }
 
     {
@@ -1785,6 +2566,97 @@ main()
                 "base.cp",
                 R"(export module base;
 
+export struct item {
+    value: i32;
+}
+
+export helper() -> i32
+{
+    return 42;
+})"),
+            parse_source(
+                sources,
+                "left.cp",
+                R"(export module left;
+
+export import base;)"),
+            parse_source(
+                sources,
+                "right.cp",
+                R"(export module right;
+
+export import base;)"),
+            parse_source(
+                sources,
+                "all.cp",
+                R"(export module all;
+
+export import left;
+export import right;)"),
+            parse_source(
+                sources,
+                "main.cp",
+                R"(import all;
+
+main() -> i32
+{
+    let value = item{ 1 };
+    return helper() + value.value - 1;
+})")
+        };
+        auto checked = analyze_semantics(sources, std::span<parse_result const>{ units });
+        test_parser::assert_true(checked.accepted(), "same re-exported function and type should be imported only once");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto units = std::vector<parse_result> {
+            parse_source(
+                sources,
+                "left.cp",
+                R"(export module left;
+
+export import right;
+
+export struct left_value {
+    value: i32;
+})"),
+            parse_source(
+                sources,
+                "right.cp",
+                R"(export module right;
+
+export import left;
+
+export struct right_value {
+    value: i32;
+})"),
+            parse_source(
+                sources,
+                "main.cp",
+                R"(import left;
+
+main() -> i32
+{
+    let left = left_value{ 20 };
+    let right = right_value{ 22 };
+    return left.value + right.value;
+})")
+        };
+        auto checked = analyze_semantics(sources, std::span<parse_result const>{ units });
+        test_parser::assert_true(
+            checked.accepted(),
+            "cyclic export imports should converge and re-export visible types");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto units = std::vector<parse_result> {
+            parse_source(
+                sources,
+                "base.cp",
+                R"(export module base;
+
 export concept marker {
 }
 
@@ -1933,6 +2805,119 @@ struct marker {
         auto units = std::vector<parse_result> {
             parse_source(
                 sources,
+                "left.cp",
+                R"(export module left;
+
+export collide() -> i32
+{
+    return 1;
+})"),
+            parse_source(
+                sources,
+                "right.cp",
+                R"(export module right;
+
+export collide() -> i32
+{
+    return 2;
+})"),
+            parse_source(
+                sources,
+                "main.cp",
+                R"(import left;
+import right;
+
+main() -> i32
+{
+    return collide();
+})")
+        };
+        auto checked = analyze_semantics(sources, std::span<parse_result const>{ units });
+        test_parser::assert_true(
+            has_diagnostic(checked, diagnostic_kind::import_conflict),
+            "two imported functions with the same name should conflict");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto units = std::vector<parse_result> {
+            parse_source(
+                sources,
+                "types.cp",
+                R"(export module types;
+
+export struct item {
+    value: i32;
+})"),
+            parse_source(
+                sources,
+                "functions.cp",
+                R"(export module functions;
+
+export item() -> i32
+{
+    return 41;
+})"),
+            parse_source(
+                sources,
+                "main.cp",
+                R"(import types;
+import functions;
+
+main() -> i32
+{
+    let value = item{ 1 };
+    return item() + value.value;
+})")
+        };
+        auto checked = analyze_semantics(sources, std::span<parse_result const>{ units });
+        test_parser::assert_true(
+            checked.accepted(),
+            "current import order allows an imported function to share a visible type name");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto units = std::vector<parse_result> {
+            parse_source(
+                sources,
+                "functions.cp",
+                R"(export module functions;
+
+export item() -> i32
+{
+    return 1;
+})"),
+            parse_source(
+                sources,
+                "types.cp",
+                R"(export module types;
+
+export struct item {
+    value: i32;
+})"),
+            parse_source(
+                sources,
+                "main.cp",
+                R"(import functions;
+import types;
+
+main() -> i32
+{
+    return item();
+})")
+        };
+        auto checked = analyze_semantics(sources, std::span<parse_result const>{ units });
+        test_parser::assert_true(
+            has_diagnostic(checked, diagnostic_kind::import_conflict),
+            "current import order rejects a type imported after a function with the same name");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto units = std::vector<parse_result> {
+            parse_source(
+                sources,
                 "base.cp",
                 R"(export module base;
 
@@ -2017,6 +3002,45 @@ main() -> i32
         test_parser::assert_true(
             checked.accepted(),
             "export import should re-export generic parameter-pack functions with inferred returns");
+    }
+
+    {
+        auto sources = source_manager{};
+        auto units = std::vector<parse_result> {
+            parse_source(
+                sources,
+                "base.cp",
+                R"(export module base;
+
+export concept scored {
+    score(self const&) -> i32
+    {
+        return 1;
+    }
+}
+
+impl scored for i32 {
+})"),
+            parse_source(
+                sources,
+                "wrap.cp",
+                R"(export module wrap;
+
+export import base;)"),
+            parse_source(
+                sources,
+                "main.cp",
+                R"(import wrap;
+
+main() -> i32
+{
+    return (41 as i32).score();
+})")
+        };
+        auto checked = analyze_semantics(sources, std::span<parse_result const>{ units });
+        test_parser::assert_true(
+            checked.accepted(),
+            "export import should re-export concept default extension methods");
     }
 }
 
@@ -2158,6 +3182,37 @@ main() -> i32
         test_parser::assert_true(result.accepted(), "array, storage, tuple, and grouped type suffixes should pass semantic analysis");
     }
 
+    expect_diagnostic(
+        "array_like_without_suffix.cp",
+        "main() { let value: [i32; 2] like = [1, 2]; }",
+        diagnostic_kind::invalid_type_argument
+    );
+    expect_diagnostic(
+        "array_forward_non_dependent.cp",
+        "take(value: [i32; 2] forward&) { } main() { let values = [1, 2]; take(values); }",
+        diagnostic_kind::invalid_type_argument
+    );
+    expect_diagnostic(
+        "array_const_move_reference.cp",
+        "take(value: [i32; 2] const move&) { }",
+        diagnostic_kind::invalid_type_argument
+    );
+    expect_diagnostic(
+        "storage_like_without_suffix.cp",
+        "main() { let item: storage [i32; 2] like = storage [i32; 2]{}; }",
+        diagnostic_kind::invalid_type_argument
+    );
+    expect_diagnostic(
+        "tuple_forward_non_dependent.cp",
+        "take(value: (i32, bool) forward&) { } main() { let pair = (1, true); take(pair); }",
+        diagnostic_kind::invalid_type_argument
+    );
+    expect_diagnostic(
+        "grouped_like_without_suffix.cp",
+        "main() { let value: (i32) like = 1; }",
+        diagnostic_kind::invalid_type_argument
+    );
+
     {
         auto result = analyze_one(
             "mutable_aggregate_assignment.cp",
@@ -2174,6 +3229,42 @@ main() -> i32
         );
         test_parser::assert_true(result.accepted(), "array, tuple, and storage values should be mutable assignment targets");
     }
+
+    {
+        auto result = analyze_one(
+            "array_type_initializer_defaults.cp",
+            R"(type i32x4 = [i32; 4];
+
+main() -> i32
+{
+    let values = i32x4{1, 2};
+    return values[0] + values[2] + 41;
+})"
+        );
+        test_parser::assert_true(result.accepted(), "array type initializers should default omitted tail elements");
+    }
+
+    using enum diagnostic_kind;
+    expect_diagnostic(
+        "array_type_initializer_named_field.cp",
+        "type i32x2 = [i32; 2]; main() { let values = i32x2{ .first = 1 }; }",
+        type_mismatch
+    );
+    expect_diagnostic(
+        "array_type_initializer_too_many.cp",
+        "type i32x1 = [i32; 1]; main() { let values = i32x1{ 1, 2 }; }",
+        aggregate_length_mismatch
+    );
+    expect_diagnostic(
+        "array_type_initializer_non_default_tail.cp",
+        "struct holder { value: i32&; } type holders = [holder; 2]; main() { let value = 1; let values = holders{ holder{ ref value } }; }",
+        default_initialization_failure
+    );
+    expect_diagnostic(
+        "storage_initializer_rejects_elements.cp",
+        "main() { let slots = storage [i32; 2]{ 1 }; }",
+        type_mismatch
+    );
 }
 
 auto check_struct_impl_semantics() -> void
@@ -2243,6 +3334,11 @@ main() -> i32
         "invalid_self.cp",
         "struct a { x: i32; } struct b { x: i32; } impl a { bad(self: b) { return; } }",
         invalid_self_parameter
+    );
+    expect_diagnostic (
+        "associated_type_alias_arguments.cp",
+        "struct box { value: i32; } impl box { type item = i32; bad(self const&) { type local = item<i32>; } }",
+        invalid_type_argument
     );
     expect_diagnostic (
         "reference_default_field.cp",
@@ -2397,6 +3493,38 @@ main() -> i32
     test_parser::assert_true(
         implicit_impl_pattern_result.accepted(),
         "implicit impl patterns should collect array and grouped type parameters");
+
+    auto implicit_impl_const_argument_result = analyze_one(
+        "implicit_impl_const_argument_pattern_generics.cp",
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+struct bucket<T, N: usize> {
+    values: [T; N];
+}
+
+impl bucket<T, N> {
+    pick(self const&, index: usize, fallback: T)
+    {
+        let current = optional<T>::some(values[index]);
+        return match current {
+            .some(item) => item,
+            .none => fallback,
+        };
+    }
+}
+
+main() -> i32
+{
+    let values = bucket<i32, 2>{ [20, 22] };
+    return values.pick(1, 0) + 20;
+})"
+    );
+    test_parser::assert_true(
+        implicit_impl_const_argument_result.accepted(),
+        "implicit impl patterns should collect const generic arguments from nominal type patterns");
 
     auto tuple_impl_pattern_result = analyze_one(
         "tuple_impl_target_collects_implicit_parameters.cp",
@@ -2658,6 +3786,98 @@ main() -> i32
     );
     test_parser::assert_true(generic_inferred_return.accepted(), "generic functions should infer return types per concrete instance");
 
+    auto generic_block_expression_return = analyze_one(
+        "generic_block_expression_return.cp",
+        R"(id<T>(input: T)
+{
+    return {
+        return input;
+    };
+}
+
+from_initializer<T>(input: T)
+{
+    let ignored: T = {
+        return input;
+    };
+}
+
+first_present<T...>(values: T...)
+{
+    template for(let value : values...) {
+        let ignored = {
+            return value;
+        };
+    }
+    panic("empty");
+}
+
+main() -> i32
+{
+    return id(10) + from_initializer(11) + first_present(21);
+})"
+    );
+    test_parser::assert_true(
+        generic_block_expression_return.accepted(),
+        "generic functions should infer through returns nested inside block expressions");
+    auto i32_instance_count = std::ranges::count_if(
+        generic_block_expression_return.function_instances,
+        [&](semantic_function_instance const& instance) {
+            return instance.signature.valid()
+                   and generic_block_expression_return.signatures[instance.signature.value].returns == semantic_type_ids::i32;
+        }
+    );
+    test_parser::assert_true(
+        i32_instance_count == 3,
+        "generic block-expression returns should update every concrete instance return type");
+
+    auto non_generic_from_generic_return = analyze_one(
+        "non_generic_return_infers_from_generic_call.cp",
+        R"(id<T>(input: T)
+{
+    return input;
+}
+
+forward_id()
+{
+    return id(41);
+}
+
+main() -> i32
+{
+    return forward_id() + 1;
+})"
+    );
+    test_parser::assert_true(
+        non_generic_from_generic_return.accepted(),
+        "non-generic inferred returns should use concrete generic function call return types");
+
+    auto non_generic_from_generic_associated_return = analyze_one(
+        "non_generic_return_infers_from_generic_associated_call.cp",
+        R"(struct maker {
+}
+
+impl maker {
+    make<T>(value: T)
+    {
+        return value;
+    }
+}
+
+from_associated()
+{
+    return maker::make<i32>(40) + 2;
+}
+
+main() -> i32
+{
+    return from_associated();
+})"
+    );
+    test_parser::assert_true(
+        non_generic_from_generic_associated_return.accepted(),
+        "non-generic inferred returns should use concrete generic associated function call return types");
+
     auto generic_method_inferred_return = analyze_one(
         "generic_method_variant_match_inferred_return.cp",
         R"(variant optional<T> {
@@ -2690,6 +3910,34 @@ main() -> i32
         generic_method_inferred_return.accepted(),
         "generic methods should infer concrete return types through variant match expressions");
 
+    auto non_generic_from_generic_method_return = analyze_one(
+        "non_generic_return_infers_from_generic_method.cp",
+        R"(struct box<T> {
+    value: T;
+}
+
+impl<T> box<T> {
+    value_or(self const&, fallback: T)
+    {
+        return value;
+    }
+}
+
+unwrap()
+{
+    let item = box<i32>{ 42 };
+    return item.value_or(0);
+}
+
+main() -> i32
+{
+    return unwrap();
+})"
+    );
+    test_parser::assert_true(
+        non_generic_from_generic_method_return.accepted(),
+        "non-generic inferred returns should use concrete generic method call return types");
+
     auto generic_template_if_inferred_return = analyze_one(
         "generic_template_if_inferred_return.cp",
         R"(select<T>(value: T)
@@ -2713,6 +3961,30 @@ main() -> i32
     test_parser::assert_true(
         generic_template_if_inferred_return.accepted(),
         "generic functions should infer return types from the selected template-if branch per instance");
+
+    auto generic_template_if_block_return = analyze_one(
+        "generic_template_if_block_return.cp",
+        R"(from_block<T>(value: T)
+{
+    let ignored: i32 = {
+        template if(T == i32) {
+            return value;
+        } else {
+            return 7;
+        }
+        0
+    };
+    return ignored;
+}
+
+main() -> i32
+{
+    return from_block(42) + from_block(true) - 7;
+})"
+    );
+    test_parser::assert_true(
+        generic_template_if_block_return.accepted(),
+        "template-if returns inside generic block expressions should infer the selected concrete return");
 
     using enum diagnostic_kind;
     expect_diagnostic(
@@ -2819,7 +4091,274 @@ main()
         empty_type_pack_unit.accepted(),
         "empty and non-empty type-pack template-for returns should infer unit");
 
+    auto generic_pack_multi_payload_match = analyze_one(
+        "generic_variant_pack_multi_payload_match.cp",
+        R"(variant packet<T> {
+    empty;
+    pair(T, T);
+}
+
+count_pairs<T...>(values: packet<T>...) -> i32
+{
+    let total = 0;
+    template for(let value : values...) {
+        total = total + match value {
+            .pair(left, right) => 1,
+            _ => 0,
+        };
+    }
+    return total;
+}
+
+main() -> i32
+{
+    return count_pairs(packet<i32>::pair(1, 2), packet<bool>::pair(true, false), packet<i64>::empty);
+})"
+    );
+    test_parser::assert_true(
+        generic_pack_multi_payload_match.accepted(),
+        "generic variant matches inside value-pack expansions should bind substituted multi-payload cases");
+
+    auto payload_shadowing_pack_match = analyze_one(
+        "variant_pack_match_payload_shadowing.cp",
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+sum<T...>(values: optional<T>...) -> i32
+{
+    let total = 0;
+    let item = 1000;
+    template for(let value : values...) {
+        total = total + match value {
+            .some(item) => {
+                let copy = item;
+                copy
+            },
+            .none => 0,
+        };
+    }
+    return total + item - 1000;
+}
+
+main() -> i32
+{
+    return sum(optional<i32>::some(20), optional<i32>::none, optional<i32>::some(22));
+})"
+    );
+    test_parser::assert_true(
+        payload_shadowing_pack_match.accepted(),
+        "match payload bindings inside pack expansions should shadow outer names only inside the arm");
+
+    auto empty_variant_pack_match = analyze_one(
+        "empty_variant_pack_match_inferred_return.cp",
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+count_present<T...>(values: optional<T>...)
+{
+    let total = 0;
+    template for(let value : values...) {
+        total = total + match value {
+            .some(item) => 1,
+            _ => 0,
+        };
+    }
+    return total;
+}
+
+first_or<T...>(values: optional<T>...)
+{
+    template for(let value : values...) {
+        return match value {
+            .some(item) => item,
+            .none => 0,
+        };
+    }
+    return 0;
+}
+
+main() -> i32
+{
+    return count_present()
+        + count_present(optional<i32>::some(1), optional<bool>::none)
+        + first_or();
+})"
+    );
+    test_parser::assert_true(
+        empty_variant_pack_match.accepted(),
+        "empty variant parameter-pack instances should coexist with match expressions in non-empty instances");
+
+    auto repeated_wildcard = analyze_one(
+        "variant_match_repeated_wildcard.cp",
+        R"(variant optional {
+    none;
+    some(i32);
+}
+
+main() -> i32
+{
+    let value = optional::some(1);
+    return match value {
+        _ => 40,
+        _ => 41,
+    } + 2;
+})"
+    );
+    test_parser::assert_true(
+        repeated_wildcard.accepted(),
+        "semantic analysis should accept redundant wildcard arms while keeping them type-checked");
+
+    auto wildcard_before_specific = analyze_one(
+        "variant_match_wildcard_before_specific.cp",
+        R"(variant optional {
+    none;
+    some(i32);
+}
+
+main() -> i32
+{
+    let value = optional::some(1);
+    return match value {
+        _ => 40,
+        .some(item) => item,
+    } + 2;
+})"
+    );
+    test_parser::assert_true(
+        wildcard_before_specific.accepted(),
+        "wildcard arms should be allowed before later case arms while preserving arm type checking");
+
     using enum diagnostic_kind;
+    expect_diagnostic(
+        "variant_unit_case_call.cp",
+        "variant optional { none; some(i32); } main() { let value = optional::none(); }",
+        not_callable
+    );
+    expect_diagnostic(
+        "variant_payload_case_without_call.cp",
+        "variant optional { none; some(i32); } main() { let value = optional::some; }",
+        not_callable
+    );
+    expect_diagnostic(
+        "variant_missing_case_name.cp",
+        "variant optional { none; } main() { let value = optional::missing; }",
+        unknown_variant_case
+    );
+    expect_diagnostic(
+        "variant_missing_associated_function_call.cp",
+        "variant optional { none; } main() { let value = optional::missing(); }",
+        unknown_member
+    );
+    expect_diagnostic(
+        "variant_empty_match.cp",
+        "variant optional { none; some(i32); } main() { let value = optional::none; let out = match value { }; }",
+        non_exhaustive_match
+    );
+    expect_diagnostics(
+        "match_non_variant_checks_arm_value.cp",
+        "main() { let out = match 1 { _ => missing, }; }",
+        { type_mismatch, unknown_name }
+    );
+    expect_diagnostics(
+        "match_unknown_case_checks_arm_value.cp",
+        "variant optional { none; } main() { let value = optional::none; let out = match value { .some => missing, .none => 0, }; }",
+        { unknown_variant_case, unknown_name }
+    );
+    expect_diagnostics(
+        "match_duplicate_case_checks_arm_value.cp",
+        "variant optional { none; some(i32); } main() { let value = optional::none; let out = match value { .none => 0, .none => missing, .some(item) => item, }; }",
+        { duplicate_variant_case, unknown_name }
+    );
+    expect_diagnostics(
+        "match_payload_count_still_checks_bound_prefix.cp",
+        "variant packet { empty; pair(i32); } main() { let value = packet::pair(1); let out = match value { .pair(item, extra) => item + extra, .empty => 0, }; }",
+        { argument_count_mismatch, unknown_name }
+    );
+    expect_diagnostic(
+        "variant_match_wildcard_still_checks_later_arm.cp",
+        "variant optional { none; some(i32); } main() { let value = optional::some(1); let out: i32 = match value { _ => 0, .some(item) => true, }; }",
+        type_mismatch
+    );
+    expect_diagnostics(
+        "variant_pack_duplicate_case_checks_arm_value.cp",
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+bad<T...>(values: optional<T>...) -> i32
+{
+    template for(let value : values...) {
+        let current = match value {
+            .none => 0,
+            .none => missing,
+            .some(item) => 1,
+        };
+    }
+    return 0;
+}
+
+main() -> i32
+{
+    return bad(optional<i32>::none);
+})",
+        { duplicate_variant_case, unknown_name }
+    );
+    expect_diagnostic(
+        "variant_pack_match_payload_binding_does_not_leak.cp",
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+bad<T...>(values: optional<T>...) -> i32
+{
+    template for(let value : values...) {
+        let current = match value {
+            .some(item) => item,
+            .none => item,
+        };
+    }
+    return 0;
+}
+
+main() -> i32
+{
+    return bad(optional<i32>::some(1));
+})",
+        unknown_name
+    );
+    expect_diagnostics(
+        "nested_variant_pack_match_checks_inner_arm_value.cp",
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+bad<T...>(values: optional<T>...) -> i32
+{
+    template for(let value : values...) {
+        let current = match value {
+            .some(item) => match value {
+                .some(inner) => missing,
+                .none => 0,
+            },
+            .none => 0,
+        };
+    }
+    return 0;
+}
+
+main() -> i32
+{
+    return bad(optional<i32>::some(1));
+})",
+        { unknown_name }
+    );
     expect_diagnostic(
         "variant_match_contextual_result_type_mismatch.cp",
         "variant optional<T> { none; some(T); } main() { let value = optional<i32>::some(1); let out: i64 = match value { .some(item) => item, .none => true, }; }",
@@ -2848,6 +4387,53 @@ main()
     let value = first_present(optional<i32>::some(1), optional<bool>::some(true));
 })",
         return_type_mismatch
+    );
+    expect_diagnostic(
+        "variant_pack_match_payload_count_in_expansion.cp",
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+bad<T...>(values: optional<T>...) -> i32
+{
+    template for(let value : values...) {
+        let current = match value {
+            .some => 1,
+            .none => 0,
+        };
+    }
+    return 0;
+}
+
+main() -> i32
+{
+    return bad(optional<i32>::some(1));
+})",
+        argument_count_mismatch
+    );
+    expect_diagnostic(
+        "variant_pack_match_non_exhaustive_in_expansion.cp",
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+bad<T...>(values: optional<T>...) -> i32
+{
+    template for(let value : values...) {
+        let current = match value {
+            .some(item) => 1,
+        };
+    }
+    return 0;
+}
+
+main() -> i32
+{
+    return bad(optional<i32>::some(1));
+})",
+        non_exhaustive_match
     );
 }
 
@@ -2984,6 +4570,68 @@ main() -> i32
         "return inside type-pack template for should infer the function instance return type"
     );
 
+    auto type_pack_match_return_result = analyze_one(
+        "type_pack_variant_match_inferred_return.cp",
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+first_i32<T...>()
+{
+    template fo)" "r" R"( (type U : T...) {
+        template if(U == i32) {
+            let value = optional<i32>::some(42);
+            return match value {
+                .some(item) => item,
+                .none => 0,
+            };
+        }
+    }
+    return 0;
+}
+
+main() -> i32
+{
+    return first_i32<bool, i32>();
+})"
+    );
+    test_parser::assert_true(
+        type_pack_match_return_result.accepted(),
+        "type-pack template for should feed variant match returns into function return inference"
+    );
+
+    auto empty_type_pack_match_return_result = analyze_one(
+        "empty_type_pack_variant_match_fallback_return.cp",
+        R"(variant optional<T> {
+    none;
+    some(T);
+}
+
+first_i32<T...>()
+{
+    template for(type U : T...) {
+        template if(U == i32) {
+            let value = optional<i32>::some(42);
+            return match value {
+                .some(item) => item,
+                .none => 0,
+            };
+        }
+    }
+    return 0;
+}
+
+main() -> i32
+{
+    return first_i32();
+})"
+    );
+    test_parser::assert_true(
+        empty_type_pack_match_return_result.accepted(),
+        "empty type-pack instances should infer from the fallback after skipped match-return branches"
+    );
+
     auto variant_pack_return_result = analyze_one(
         "variant_parameter_pack_match_inferred_return.cp",
         R"(variant optional<T> {
@@ -3077,6 +4725,15 @@ same_bool(value: bool) -> bool
     return value;
 }
 
+count_const_pointers<T...>(values: T const*...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + 1;
+    }
+    return total;
+}
+
 count_pointers<T...>(values: T*...) -> i32
 {
     let total = 0;
@@ -3117,7 +4774,9 @@ main() -> i32
 {
     let value = 1;
     let flag = true;
-    return count_pointers(&value, &flag)
+    const stable = 2;
+    return count_const_pointers(&stable, &flag)
+        + count_pointers(&value, &flag)
         + count_callbacks(inc, same_bool)
         + count_storage(storage [i32; 2]{}, storage [bool; 2]{})
         + count_optional(optional<i32>::some(1), optional<bool>::some(false));
@@ -3127,6 +4786,73 @@ main() -> i32
         nested_pack_result.accepted(),
         "parameter packs should infer through pointer, function, storage, and variant shapes"
     );
+
+    auto forward_pack_result = analyze_one(
+        "forward_parameter_pack_template_for.cp",
+        R"(read(value: i32) -> i32
+{
+    return value;
+}
+
+sum_forward<T...>(values: T forward&...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + read(forward value);
+    }
+    return total;
+}
+
+sum_forward_explicit<T...>(values: T forward&...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + read(forward value);
+    }
+    return total;
+}
+
+main() -> i32
+{
+    let first = 10;
+    const second = 20;
+    let third = 1;
+    return sum_forward(first, second, 12) + sum_forward_explicit<i32, i32>(move third, 0) - 1;
+})"
+    );
+    test_parser::assert_true(
+        forward_pack_result.accepted(),
+        "template for over T forward&... should preserve per-element forward binding categories");
+
+    auto length_prefixed_pack_result = analyze_one(
+        "length_prefixed_parameter_pack_inference.cp",
+        R"(count_arrays<N: usize, T...>(values: [T; N]...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + 1;
+    }
+    return total;
+}
+
+count_storage<N: usize, T...>(values: storage [T; N]...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        total = total + 1;
+    }
+    return total;
+}
+
+main() -> i32
+{
+    return count_arrays([1, 2], [true, false])
+        + count_storage(storage [i32; 3]{}, storage [bool; 3]{});
+})"
+    );
+    test_parser::assert_true(
+        length_prefixed_pack_result.accepted(),
+        "parameter packs should infer shared integer const generics before the tail type pack");
 
     auto fixed_prefix_pack_result = analyze_one(
         "fixed_prefix_parameter_pack_inference.cp",
@@ -3147,6 +4873,60 @@ main() -> i32
     test_parser::assert_true(
         fixed_prefix_pack_result.accepted(),
         "parameter packs should allow fixed generic and value parameters before the tail pack");
+
+    auto explicit_pack_arguments_result = analyze_one(
+        "explicit_parameter_pack_arguments.cp",
+        R"(type_count<T...>() -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (type U : T...) {
+        type current = U;
+        total = total + 1;
+    }
+    return total;
+}
+
+type_count_plus_bool<T...>() -> i32
+{
+    return type_count<T..., bool>();
+}
+
+with_default<Head = i32, Tail...>() -> i32
+{
+    let total = 0;
+    template if(Head == i32) {
+        total = total + 10;
+    } else {
+        total = total + 20;
+    }
+    template fo)" "r" R"( (type U : Tail...) {
+        type current = U;
+        total = total + 1;
+    }
+    return total;
+}
+
+head_plus_count<Head, Tail...>(head: Head, tail: Tail...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : tail...) {
+        total = total + 1;
+    }
+    return total;
+}
+
+main() -> i32
+{
+    return type_count<i32, bool>()
+        + type_count_plus_bool<i64>()
+        + with_default()
+        + with_default<bool, i32, i64>()
+        + head_plus_count<i32, bool, i64>(1, true, 2 as i64);
+})"
+    );
+    test_parser::assert_true(
+        explicit_pack_arguments_result.accepted(),
+        "explicit parameter-pack arguments should absorb the tail and preserve defaulted fixed prefixes");
 
     auto empty_pack_fallback_return_result = analyze_one(
         "empty_parameter_pack_fallback_inferred_return.cp",
@@ -3169,9 +4949,27 @@ main() -> i32
 
     auto concept_pack_result = analyze_one(
         "concept_type_parameter_pack.cp",
-        "concept any_of<T...> { } main() { }"
+        R"(concept any_of<Args...> {
+}
+
+struct item {
+}
+
+impl any_of<i32, bool> for item {
+}
+
+accept<T>() -> i32
+requires T: any_of<i32, bool>
+{
+    return 1;
+}
+
+main() -> i32
+{
+    return accept<item>();
+})"
     );
-    test_parser::assert_true(concept_pack_result.accepted(), "concept declarations should allow type parameter packs");
+    test_parser::assert_true(concept_pack_result.accepted(), "concept declarations and impls should allow type parameter packs");
 
     using enum diagnostic_kind;
     expect_diagnostic(
@@ -3187,6 +4985,11 @@ main() -> i32
     expect_diagnostic(
         "parameter_pack_direct_type_use.cp",
         "bad<T...>(values: T...) -> T { return 0; } main() -> i32 { return bad(1); }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "parameter_pack_alias_direct_type_use.cp",
+        "bad<T...>() { type item = T; } main() { bad<i32>(); }",
         invalid_type_argument
     );
     expect_diagnostic(
@@ -3220,9 +5023,49 @@ main() -> i32
         invalid_type_argument
     );
     expect_diagnostic(
+        "parameter_pack_function_arity_conflict.cp",
+        "unary(value: i32) -> i32 { return value; } binary(left: bool, right: bool) -> bool { return left; } count<T...>(callbacks: (f(T) -> T)...) -> i32 { return 0; } main() -> i32 { return count(unary, binary); }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "parameter_pack_array_length_conflict.cp",
+        "count<N: usize, T...>(values: [T; N]...) -> i32 { return 0; } main() -> i32 { return count([1, 2], [true, false, true]); }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "parameter_pack_storage_length_conflict.cp",
+        "count<N: usize, T...>(values: storage [T; N]...) -> i32 { return 0; } main() -> i32 { return count(storage [i32; 2]{}, storage [bool; 3]{}); }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "parameter_pack_nominal_struct_conflict.cp",
+        "struct box<T> { value: T; } struct bag<T> { value: T; } count<T...>(values: box<T>...) -> i32 { return 0; } main() -> i32 { return count(box<i32>{ 1 }, bag<bool>{ true }); }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "parameter_pack_nominal_variant_conflict.cp",
+        "variant option<T> { none; some(T); } variant choice<T> { none; some(T); } count<T...>(values: option<T>...) -> i32 { return 0; } main() -> i32 { return count(option<i32>::none, choice<bool>::none); }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
         "parameter_pack_fixed_prefix_conflict.cp",
         "bad<Head, Tail...>(head: Head, tail: Tail...) -> i32 { return 0; } main() -> i32 { return bad<bool>(1); }",
         invalid_type_argument
+    );
+    expect_diagnostic(
+        "explicit_parameter_pack_argument_conflict.cp",
+        "count<T...>(values: T...) -> i32 { return 0; } main() -> i32 { return count<i32>(true); }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "non_pack_type_argument_expansion.cp",
+        "count<T...>() -> i32 { return 0; } bad<T>() -> i32 { return count<T...>(); } main() -> i32 { return bad<i32>(); }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "non_forward_value_pack_forward.cp",
+        "bad<T...>(values: T...) -> i32 { template fo" "r (let value : values...) { return forward value; } return 0; } main() -> i32 { return bad(1); }",
+        invalid_operator
     );
     expect_diagnostic(
         "parameter_pack_empty_inferred_return.cp",
@@ -3265,6 +5108,11 @@ main() -> i32
         invalid_type_argument
     );
     expect_diagnostic(
+        "non_pack_concept_argument_expansion.cp",
+        "concept mark<T> { } struct item { } test<T...>() -> i32 requires item: mark<T...> { return 0; } main() -> i32 { return test<i32>(); }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
         "lambda_default_parameter.cp",
         "main() { let item = f(value: i32 = 1) -> i32 { return value; }; }",
         invalid_type_argument
@@ -3288,6 +5136,49 @@ main() -> i32
         "template_for_break_outer_loop.cp",
         "bad<T...>(values: T...) -> i32 { while(true) { template fo" "r (let value : values...) { break; } } return 0; } main() -> i32 { return bad(1); }",
         invalid_break
+    );
+    auto template_for_inner_loop_control = analyze_one(
+        "template_for_inner_runtime_loop_control.cp",
+        R"(ok<T...>(values: T...) -> i32
+{
+    let total = 0;
+    template fo)" "r" R"( (let value : values...) {
+        for(let item : [0]) {
+            if(item == 0) {
+                continue;
+            }
+            total = total + value;
+        }
+        for(let item : [0]) {
+            break;
+        }
+    }
+    return total;
+}
+
+main() -> i32
+{
+    return ok(1, 2);
+})"
+    );
+    test_parser::assert_true(
+        template_for_inner_loop_control.accepted(),
+        "template for should allow break and continue to target runtime loops inside the expansion"
+    );
+    expect_diagnostic(
+        "template_for_continue_outer_loop.cp",
+        "bad<T...>(values: T...) -> i32 { while(true) { template fo" "r (let value : values...) { continue; } } return 0; } main() -> i32 { return bad(1); }",
+        invalid_continue
+    );
+    expect_diagnostic(
+        "template_for_break_labeled_outer_loop.cp",
+        "bad<T...>(values: T...) -> i32 { for: outer(let item : [1]) { template fo" "r (let value : values...) { break outer; } } return 0; } main() -> i32 { return bad(1); }",
+        invalid_break
+    );
+    expect_diagnostic(
+        "template_for_continue_labeled_outer_loop.cp",
+        "bad<T...>(values: T...) -> i32 { for: outer(let item : [1]) { template fo" "r (let value : values...) { continue outer; } } return 0; } main() -> i32 { return bad(1); }",
+        invalid_continue
     );
 }
 
@@ -3694,6 +5585,185 @@ main() -> i32
         conditional_requires_result.accepted(),
         "conditional concept impl requires should handle parent, bound, and equality constraints");
 
+    auto default_items_result = analyze_one(
+        "concept_default_items.cp",
+        R"(concept parser {
+    type output = i32;
+
+    parse(self const&) -> output;
+
+    has_error(self const&) -> bool
+    {
+        return false;
+    }
+}
+
+struct int_parser {
+    value: i32;
+}
+
+impl parser for int_parser {
+    parse(self const&) -> output
+    {
+        return value;
+    }
+}
+
+main() -> i32
+{
+    type parsed = int_parser::output;
+    let parser = int_parser{ 42 };
+    if(parser.has_error()) {
+        return 0;
+    }
+    let value: parsed = parser.parse();
+    return value;
+})"
+    );
+    test_parser::assert_true(default_items_result.accepted(), "concept default associated types and functions should fill omitted impl items");
+
+    auto generic_default_items_result = analyze_one(
+        "generic_concept_default_items.cp",
+        R"(concept reader<T> {
+    type item = T;
+
+    read(self const&) -> item;
+
+    echo(self const&, value: item) -> item
+    {
+        return value;
+    }
+}
+
+struct int_reader {
+    value: i32;
+}
+
+impl reader<i32> for int_reader {
+    read(self const&) -> item
+    {
+        return value;
+    }
+}
+
+main() -> i32
+{
+    type output = int_reader::item;
+    let reader = int_reader{ 20 };
+    let value: output = reader.read();
+    return reader.echo(value) + 22;
+})"
+    );
+    test_parser::assert_true(
+        generic_default_items_result.accepted(),
+        "generic concept defaults should substitute concept arguments into associated types and default functions");
+
+    auto default_extension_targets_result = analyze_one(
+        "concept_default_extension_targets.cp",
+        R"(concept measured {
+    measure(self const&) -> i32
+    {
+        return 1;
+    }
+}
+
+variant token {
+    ready;
+}
+
+impl measured for i32 {
+}
+
+impl measured for [i32; 2] {
+}
+
+impl measured for token {
+}
+
+main() -> i32
+{
+    let values = [1, 2];
+    let value = token::ready;
+    return (10 as i32).measure() + values.measure() + value.measure() + 39;
+})"
+    );
+    test_parser::assert_true(
+        default_extension_targets_result.accepted(),
+        "concept default member functions should materialize for builtin, array, and variant impl targets");
+
+    auto struct_method_satisfies_result = analyze_one(
+        "struct_method_satisfies_concept_impl.cp",
+        R"(concept readable {
+    read(self const&) -> i32;
+}
+
+struct file {
+    value: i32;
+}
+
+impl file {
+    read(self const&) -> i32
+    {
+        return value;
+    }
+}
+
+impl readable for file {
+}
+
+accept<T: readable>(value: T) -> i32
+{
+    return value.read();
+}
+
+main() -> i32
+{
+    return accept(file{ 42 });
+})"
+    );
+    test_parser::assert_true(struct_method_satisfies_result.accepted(), "struct methods should satisfy matching concept requirements");
+
+    auto non_struct_target_result = analyze_one(
+        "concept_impl_non_struct_targets.cp",
+        R"(concept measurable {
+    measure(self const&) -> i32;
+}
+
+variant optional {
+    none;
+    some(i32);
+}
+
+impl measurable for optional {
+    measure(self const&) -> i32
+    {
+        return 1;
+    }
+}
+
+impl measurable for i32 {
+    measure(self const&) -> i32
+    {
+        return self;
+    }
+}
+
+impl measurable for [i32; 2] {
+    measure(self const&) -> i32
+    {
+        return 2;
+    }
+}
+
+main() -> i32
+{
+    let value = optional::some(1);
+    let values = [1, 2];
+    return value.measure() + (39 as i32).measure() + values.measure();
+})"
+    );
+    test_parser::assert_true(non_struct_target_result.accepted(), "variant, builtin, and array concept impl targets should accept receiver methods");
+
 	    using enum diagnostic_kind;
     expect_diagnostic (
         "unknown_concept.cp",
@@ -3713,6 +5783,33 @@ main() -> i32
     expect_diagnostic (
         "concept_signature_mismatch.cp",
         "concept c { call(self&) -> i32; } struct value { x: i32; } impl c for value { call(self&) -> bool { return true; } }",
+        type_mismatch
+    );
+    expect_diagnostic (
+        "concept_impl_omitted_return_mismatch.cp",
+        "concept c { call(self&) -> i32; } struct value { x: i32; } impl c for value { call(self&) { return x; } }",
+        type_mismatch
+    );
+    expect_diagnostic(
+        "variant_concept_impl_omitted_return_mismatch.cp",
+        R"(concept measurable {
+    score(self const&) -> i32;
+}
+
+variant token {
+    empty;
+    ready(i32);
+}
+
+impl measurable for token {
+    score(self const&)
+    {
+        return match self {
+            .ready(value) => value,
+            .empty => 0,
+        };
+    }
+})",
         type_mismatch
     );
     expect_diagnostic (
@@ -3765,11 +5862,51 @@ main() -> i32
             "main() { let out = match 1 { _ => 0, }; }",
             type_mismatch
         );
-        expect_diagnostic (
-            "match_arm_type_mismatch.cp",
-            "variant option { none; some(i32); } main() { let value = option::none; let out = match value { .none => 0, .some(item) => true, }; }",
-            type_mismatch
-        );
+    expect_diagnostic (
+        "match_arm_type_mismatch.cp",
+        "variant option { none; some(i32); } main() { let value = option::none; let out = match value { .none => 0, .some(item) => true, }; }",
+        type_mismatch
+    );
+    expect_diagnostic(
+        "concept_impl_opaque_target.cp",
+        "type handle = opaque i32; concept marker { } impl marker for handle { }",
+        unknown_type
+    );
+    expect_diagnostic(
+        "concept_impl_builtin_associated_function.cp",
+        "concept maker { make() -> i32; } impl maker for i32 { make() -> i32 { return 1; } }",
+        invalid_self_parameter
+    );
+    expect_diagnostic(
+        "concept_impl_array_associated_function.cp",
+        "concept maker { make() -> i32; } impl maker for [i32; 2] { make() -> i32 { return 1; } }",
+        invalid_self_parameter
+    );
+    expect_diagnostic(
+        "concept_default_builtin_associated_function.cp",
+        "concept maker { make() -> i32 { return 1; } } impl maker for i32 { }",
+        invalid_self_parameter
+    );
+    expect_diagnostic(
+        "concept_default_array_associated_function.cp",
+        "concept maker { make() -> i32 { return 1; } } impl maker for [i32; 2] { }",
+        invalid_self_parameter
+    );
+    expect_diagnostic(
+        "concept_default_function_conflicts_with_default_assoc_type.cp",
+        "concept measured { type score = i32; score(self const&) -> i32 { return 1; } } struct item { } impl measured for item { }",
+        duplicate_symbol
+    );
+    expect_diagnostic(
+        "variant_associated_function_conflicts_with_concept_default.cp",
+        "concept maker { make() -> i32 { return 1; } } variant token { ready; } impl token { make() -> i32 { return 2; } } impl maker for token { }",
+        duplicate_symbol
+    );
+    expect_diagnostic(
+        "variant_method_does_not_satisfy_concept_impl.cp",
+        "concept readable { read(self const&) -> i32; } variant file { open; } impl file { read(self const&) -> i32 { return 1; } } impl readable for file { }",
+        missing_concept_item
+    );
 	    expect_diagnostic (
 	        "requires_missing_impl.cp",
 	        "concept marker { } struct value { } use() -> i32 requires value: marker { return 1; }",
@@ -4009,6 +6146,19 @@ main() -> i32
 
     expect_diagnostic("bad_delete_value.cp", "main() { let value = 1; delete value; }", diagnostic_kind::type_mismatch);
     expect_diagnostic("bad_delete_const_pointer.cp", "main() { let value = 1; let pointer: i32 const* = &value; delete pointer; }", diagnostic_kind::type_mismatch);
+    expect_diagnostic("free_explicit_type.cp", "main() { let pointer = alloc<i32>(1); free<i32>(pointer); }", diagnostic_kind::invalid_type_argument);
+    expect_diagnostic("construct_at_explicit_type.cp", "main() { let pointer = alloc<i32>(1); construct_at<i32>(pointer, 1); }", diagnostic_kind::invalid_type_argument);
+    expect_diagnostic("destroy_at_explicit_type.cp", "main() { let pointer = alloc<i32>(1); destroy_at<i32>(pointer); }", diagnostic_kind::invalid_type_argument);
+    expect_diagnostic("bad_free_value.cp", "main() { free(1); }", diagnostic_kind::type_mismatch);
+    expect_diagnostic("bad_construct_pointer.cp", "main() { construct_at(1, 2); }", diagnostic_kind::type_mismatch);
+    expect_diagnostic("bad_destroy_value.cp", "main() { destroy_at(1); }", diagnostic_kind::type_mismatch);
+    expect_diagnostic("storage_data_argument.cp", "main() { let item = storage i32{}; let pointer = item.data(0); }", diagnostic_kind::argument_count_mismatch);
+    expect_diagnostic("storage_data_type_argument.cp", "main() { let item = storage i32{}; let pointer = item.data<i32>(); }", diagnostic_kind::invalid_type_argument);
+    expect_diagnostic("storage_slot_missing_index.cp", "main() { let item = storage [i32; 2]{}; let pointer = item.slot(); }", diagnostic_kind::argument_count_mismatch);
+    expect_diagnostic("storage_slot_non_integer.cp", "main() { let item = storage [i32; 2]{}; let pointer = item.slot(true); }", diagnostic_kind::type_mismatch);
+    expect_diagnostic("storage_slot_negative_index.cp", "main() { let item = storage [i32; 2]{}; let pointer = item.slot(-1); }", diagnostic_kind::invalid_operator);
+    expect_diagnostic("storage_slot_out_of_bounds.cp", "main() { let item = storage [i32; 2]{}; let pointer = item.slot(2); }", diagnostic_kind::invalid_operator);
+    expect_diagnostic("storage_slot_extra_arguments.cp", "main() { let item = storage [i32; 2]{}; let pointer = item.slot(0, 1); }", diagnostic_kind::argument_count_mismatch);
 }
 
 auto check_extern_c_semantics() -> void
@@ -4049,6 +6199,75 @@ export extern "C" answer() -> i32
         checked.signatures[abs_signature.value].returns == semantic_type_ids::i32,
         "extern C declaration should preserve its return type");
 
+    auto boundary_parsed = parse_source(
+        sources,
+        "extern_c_boundary_types.cp",
+        R"(struct token {
+    value: i32;
+}
+
+type handle = opaque usize;
+
+extern "C" tick();
+extern "C" truth(value: bool) -> bool;
+extern "C" choose(callback: f*(i32) -> i32) -> f*(i32) -> i32;
+extern "C" map_text(callback: f*(str) -> str) -> f*(str) -> str;
+extern "C" observe(callback: f*(i32) -> i32, token: token*, handle: handle*) -> void;
+extern "C" add_default(value: i32, delta: i32 = 1) -> i32;
+
+main() -> i32
+{
+    return add_default(41);
+})");
+    auto boundary_checked = analyze_single(sources, boundary_parsed);
+    test_parser::assert_true(boundary_checked.accepted(), "extern C boundary type source should pass semantic analysis");
+
+    auto const& boundary_unit = *boundary_parsed.root;
+    auto tick_signature = boundary_checked.signature_of(boundary_unit.functions[0]);
+    auto choose_signature = boundary_checked.signature_of(boundary_unit.functions[2]);
+    auto map_text_signature = boundary_checked.signature_of(boundary_unit.functions[3]);
+    auto observe_signature = boundary_checked.signature_of(boundary_unit.functions[4]);
+    test_parser::assert_true(tick_signature.valid(), "extern C declaration without return annotation should have a signature");
+    test_parser::assert_true(
+        boundary_checked.signatures[tick_signature.value].returns == semantic_type_ids::unit,
+        "extern C declaration without a body should default to unit return");
+    test_parser::assert_true(choose_signature.valid(), "extern C function pointer return should have a signature");
+    auto const* returned_callback = std::get_if<pointer_type>(
+        &boundary_checked.types.get(boundary_checked.signatures[choose_signature.value].returns)
+    );
+    test_parser::assert_true(
+        returned_callback != nullptr
+            and std::holds_alternative<function_type>(boundary_checked.types.get(returned_callback->pointee)),
+        "extern C f*(...) return should lower to a pointer to function");
+    test_parser::assert_true(map_text_signature.valid(), "extern C shallow function pointer ABI should have a signature");
+    auto const* text_callback = std::get_if<pointer_type>(
+        &boundary_checked.types.get(boundary_checked.signatures[map_text_signature.value].returns)
+    );
+    test_parser::assert_true(
+        text_callback != nullptr,
+        "extern C f*(str) return should lower to a pointer");
+    auto const* text_function = (
+        text_callback == nullptr
+            ? nullptr
+            : std::get_if<function_type>(&boundary_checked.types.get(text_callback->pointee))
+    );
+    test_parser::assert_true(
+        text_function != nullptr
+            and text_function->parameters.size() == 1uz
+            and text_function->parameters.front() == semantic_type_ids::str
+            and text_function->returns == semantic_type_ids::str,
+        "extern C function pointer ABI should not recursively reject the pointee signature");
+    test_parser::assert_true(observe_signature.valid(), "extern C pointer boundary should have a signature");
+    auto const& observe_parameters = boundary_checked.signatures[observe_signature.value].parameters;
+    auto const* callback_pointer = std::get_if<pointer_type>(&boundary_checked.types.get(observe_parameters.front()));
+    test_parser::assert_true(
+        callback_pointer != nullptr
+            and std::holds_alternative<function_type>(boundary_checked.types.get(callback_pointer->pointee)),
+        "extern C f*(...) parameter should lower to a pointer to function");
+    test_parser::assert_true(
+        boundary_checked.signatures[observe_signature.value].returns == semantic_type_ids::unit,
+        "extern C void return should lower to unit");
+
     expect_diagnostic(
         "extern_c_bad_abi.cp",
         "extern \"Rust\" item(value: i32) -> i32;",
@@ -4067,6 +6286,46 @@ export extern "C" answer() -> i32
     expect_diagnostic(
         "extern_c_generic.cp",
         "extern \"C\" id<T>(value: T) -> T;",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "extern_c_requires.cp",
+        "concept marker { } impl marker for i32 { } extern \"C\" use(value: i32) -> i32 requires i32: marker;",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "extern_c_never_return.cp",
+        "extern \"C\" abort_now() -> !;",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "extern_c_function_value.cp",
+        "extern \"C\" call(callback: f(i32) -> i32) -> i32;",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "extern_c_reference_parameter.cp",
+        "extern \"C\" read(value: i32&) -> i32;",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "extern_c_struct_value.cp",
+        "struct token { value: i32; } extern \"C\" read(value: token) -> i32;",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "extern_c_variant_value.cp",
+        "variant item { number(i32); } extern \"C\" read(value: item) -> i32;",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "extern_c_array_value.cp",
+        "extern \"C\" read(value: [i32; 4]) -> i32;",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "extern_c_tuple_value.cp",
+        "extern \"C\" read(value: (i32, i32)) -> i32;",
         invalid_type_argument
     );
 }
@@ -4136,6 +6395,11 @@ main() -> i32
         diagnostic_kind::invalid_type_argument
     );
     expect_diagnostic(
+        "enum_type_arguments.cp",
+        "enum marker : u8 { first = 1; } main() { let value: marker<i32> = marker::first; }",
+        diagnostic_kind::invalid_type_argument
+    );
+    expect_diagnostic(
         "enum_bitwise.cp",
         "enum open_flag : u8 { read = 1; write = 2; } main() { let bits = open_flag::read | open_flag::write; }",
         diagnostic_kind::invalid_operator
@@ -4144,6 +6408,11 @@ main() -> i32
         "opaque_implicit_raw.cp",
         "type handle = opaque u8*; main() { let h: handle = (nullptr as u8*) as handle; let raw: u8* = h; }",
         diagnostic_kind::type_mismatch
+    );
+    expect_diagnostic(
+        "opaque_type_arguments.cp",
+        "type handle = opaque i32; main() { let value: handle<i32> = 1 as handle; }",
+        diagnostic_kind::invalid_type_argument
     );
     expect_diagnostic(
         "opaque_pointer_index.cp",
@@ -4167,9 +6436,31 @@ R"(main() -> i32
     );
     test_parser::assert_true(checked.accepted(), "string index source should pass semantic analysis");
 
+    auto fields = analyze_one(
+        "string_fields_and_initializers.cp",
+R"(main() -> i32
+{
+    let text: str = "abc";
+    let view = str{ .ptr = text.ptr, .len = text.len };
+    let short = str{ text.ptr, 1 as usize };
+    let empty = str{};
+    if(view[0] == short[0] and empty.len == 0 as usize) {
+        return view.len as i32;
+    }
+    return 0;
+})"
+    );
+    test_parser::assert_true(fields.accepted(), "str fields and struct-like initializers should pass semantic analysis");
+
     using enum diagnostic_kind;
     expect_diagnostic("string_dynamic_index_type.cp", "main() { let text: str = \"cp\"; let value = text[true]; }", invalid_operator);
     expect_diagnostic("string_index_assign.cp", "main() { let text: str = \"cp\"; text[0] = 'x'; }", invalid_assignment_target);
+    expect_diagnostic("string_size_without_std.cp", "main() { let text: str = \"cp\"; let value = text.size(); }", unknown_member);
+    expect_diagnostic("string_unknown_field.cp", "main() { let text: str = \"cp\"; let value = str{ .data = text.ptr, .len = text.len }; }", unknown_field);
+    expect_diagnostic("string_duplicate_field.cp", "main() { let text: str = \"cp\"; let value = str{ .ptr = text.ptr, .ptr = text.ptr }; }", duplicate_field_initializer);
+    expect_diagnostic("string_too_many_initializers.cp", "main() { let text: str = \"cp\"; let value = str{ text.ptr, text.len, text.len }; }", aggregate_length_mismatch);
+    expect_diagnostic("string_bad_ptr_initializer.cp", "main() { let value = str{ .ptr = 1, .len = 1 as usize }; }", type_mismatch);
+    expect_diagnostic("string_bad_len_initializer.cp", "main() { let text: str = \"cp\"; let value = str{ .ptr = text.ptr, .len = true }; }", type_mismatch);
 }
 
 auto check_decltype_ref_and_destructuring_semantics() -> void
@@ -4533,6 +6824,56 @@ main()
     test_parser::assert_true(found->second.size() == 3uz, "defaulted comparison should record each struct field");
     test_parser::assert_true(found->second[2].enum_builtin, "enum fields should use builtin enum comparison");
 
+    auto strong_field = analyze_with_std_io(
+        "default_compare_strong_field.cp",
+        R"(import std;
+
+struct payload {
+    value: i32;
+}
+
+impl payload {
+    operator <=>(self const&, rhs: this const&) -> strong_ordering
+    {
+        if(value < rhs.value) {
+            return strong_ordering::less;
+        }
+        if(value > rhs.value) {
+            return strong_ordering::greater;
+        }
+        return strong_ordering::equivalent;
+    }
+}
+
+struct item {
+    payload: payload;
+}
+
+impl item {
+    operator <=>(self const&, rhs: this const&) -> weak_ordering = default;
+}
+
+main()
+{
+    let relation = item{ payload{ 1 } } <=> item{ payload{ 2 } };
+})"
+    );
+    test_parser::assert_true(strong_field.accepted(), "defaulted comparison should accept fields convertible through to_weak()");
+    auto strong_compare_symbol = symbol_id{};
+    for(auto index = 0uz; index < strong_field.symbols.size(); ++index) {
+        auto const& symbol = strong_field.symbols[index];
+        if(symbol.body_kind == semantic_function_body_kind::defaulted_compare) {
+            strong_compare_symbol = symbol_id{ static_cast<std::uint32_t>(index) };
+            break;
+        }
+    }
+    auto strong_fields = strong_field.default_compare_fields.find(strong_compare_symbol);
+    test_parser::assert_true(
+        strong_fields != strong_field.default_compare_fields.end()
+            and strong_fields->second.size() == 1uz
+            and strong_fields->second.front().to_weak_method.valid(),
+        "defaulted comparison should record to_weak() for non-weak field comparison results");
+
     auto bad_field = analyze_with_std_io(
         "bad_default_compare_field.cp",
         R"(import std;
@@ -4550,6 +6891,93 @@ impl item {
 })"
     );
     test_parser::assert_true(has_diagnostic(bad_field, diagnostic_kind::invalid_operator), "field without <=> should reject defaulted comparison");
+
+    auto deleted_field = analyze_with_std_io(
+        "deleted_default_compare_field.cp",
+        R"(import std;
+
+struct payload {
+    value: i32;
+}
+
+impl payload {
+    operator <=>(self const&, rhs: this const&) -> weak_ordering = delete;
+}
+
+struct item {
+    payload: payload;
+}
+
+impl item {
+    operator <=>(self const&, rhs: this const&) -> weak_ordering = default;
+})"
+    );
+    test_parser::assert_true(has_diagnostic(deleted_field, diagnostic_kind::invalid_operator), "deleted field <=> should reject defaulted comparison");
+
+    auto missing_to_weak = analyze_with_std_io(
+        "default_compare_missing_to_weak.cp",
+        R"(import std;
+
+variant custom_order {
+    equivalent;
+}
+
+struct payload {
+    value: i32;
+}
+
+impl payload {
+    operator <=>(self const&, rhs: this const&) -> custom_order
+    {
+        return custom_order::equivalent;
+    }
+}
+
+struct item {
+    payload: payload;
+}
+
+impl item {
+    operator <=>(self const&, rhs: this const&) -> weak_ordering = default;
+})"
+    );
+    test_parser::assert_true(has_diagnostic(missing_to_weak, diagnostic_kind::invalid_operator), "field comparison result without to_weak() should reject defaulted comparison");
+
+    auto bad_to_weak = analyze_with_std_io(
+        "default_compare_bad_to_weak.cp",
+        R"(import std;
+
+variant custom_order {
+    equivalent;
+}
+
+impl custom_order {
+    to_weak(self) -> i32
+    {
+        return 0;
+    }
+}
+
+struct payload {
+    value: i32;
+}
+
+impl payload {
+    operator <=>(self const&, rhs: this const&) -> custom_order
+    {
+        return custom_order::equivalent;
+    }
+}
+
+struct item {
+    payload: payload;
+}
+
+impl item {
+    operator <=>(self const&, rhs: this const&) -> weak_ordering = default;
+})"
+    );
+    test_parser::assert_true(has_diagnostic(bad_to_weak, diagnostic_kind::invalid_operator), "field comparison to_weak() must return weak_ordering");
 
     auto bad_rhs = analyze_with_std_io(
         "bad_default_compare_rhs.cp",
@@ -4674,6 +7102,60 @@ auto check_lambda_semantics() -> void
     test_parser::assert_true(
         function_return_type(sources, parsed, checked, "main") == semantic_type_ids::i32,
         "lambda main should return i32");
+
+    auto generic_pack_checked = analyze_with_std_io(
+        "generic_lambda_pack_template_for_call_result.cp",
+        R"(import std.meta;
+
+main() -> i32
+{
+    let callback = f<T...>(values: T...) -> i32 {
+        let total = 0;
+        template for(let value : values...) {
+            total = total + 1;
+        }
+        return total;
+    };
+    let pick = f<T>(value: T) -> i32 {
+        template if(T == i32) {
+            return value;
+        } else {
+            return 0;
+        }
+    };
+    type result = call_result<decltype(callback), i32, bool>;
+    let value: result = callback(1, true);
+    return value + pick(40);
+})"
+    );
+    test_parser::assert_true(
+        generic_pack_checked.accepted(),
+        "generic lambda should instantiate parameter packs and feed call_result");
+
+    auto forward_pack_checked = analyze_one(
+        "generic_lambda_forward_pack_template_for.cp",
+        R"(read(value: i32) -> i32
+{
+    return value;
+}
+
+main() -> i32
+{
+    let sum = f<T...>(values: T forward&...) -> i32 {
+        let total = 0;
+        template for(let value : values...) {
+            total = total + read(forward value);
+        }
+        return total;
+    };
+    let first = 1;
+    const second = 2;
+    return sum(first, second, 3);
+})"
+    );
+    test_parser::assert_true(
+        forward_pack_checked.accepted(),
+        "generic lambda value-pack expansion should preserve forward parameter bindings");
 }
 
 auto check_lambda_capture_modes() -> void
@@ -5277,6 +7759,36 @@ main()
 })",
         assign_to_const
     );
+    expect_diagnostic(
+        "opaque_impl_operator_not_registered.cp",
+        R"(type handle = opaque i32;
+
+impl handle {
+    operator +(self const&, rhs: this const&) -> this = delete;
+}
+
+main()
+{
+    let a = 1 as handle;
+    let b = 2 as handle;
+    let c = a + b;
+})",
+        invalid_operator
+    );
+    expect_diagnostic(
+        "array_impl_operator_not_registered.cp",
+        R"(impl [i32; 2] {
+    operator +(self const&, rhs: this const&) -> this = delete;
+}
+
+main()
+{
+    let left = [1, 2];
+    let right = [3, 4];
+    let value = left + right;
+})",
+        invalid_operator
+    );
 }
 
 auto check_negative_cases() -> void
@@ -5329,6 +7841,13 @@ auto check_negative_cases() -> void
     expect_diagnostic("bad_return.cp", "main() -> i32 { return true; }", return_type_mismatch);
     expect_diagnostic("missing_return.cp", "main() -> i32 { let value = 1; }", missing_return);
     expect_diagnostic("bad_void_value.cp", "main() { let value: void = {}; }", unknown_type);
+    expect_diagnostic("void_qualified_return.cp", "main() -> void const { }", invalid_type_argument);
+    expect_diagnostic("void_type_arguments.cp", "main() -> void<i32> { }", invalid_type_argument);
+    expect_diagnostic("void_pointer_return.cp", "main() -> void* { return nullptr; }", invalid_type_argument);
+    expect_diagnostic("array_missing_length_argument.cp", "main() { let value: array<i32> = [1]; }", invalid_type_argument);
+    expect_diagnostic("array_nontype_element_argument.cp", "main() { let value: array<1, 2> = [1, 2]; }", invalid_type_argument);
+    expect_diagnostic("tuple_nontype_argument.cp", "main() { let value: tuple<1> = (1,); }", invalid_type_argument);
+    expect_diagnostic("tuple_mixed_argument_kind.cp", "main() { let value: tuple<i32, 1> = (1, 2); }", invalid_type_argument);
 	    expect_diagnostic (
 	        "mixed_inferred_return.cp",
 	        "f() { if(true) { return 1; } return true; }",
@@ -5367,6 +7886,41 @@ auto check_negative_cases() -> void
     expect_diagnostic("bad_destructure_initializer.cp", "main() { let (a, b) = 1; }", type_mismatch);
     expect_diagnostic("lambda_parameter_infer.cp", "main() { let f = f(x) => x; }", type_mismatch);
     expect_diagnostic("builtin_bad_arg_count.cp", "main() { let value = builtin(); }", argument_count_mismatch);
+    expect_diagnostic(
+        "builtin_bad_inferred_return_arg_count.cp",
+        "bad() { return builtin(); } main() { bad(); }",
+        argument_count_mismatch
+    );
+    expect_diagnostic(
+        "alloc_missing_type_inferred_return.cp",
+        "bad() { return alloc(1); } main() { bad(); }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "alloc_nontype_inferred_return.cp",
+        "bad() { return alloc<1>(1); } main() { bad(); }",
+        invalid_type_argument
+    );
+    expect_diagnostic(
+        "construct_at_bad_inferred_return_value.cp",
+        "bad() { let pointer = alloc<i32>(1); return construct_at(pointer, true); } main() { bad(); }",
+        type_mismatch
+    );
+    expect_diagnostic(
+        "destroy_at_bad_inferred_return_pointer.cp",
+        "bad() { return destroy_at(1); } main() { bad(); }",
+        type_mismatch
+    );
+    expect_diagnostic(
+        "storage_data_bad_inferred_return_arg_count.cp",
+        "bad() { let item = storage i32{}; return item.data(0); } main() { bad(); }",
+        argument_count_mismatch
+    );
+    expect_diagnostic(
+        "unknown_associated_inferred_return.cp",
+        "struct maker { } bad() { return maker::missing(); } main() { bad(); }",
+        unknown_member
+    );
     expect_diagnostic (
         "operator_bad_assign_self.cp",
         "struct value { item: i32; } impl value { operator =(self const&, rhs: this const&) { } }",

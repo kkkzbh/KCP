@@ -1154,6 +1154,16 @@ auto parser::parse_block_expression() -> std::optional<expr_id>
             continue;
         }
 
+        if(check_contextual("template")) {
+            auto statement = parse_statement();
+            if(not statement) {
+                synchronize_statement();
+                continue;
+            }
+            statements.emplace_back(*statement);
+            continue;
+        }
+
         if(starts_expression(peek().kind)) {
             auto expression = parse_expression();
             if(not expression) {

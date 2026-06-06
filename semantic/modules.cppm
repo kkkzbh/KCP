@@ -1677,6 +1677,9 @@ auto semantic_analyzer::collect_concept_impl_declarations(std::size_t unit_index
         concept_impl.associated_types.emplace(std::move(name), type);
     }
 
+    auto const& concept_value = result.concepts[result.symbols[concept_symbol->value].concept_index];
+    materialize_concept_default_associated_types(concept_impl, concept_value);
+
     for(auto function_id : impl.functions) {
         auto const& function = ast.node(function_id);
         auto impl_generic_parameter_names = generic_parameter_names(impl_generic_parameters);
@@ -1844,6 +1847,163 @@ auto semantic_analyzer::collect_concept_impl_function(std::size_t unit_index, as
     return symbol;
 }
 
+auto semantic_analyzer::concept_substitution_map(semantic_concept const& concept_value, std::span<semantic_type_id const> concept_arguments) -> std::map<std::string, semantic_type_id>
+{
+    auto const& ast = units[concept_value.unit_index].ast;
+    auto const& syntax = ast.node(concept_value.syntax);
+    auto substitutions = std::map<std::string, semantic_type_id>{};
+    auto count = std::min(syntax.generic_parameters.size(), concept_arguments.size());
+    for(auto index = 0uz; index < count; ++index) {
+        substitutions.emplace(std::string{ ast_source.identifier(syntax.generic_parameters[index].name) }, concept_arguments[index]);
+    }
+    return substitutions;
+}
+
+auto semantic_analyzer::materialize_concept_default_associated_types(semantic_concept_impl& impl, semantic_concept const& concept_value) -> void
+{
+    auto substitutions = concept_substitution_map(concept_value, impl.concept_arguments);
+    auto old_substitutions = active_type_substitutions;
+    active_type_substitutions = &substitutions;
+    for(auto const& [name, requirement] : concept_value.associated_types) {
+        if(impl.associated_types.contains(name) or not requirement.default_type) {
+            continue;
+        }
+        auto& aliases = associated_types[impl.target_type];
+        if(aliases.contains(name)) {
+            report(diagnostic_kind::duplicate_symbol, requirement.span, std::format("duplicate associated type '{}'", name));
+            continue;
+        }
+        auto const& ast = units[requirement.unit_index].ast;
+        auto type = requirement_type(requirement.unit_index, ast, *requirement.default_type, impl.target_type);
+        aliases.emplace(name, type);
+        impl.associated_types.emplace(name, type);
+    }
+    active_type_substitutions = old_substitutions;
+}
+
+auto semantic_analyzer::materialize_concept_default_function(semantic_concept_impl const& impl, semantic_concept const& concept_value, std::string const& name, semantic_concept_function_requirement const& requirement) -> std::optional<symbol_id>
+{
+    if(not requirement.default_function) {
+        return std::nullopt;
+    }
+
+    auto const& ast = units[requirement.unit_index].ast;
+    auto const& function = ast.node(*requirement.default_function);
+    validate_function_pack_shape(requirement.unit_index, *requirement.default_function);
+    validate_parameter_defaults(requirement.unit_index, *requirement.default_function);
+
+    auto struct_index = struct_index_of(impl.target_type);
+    auto variant_index = variant_index_of(impl.target_type);
+    auto target_builtin = as_builtin(read_type(impl.target_type));
+    auto target_array = std::holds_alternative<array_type>(result.types.get(read_type(impl.target_type)));
+    auto function_kind = semantic_function_kind::associated_function;
+    if(not function.parameters.empty() and ast_source.slice(function.parameters.front().name) == "self") {
+        function_kind = semantic_function_kind::member_function;
+    } else if(target_builtin or target_array) {
+        report(diagnostic_kind::invalid_self_parameter, function.full_span, "array and builtin concept default functions must use self receiver");
+        return std::nullopt;
+    }
+
+    auto duplicate = associated_types[impl.target_type].contains(name);
+    if(function_kind == semantic_function_kind::member_function) {
+        if(struct_index) {
+            duplicate = duplicate or result.structs[*struct_index].methods.contains(name);
+        } else if(variant_index) {
+            duplicate = duplicate or result.variants[*variant_index].methods.contains(name);
+        } else {
+            auto const& state = units[impl.unit_index];
+            duplicate = duplicate or module_extension_methods[state.module_key][impl.target_type].contains(name);
+        }
+    } else {
+        if(struct_index) {
+            duplicate = duplicate or result.structs[*struct_index].associated_functions.contains(name);
+        } else if(variant_index) {
+            duplicate = duplicate or result.variants[*variant_index].associated_functions.contains(name);
+        }
+    }
+    if(duplicate) {
+        report(diagnostic_kind::duplicate_symbol, function.name, std::format("duplicate default concept function '{}'", name));
+        return std::nullopt;
+    }
+
+    auto substitutions = concept_substitution_map(concept_value, impl.concept_arguments);
+    auto old_unit = active_unit_index;
+    auto old_self = active_self_type;
+    auto old_aliases = active_type_aliases;
+    auto old_substitutions = active_type_substitutions;
+    active_unit_index = requirement.unit_index;
+    active_self_type = impl.target_type;
+    active_type_aliases = &associated_types[impl.target_type];
+    active_type_substitutions = &substitutions;
+
+    auto parameter_types = std::vector<semantic_type_id>{};
+    parameter_types.reserve(function.parameters.size());
+    for(auto const& parameter : function.parameters) {
+        parameter_types.emplace_back(lower_parameter_type(ast, parameter, impl.target_type));
+    }
+    auto return_type = function.return_type ? lower_return_type(ast, *function.return_type) : semantic_type_ids::unit;
+
+    active_type_substitutions = old_substitutions;
+    active_type_aliases = old_aliases;
+    active_self_type = old_self;
+    active_unit_index = old_unit;
+
+    auto signature_id = add_signature(function_signature {
+        .parameters = parameter_types,
+        .returns = return_type,
+    });
+    auto function_type_id = intern_type(function_type {
+        .parameters = parameter_types,
+        .returns = return_type,
+    });
+    auto symbol = add_symbol(semantic_symbol {
+        .kind = symbol_kind::function,
+        .name = name,
+        .span = function.name,
+        .type = function_type_id,
+        .body_kind = semantic_body_kind(function),
+        .unit_index = requirement.unit_index,
+        .function = *requirement.default_function,
+        .struct_index = struct_index.value_or(std::numeric_limits<std::uint32_t>::max()),
+        .variant_index = variant_index.value_or(std::numeric_limits<std::uint32_t>::max()),
+        .owner_type = (target_builtin or target_array) ? impl.target_type : semantic_type_id{},
+        .function_kind = function_kind,
+    });
+
+    auto context_index = next_context_index++;
+    result.function_signatures.emplace(semantic_node_key{context_index, requirement.unit_index, *requirement.default_function}, signature_id);
+    result.function_symbols.emplace(semantic_node_key{context_index, requirement.unit_index, *requirement.default_function}, symbol);
+    record_function_parameter_defaults(context_index, requirement.unit_index, *requirement.default_function);
+
+    if(function_kind == semantic_function_kind::member_function) {
+        if(struct_index) {
+            result.structs[*struct_index].methods[name].emplace_back(symbol);
+        } else if(variant_index) {
+            result.variants[*variant_index].methods[name].emplace_back(symbol);
+        } else {
+            auto const& state = units[impl.unit_index];
+            module_extension_methods[state.module_key][impl.target_type][name].emplace_back(symbol);
+            if(state.named_module) {
+                module_extension_method_exports[state.module_name][impl.target_type][name].emplace_back(symbol);
+            }
+        }
+    } else if(struct_index) {
+        result.structs[*struct_index].associated_functions.emplace(name, symbol);
+    } else if(variant_index) {
+        result.variants[*variant_index].associated_functions.emplace(name, symbol);
+    }
+
+    auto key_arguments = std::vector<semantic_type_id>{ impl.target_type };
+    key_arguments.insert(key_arguments.end(), impl.concept_arguments.begin(), impl.concept_arguments.end());
+    auto key = semantic_function_instance_key{ requirement.unit_index, *requirement.default_function, std::move(key_arguments) };
+    auto instance_index = result.function_instances.size();
+    result.function_instances.emplace_back(key, context_index, symbol, signature_id, std::move(substitutions), std::map<std::string, std::vector<semantic_type_id>>{});
+    result.function_instance_indices.emplace(result.function_instances.back().key, instance_index);
+    result.function_instance_by_symbol.emplace(symbol, instance_index);
+    concept_default_function_instance_indices.emplace_back(instance_index);
+    return symbol;
+}
+
 auto semantic_analyzer::validate_concept_impl(semantic_concept_impl const& impl, source_span span) -> void
 {
     auto const& concept_value = result.concepts[result.symbols[impl.concept_symbol.value].concept_index];
@@ -1920,7 +2080,9 @@ auto semantic_analyzer::validate_concept_impl(semantic_concept_impl const& impl,
         }
 
         if(actual_symbols.empty()) {
-            if(not requirement.default_function) {
+            if(requirement.default_function) {
+                materialize_concept_default_function(impl, concept_value, name, requirement);
+            } else {
                 report(
                     diagnostic_kind::missing_concept_item,
                     requirement.span,

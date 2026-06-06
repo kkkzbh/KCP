@@ -252,6 +252,9 @@ private:
     auto check_default_compare_operators() -> void;
     auto collect_concept_impl_declarations(std::size_t unit_index, ast_arena const& ast, concept_impl_id id) -> void;
     auto collect_concept_impl_function(std::size_t unit_index, ast_arena const& ast, concept_impl_syntax const& impl, semantic_type_id target_type, function_id id) -> std::optional<symbol_id>;
+    auto concept_substitution_map(semantic_concept const& concept_value, std::span<semantic_type_id const> concept_arguments) -> std::map<std::string, semantic_type_id>;
+    auto materialize_concept_default_associated_types(semantic_concept_impl& impl, semantic_concept const& concept_value) -> void;
+    auto materialize_concept_default_function(semantic_concept_impl const& impl, semantic_concept const& concept_value, std::string const& name, semantic_concept_function_requirement const& requirement) -> std::optional<symbol_id>;
     auto validate_concept_impl(semantic_concept_impl const& impl, source_span span) -> void;
     auto validate_parent_concepts(semantic_concept_impl const& impl, semantic_concept const& concept_value, source_span span)
         -> void;
@@ -316,6 +319,7 @@ private:
 
     auto lower_type(ast_arena const& ast, type_id id) -> semantic_type_id;
     auto lower_return_type(ast_arena const& ast, type_id id) -> semantic_type_id;
+    auto apply_type_suffixes(semantic_type_id lowered, type_syntax const& syntax) -> semantic_type_id;
     auto lower_meta_type_query(ast_arena const& ast, type_syntax const& syntax, std::string_view name) -> std::optional<semantic_type_id>;
     auto append_type_pack_expansion_argument(ast_arena const& ast, type_argument_type_syntax const& argument, source_span span, std::vector<semantic_type_id>& arguments) -> bool;
     auto append_lowered_type_argument(ast_arena const& ast, type_argument_syntax const& argument, source_span span, std::vector<semantic_type_id>& arguments) -> bool;
@@ -401,6 +405,9 @@ private:
     auto substitute_signature_for_instance(std::size_t unit_index, function_id id, function_signature const& signature, std::vector<semantic_type_id> const& type_arguments, std::vector<semantic_forward_binding_kind> const& forward_bindings, source_span span) -> function_signature;
     auto substitute_type_for_instance(semantic_type_id type, std::optional<std::size_t> pack_index, std::vector<semantic_type_id> const& type_arguments, std::optional<semantic_type_id> pack_element, source_span span) -> semantic_type_id;
     auto infer_type_argument_with_pack(semantic_type_id pattern, semantic_type_id argument, std::optional<std::size_t> pack_index, std::map<std::uint32_t, semantic_type_id>& inferred, std::optional<semantic_type_id>& pack_element) -> bool;
+    auto source_parameter_is_forward_reference(ast_arena const& ast, parameter_syntax const& parameter) -> bool;
+    auto function_has_forward_parameter(std::size_t unit_index, function_id id) -> bool;
+    auto forward_bindings_for_call(std::size_t unit_index, function_id id, function_signature const& signature, std::vector<expression_info> const& arguments) -> std::vector<semantic_forward_binding_kind>;
     auto callable_type(semantic_type_id type) const -> function_type const*;
     auto pointer_value_pointee(semantic_type_id type) const -> std::optional<semantic_type_id>;
     auto aggregate_context_for(std::optional<semantic_type_id> expected) -> std::optional<aggregate_context>;
@@ -416,6 +423,8 @@ private:
     auto ensure_function_return_inferred(std::size_t unit_index, function_id id) -> void;
     auto infer_function_body_return(std::size_t unit_index, function_id id) -> semantic_type_id;
     auto infer_statement_returns(ast_arena const& ast, stmt_id id, std::vector<semantic_type_id>& observed) -> void;
+    auto infer_statement_can_complete_normally(ast_arena const& ast, stmt_id id) -> bool;
+    auto infer_expression_can_complete_normally(ast_arena const& ast, expr_id id) -> bool;
     auto infer_template_if_condition(ast_arena const& ast, template_if_statement_syntax const& statement, std::uint32_t condition_id)
         -> template_if_condition_value;
     auto infer_template_if_expression_value(ast_arena const& ast, expr_id id) -> std::optional<semantic_literal_value>;
@@ -427,6 +436,8 @@ private:
     auto infer_lambda_return_with_base_scopes(std::size_t unit_index, function_id id, std::vector<std::map<std::string, return_inference_binding>> base_scopes, std::vector<std::map<std::string, semantic_type_id>> base_type_scopes) -> void;
     auto infer_name_expression(name_expr_syntax const& node) -> expression_info;
     auto infer_call_expression(ast_arena const& ast, call_expr_syntax const& node) -> expression_info;
+    auto infer_generic_call_expression(ast_arena const& ast, call_expr_syntax const& node, name_expr_syntax const& callee) -> std::optional<expression_info>;
+    auto infer_generic_symbol_call_expression(ast_arena const& ast, call_expr_syntax const& node, symbol_id symbol, std::optional<semantic_type_id> receiver_type, std::vector<expression_info> arguments, bool receiver_const) -> std::optional<expression_info>;
     auto infer_index_expression(ast_arena const& ast, index_expr_syntax const& node) -> expression_info;
     auto infer_array_literal(ast_arena const& ast, std::vector<expr_id> const& elements, std::optional<semantic_type_id> expected) -> expression_info;
     auto infer_tuple_literal(ast_arena const& ast, std::vector<expr_id> const& elements, std::optional<semantic_type_id> expected) -> expression_info;
@@ -560,6 +571,7 @@ private:
     std::vector<std::size_t> generic_concept_impl_indices{}; ///< 目标类型模式含泛型参数的 concept impl。
     std::map<std::size_t, std::vector<semantic_generic_parameter>> concept_impl_generic_parameters{}; ///< concept impl 目标类型模式引入的泛型参数。
     std::map<std::size_t, concept_requires_syntax> concept_impl_requires{}; ///< 条件 concept impl 的 requires 子句。
+    std::vector<std::size_t> concept_default_function_instance_indices{}; ///< concept 默认函数按目标类型实例化后的待检查函数实例。
     std::map<return_inference_key, std::vector<std::string>> implicit_function_generic_parameters{}; ///< impl 目标类型模式和省略参数类型引入的函数泛型参数。
     std::map<return_inference_key, std::vector<generic_parameter_syntax::kind>> implicit_function_generic_parameter_kinds{};
     std::map<return_inference_key, semantic_type_id> function_impl_target_patterns{}; ///< impl 函数所属目标类型模式，用于从 receiver 推导隐式泛型实参。
@@ -590,6 +602,8 @@ private:
     std::set<symbol_id> warned_independent_captures{}; ///< 已发出独立逃逸 copy 警告的捕获源符号。
     std::map<return_inference_key, return_inference_state> return_states{}; ///< 函数返回类型推断状态表。
     std::vector<std::map<std::string, return_inference_binding>> return_scopes{}; ///< 返回类型推断阶段的词法绑定栈。
+    std::vector<semantic_type_id>* active_return_observations{}; ///< 当前返回类型推断正在收集的 return 类型集合。
+    return_state* active_return_state{}; ///< 当前函数体检查中的 return 状态，供块表达式中的 return 回写。
     std::size_t return_unit{}; ///< 当前返回类型推断所在的翻译单元下标。
     bool active_builtin_operator_only{}; ///< 当前表达式树是否只允许内建 operator 解析。
 };

@@ -33,6 +33,9 @@ auto semantic_analyzer::check_bodies() -> void
             }
         }
     }
+    for(auto instance_index : concept_default_function_instance_indices) {
+        check_function_instance(instance_index);
+    }
 }
 
 auto semantic_analyzer::check_struct_field_defaults() -> void
@@ -149,6 +152,7 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
     auto old_forward_parameters = std::move(active_forward_parameters);
     auto old_loops = loops;
     auto old_template_for_depth = active_template_for_depth;
+    auto old_return_state = active_return_state;
 
     active_context_index = context_index;
     active_function_context_index = context_index;
@@ -175,6 +179,7 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
         active_forward_parameters = std::move(old_forward_parameters);
         loops = std::move(old_loops);
         active_template_for_depth = old_template_for_depth;
+        active_return_state = old_return_state;
         active_ast = old_ast;
         active_unit = old_unit;
         active_unit_index = old_unit_index;
@@ -220,6 +225,7 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
     if(not is_error(signature.returns)) {
         returns.declared_return = signature.returns;
     }
+    active_return_state = &returns;
 
     auto implicit_destructor_self = (
         function_symbol.valid()
@@ -248,11 +254,13 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
         auto name = std::string{ ast_source.slice(parameter.name) };
         if(parameter.is_pack) {
             auto bindings = std::vector<symbol_id>{};
+            auto const source_is_forward = source_parameter_is_forward_reference(*active_ast, parameter);
             auto remaining_syntax_parameters = function.parameters.size() - index - 1uz;
             auto pack_end = signature.parameters.size() >= remaining_syntax_parameters
                 ? signature.parameters.size() - remaining_syntax_parameters
                 : signature_parameter_index;
             while(signature_parameter_index < pack_end) {
+                auto concrete_parameter_index = signature_parameter_index;
                 auto symbol = (
                     bind_symbol (semantic_symbol {
                         .kind = symbol_kind::parameter,
@@ -266,6 +274,13 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
                 );
                 if(symbol.valid()) {
                     bindings.emplace_back(symbol);
+                    if(
+                        source_is_forward
+                        and instance != nullptr
+                        and concrete_parameter_index < instance->key.forward_bindings.size()
+                    ) {
+                        active_forward_parameters.emplace(symbol, instance->key.forward_bindings[concrete_parameter_index]);
+                    }
                 }
             }
             active_value_packs[name] = bindings;
@@ -315,7 +330,7 @@ auto semantic_analyzer::check_function_body(std::size_t unit_index, function_id 
     }
 
     check_statement(function.body, returns);
-    if(returns.inferred_return and not returns.observed_return) {
+    if(returns.inferred_return and not returns.observed_return and is_inferred(signature.returns)) {
         returns.declared_return = semantic_type_ids::unit;
         update_inferred_function_return(active_function_context_index, active_unit_index, active_function, semantic_type_ids::unit);
     }
@@ -890,8 +905,10 @@ auto semantic_analyzer::statement_can_complete_normally(stmt_id id) const -> boo
                 }
                 return true;
             },
-            [](declaration_statement_syntax const&) {
-                return true;
+            [&](declaration_statement_syntax const& node) {
+                auto found = result.expression_infos.find(node_key(node.initializer));
+                return (found == result.expression_infos.end() or not is_never(read_type(found->second.type)))
+                       and expression_can_complete_normally(node.initializer);
             },
             [](type_alias_statement_syntax const&) {
                 return true;
@@ -1040,6 +1057,9 @@ auto semantic_analyzer::check_template_for_statement(template_for_statement_synt
         if(binding_symbol.valid()) {
             result.statement_bindings[semantic_node_key{expansion_context, active_unit_index, id}] = binding_symbol;
             result.local_bindings[semantic_parameter_key{expansion_context, active_unit_index, node.name.start}] = binding_symbol;
+            if(auto forward = active_forward_parameters.find(pack_symbol); forward != active_forward_parameters.end()) {
+                active_forward_parameters.emplace(binding_symbol, forward->second);
+            }
         }
         check_statement(node.body, returns);
         pop_scope();

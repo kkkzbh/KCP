@@ -2606,17 +2606,29 @@ auto semantic_analyzer::check_str_initializer(ast_arena const& ast, struct_init_
 auto semantic_analyzer::check_block_expression(ast_arena const& ast, block_expr_syntax const& node) -> expression_info
 {
     push_scope();
-    auto returns = return_state{};
-    auto signature_id = result.signature_of(active_function_context_index, active_unit_index, active_function);
-    if(signature_id.valid()) {
-        returns.declared_return = result.signatures[signature_id.value].returns;
+    auto local_returns = return_state{};
+    if(active_return_state == nullptr) {
+        auto signature_id = result.signature_of(active_function_context_index, active_unit_index, active_function);
+        if(signature_id.valid()) {
+            local_returns.declared_return = result.signatures[signature_id.value].returns;
+        }
     }
+    auto& returns = active_return_state == nullptr ? local_returns : *active_return_state;
     for(auto statement : node.statements) {
         check_statement(statement, returns);
     }
+    auto can_reach_tail = std::ranges::all_of (
+        node.statements,
+        [&](stmt_id statement) {
+            return statement_can_complete_normally(statement);
+        }
+    );
     auto type = semantic_type_ids::unit;
     if(node.tail) {
         type = check_expression(ast, *node.tail, std::nullopt).type;
+    }
+    if(not can_reach_tail) {
+        type = semantic_type_ids::never;
     }
     pop_scope();
     return expression_info{ .type = type };

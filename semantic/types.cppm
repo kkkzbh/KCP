@@ -2,6 +2,47 @@ module semantic:types;
 
 import semantic;
 
+auto semantic_analyzer::apply_type_suffixes(semantic_type_id lowered, type_syntax const& syntax) -> semantic_type_id
+{
+    if(syntax.is_like and syntax.suffix_operators.empty()) {
+        report(diagnostic_kind::invalid_type_argument, syntax.full_span, "like requires a pointer or reference suffix");
+    }
+    if(syntax.is_forward and (syntax.suffix_operators.size() != 1uz or syntax.suffix_operators.front() != token_kind::amp)) {
+        report(diagnostic_kind::invalid_type_argument, syntax.full_span, "forward requires a reference suffix");
+    }
+
+    for(auto suffix : syntax.suffix_operators) {
+        if(suffix == token_kind::star) {
+            lowered = result.types.intern(pointer_type{ lowered, syntax.is_const, syntax.is_like });
+        } else if(suffix == token_kind::amp) {
+            auto kind = syntax.is_like
+                ? reference_type::kind::like
+                : (syntax.is_forward ? reference_type::kind::forward : reference_type::kind::regular);
+            lowered = result.types.intern(reference_type{ lowered, syntax.is_const, kind });
+        } else if(suffix == token_kind::kw_move) {
+            if(syntax.is_const or syntax.is_like) {
+                report(diagnostic_kind::invalid_type_argument, syntax.full_span, "move& cannot be combined with const or like");
+            }
+            lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::move });
+        } else if(suffix == token_kind::kw_forward) {
+            if(syntax.is_const or syntax.is_like) {
+                report(diagnostic_kind::invalid_type_argument, syntax.full_span, "forward& cannot be combined with const or like");
+            }
+            lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::forward });
+        }
+    }
+    if (
+        auto const* reference = std::get_if<reference_type>(&result.types.get(lowered));
+        active_type_substitutions == nullptr
+        and reference != nullptr
+        and reference->reference_kind == reference_type::kind::forward
+        and not is_dependent_type(reference->pointee)
+    ) {
+        report(diagnostic_kind::invalid_type_argument, syntax.full_span, "forward& requires a dependent type");
+    }
+    return lowered;
+}
+
 auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic_type_id
 {
     auto const& syntax = ast.node(id);
@@ -52,79 +93,19 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
     }
 
     if(syntax.is_array_type) {
-        auto lowered = lower_array_type(ast, syntax);
-        for(auto suffix : syntax.suffix_operators) {
-            if(suffix == token_kind::star) {
-                lowered = result.types.intern(pointer_type{ lowered, syntax.is_const, syntax.is_like });
-            } else if(suffix == token_kind::amp) {
-                auto kind = syntax.is_like
-                    ? reference_type::kind::like
-                    : (syntax.is_forward ? reference_type::kind::forward : reference_type::kind::regular);
-                lowered = result.types.intern(reference_type{ lowered, syntax.is_const, kind });
-            } else if(suffix == token_kind::kw_move) {
-                lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::move });
-            } else if(suffix == token_kind::kw_forward) {
-                lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::forward });
-            }
-        }
-        return lowered;
+        return apply_type_suffixes(lower_array_type(ast, syntax), syntax);
     }
 
     if(syntax.is_storage_type) {
-        auto lowered = lower_storage_type(ast, syntax);
-        for(auto suffix : syntax.suffix_operators) {
-            if(suffix == token_kind::star) {
-                lowered = result.types.intern(pointer_type{ lowered, syntax.is_const, syntax.is_like });
-            } else if(suffix == token_kind::amp) {
-                auto kind = syntax.is_like
-                    ? reference_type::kind::like
-                    : (syntax.is_forward ? reference_type::kind::forward : reference_type::kind::regular);
-                lowered = result.types.intern(reference_type{ lowered, syntax.is_const, kind });
-            } else if(suffix == token_kind::kw_move) {
-                lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::move });
-            } else if(suffix == token_kind::kw_forward) {
-                lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::forward });
-            }
-        }
-        return lowered;
+        return apply_type_suffixes(lower_storage_type(ast, syntax), syntax);
     }
 
     if(syntax.is_tuple_type) {
-        auto lowered = lower_tuple_type(ast, syntax);
-        for(auto suffix : syntax.suffix_operators) {
-            if(suffix == token_kind::star) {
-                lowered = result.types.intern(pointer_type{ lowered, syntax.is_const, syntax.is_like });
-            } else if(suffix == token_kind::amp) {
-                auto kind = syntax.is_like
-                    ? reference_type::kind::like
-                    : (syntax.is_forward ? reference_type::kind::forward : reference_type::kind::regular);
-                lowered = result.types.intern(reference_type{ lowered, syntax.is_const, kind });
-            } else if(suffix == token_kind::kw_move) {
-                lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::move });
-            } else if(suffix == token_kind::kw_forward) {
-                lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::forward });
-            }
-        }
-        return lowered;
+        return apply_type_suffixes(lower_tuple_type(ast, syntax), syntax);
     }
 
     if(syntax.is_grouped_type) {
-        auto lowered = lower_type(ast, syntax.grouped_type);
-        for(auto suffix : syntax.suffix_operators) {
-            if(suffix == token_kind::star) {
-                lowered = result.types.intern(pointer_type{ lowered, syntax.is_const, syntax.is_like });
-            } else if(suffix == token_kind::amp) {
-                auto kind = syntax.is_like
-                    ? reference_type::kind::like
-                    : (syntax.is_forward ? reference_type::kind::forward : reference_type::kind::regular);
-                lowered = result.types.intern(reference_type{ lowered, syntax.is_const, kind });
-            } else if(suffix == token_kind::kw_move) {
-                lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::move });
-            } else if(suffix == token_kind::kw_forward) {
-                lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::forward });
-            }
-        }
-        return lowered;
+        return apply_type_suffixes(lower_type(ast, syntax.grouped_type), syntax);
     }
 
     auto name = ast_source.identifier(syntax.name);
@@ -396,37 +377,7 @@ auto semantic_analyzer::lower_type(ast_arena const& ast, type_id id) -> semantic
         lowered = *found;
     }
 
-    if(syntax.is_like and syntax.suffix_operators.empty()) {
-        report(diagnostic_kind::invalid_type_argument, syntax.full_span, "like requires a pointer or reference suffix");
-    }
-    if(syntax.is_forward and (syntax.suffix_operators.size() != 1uz or syntax.suffix_operators.front() != token_kind::amp)) {
-        report(diagnostic_kind::invalid_type_argument, syntax.full_span, "forward requires a reference suffix");
-    }
-
-    for(auto suffix : syntax.suffix_operators) {
-        if(suffix == token_kind::star) {
-            lowered = result.types.intern(pointer_type{ lowered, syntax.is_const, syntax.is_like });
-        } else if(suffix == token_kind::amp) {
-            auto kind = syntax.is_like
-                ? reference_type::kind::like
-                : (syntax.is_forward ? reference_type::kind::forward : reference_type::kind::regular);
-            lowered = result.types.intern(reference_type{ lowered, syntax.is_const, kind });
-        } else if(suffix == token_kind::kw_move) {
-            if(syntax.is_const or syntax.is_like) {
-                report(diagnostic_kind::invalid_type_argument, syntax.full_span, "move& cannot be combined with const or like");
-            }
-            lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::move });
-        } else if(suffix == token_kind::kw_forward) {
-            if(syntax.is_const or syntax.is_like) {
-                report(diagnostic_kind::invalid_type_argument, syntax.full_span, "forward& cannot be combined with const or like");
-            }
-            lowered = result.types.intern(reference_type{ lowered, false, reference_type::kind::forward });
-        }
-    }
-    if(auto const* reference = std::get_if<reference_type>(&result.types.get(lowered)); active_type_substitutions == nullptr and reference != nullptr and reference->reference_kind == reference_type::kind::forward and not is_dependent_type(reference->pointee)) {
-        report(diagnostic_kind::invalid_type_argument, syntax.full_span, "forward& requires a dependent type");
-    }
-    return lowered;
+    return apply_type_suffixes(lowered, syntax);
 }
 
 auto semantic_analyzer::lower_return_type(ast_arena const& ast, type_id id) -> semantic_type_id

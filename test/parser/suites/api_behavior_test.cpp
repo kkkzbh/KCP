@@ -374,6 +374,32 @@ main() -> i32
         template_if.conditions[template_if.branches.front().condition].kind == template_if_condition_kind::type_equality,
         "template if should preserve type equality condition");
 
+    auto const template_if_block_expression_source = sources.add_source (
+        "api_template_if_block_expression.cp",
+        R"(select<T>(value: T)
+{
+    let chosen: i32 = {
+        template if(T == i32) {
+            return value;
+        } else {
+            return 0;
+        }
+        1
+    };
+    return chosen;
+})");
+    auto template_if_block_expression = parse_source(sources, template_if_block_expression_source);
+    test_parser::assert_true(template_if_block_expression.accepted, "template if inside block expression should parse");
+    auto const& block_template_function = first_function(template_if_block_expression);
+    auto const& block_template_body = function_body(template_if_block_expression, block_template_function);
+    auto const& chosen = declaration(template_if_block_expression, block_template_body.statements.front());
+    auto const& block_expression = as<block_expr_syntax>(template_if_block_expression.ast.node(chosen.initializer));
+    test_parser::assert_true(block_expression.statements.size() == 1uz, "block expression should keep nested template-if statement");
+    auto const& nested_template_if = as<template_if_statement_syntax>(
+        template_if_block_expression.ast.node(block_expression.statements.front())
+    );
+    test_parser::assert_true(nested_template_if.else_branch != std::nullopt, "nested template if should keep final else branch");
+
     auto const bad_concept_impl_source = sources.add_source (
         "api_bad_concept_impl.cp",
         "impl iterator range_iter { }");
@@ -680,6 +706,33 @@ main()
     test_parser::assert_true(
         generic_lambda_function.generic_parameters.size() == 1,
         "generic lambda should preserve generic parameters");
+
+    auto const generic_pack_lambda_source = sources.add_source(
+        "api_generic_pack_lambda_template_for.cp",
+        R"(main()
+{
+    let callback = f<T...>(values: T...) -> i32 {
+        let total = 0;
+        template for(let value : values...) {
+            total = total + 1;
+        }
+        return total;
+    };
+})");
+    auto generic_pack_lambda_parsed = parse_source(sources, generic_pack_lambda_source);
+    test_parser::assert_true(generic_pack_lambda_parsed.accepted, "generic lambda template-for source should parse");
+    auto const& pack_lambda_main = generic_pack_lambda_parsed.ast.node(generic_pack_lambda_parsed.root->functions.front());
+    auto const& pack_lambda_body = function_body(generic_pack_lambda_parsed, pack_lambda_main);
+    auto const& pack_lambda_decl = declaration(generic_pack_lambda_parsed, pack_lambda_body.statements.front());
+    auto const& pack_lambda = as<lambda_expr_syntax>(generic_pack_lambda_parsed.ast.node(pack_lambda_decl.initializer));
+    auto const& pack_lambda_function = generic_pack_lambda_parsed.ast.node(pack_lambda.function);
+    auto const& pack_lambda_function_body = function_body(generic_pack_lambda_parsed, pack_lambda_function);
+    test_parser::assert_true(
+        pack_lambda_function.generic_parameters.size() == 1 and pack_lambda_function.generic_parameters.front().is_pack,
+        "generic lambda should preserve type parameter packs");
+    test_parser::assert_true(
+        is<template_for_statement_syntax>(generic_pack_lambda_parsed.ast.node(pack_lambda_function_body.statements[1])),
+        "generic lambda body should preserve template-for statements");
 
     auto const ambiguity_source = sources.add_source (
         "api_comparison_generic_ambiguity.cp",
@@ -1305,6 +1358,8 @@ main()
     expect_rejected("api_template_for_missing_colon_rejected.cp", "main() { template for(let value values) { return; } }");
     expect_rejected("api_template_if_missing_rhs_rejected.cp", "main() { template if(T ==) { return; } }");
     expect_rejected("api_match_bad_binding_rejected.cp", "main() { match value { .some( => 1, } }");
+    expect_rejected("api_match_missing_pattern_rejected.cp", "main() { match value { => 1, .none => 0, } }");
+    expect_rejected("api_match_missing_arrow_rejected.cp", "main() { match value { .some(item) item, .none => 0, } }");
     expect_rejected("api_storage_missing_element_rejected.cp", "main() { let value: storage ; }");
     expect_rejected("api_function_type_trailing_comma_rejected.cp", "main() { let callback: f(i32,) -> i32 = add; }");
     expect_rejected("api_new_missing_type_rejected.cp", "main() { let value = new ; }");
