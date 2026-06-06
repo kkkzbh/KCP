@@ -48,6 +48,12 @@ auto exit_code(int status) -> int
     return status / 256;
 }
 
+auto lab_test_links_gcov() -> bool
+{
+    auto const* value = std::getenv("CP_COMPILER_TEST_LINK_GCOV");
+    return value != nullptr and std::string_view{ value } == "1";
+}
+
 auto unique_temp_dir(std::string_view name) -> std::filesystem::path
 {
     auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
@@ -87,6 +93,10 @@ auto module_sources(test_tools const& tools) -> std::vector<std::string>
 auto compile(test_tools const& tools, std::vector<std::string> arguments) -> int
 {
     arguments.insert(arguments.begin(), tools.cp.string());
+    if(lab_test_links_gcov()) {
+        arguments.emplace_back("--link-arg");
+        arguments.emplace_back("-lgcov");
+    }
     return run_status(arguments);
 }
 
