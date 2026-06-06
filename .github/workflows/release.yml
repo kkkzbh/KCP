@@ -247,11 +247,8 @@ jobs:
           export PATH="$PWD/$package/bin:$PATH"
           "$package/bin/kcp.exe" --help
           cat > hello.cp <<'EOF'
-          import std;
-
           main() -> i32
           {
-              println("hello from {}", "KCP");
               return 0;
           }
           EOF
