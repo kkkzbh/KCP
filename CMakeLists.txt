@@ -44,3 +44,9 @@ add_subdirectory(test/runtime)
 add_subdirectory(test/lab)
 add_subdirectory(test/benchmark)
 add_subdirectory(clion-plugin/native)
+
+install(DIRECTORY std/
+    DESTINATION lib/kcp/std
+    FILES_MATCHING
+        PATTERN "*.cp"
+)

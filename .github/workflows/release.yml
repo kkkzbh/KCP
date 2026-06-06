@@ -1,0 +1,174 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without the leading v, for example 0.1.0"
+        required: true
+        type: string
+      publishMarketplace:
+        description: "Publish the CLion plugin to JetBrains Marketplace"
+        required: true
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "v*"
+      - "[0-9]*"
+
+permissions:
+  contents: write
+
+jobs:
+  linux-packages:
+    name: Linux packages
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+
+    steps:
+      - name: Install build dependencies
+        run: |
+          dnf -y update
+          dnf -y install \
+            clang \
+            cmake \
+            dpkg \
+            findutils \
+            gcc-c++ \
+            git \
+            gzip \
+            libstdc++-devel \
+            llvm-devel \
+            ninja-build \
+            rpm-build \
+            tar \
+            which \
+            zstd
+
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure KCP release build
+        run: |
+          cmake -S . -B build-release -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=clang \
+            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCP_DEFAULT_RUNTIME_LIBRARY_PATH=/usr/lib/kcp/libcp_runtime.a \
+            -DCP_DEFAULT_STDLIB_ROOT_PATH=/usr/lib/kcp/std
+
+      - name: Build KCP
+        run: cmake --build build-release --target kcp -j2
+
+      - name: Build Linux packages
+        run: |
+          chmod +x scripts/package-linux.sh
+          scripts/package-linux.sh \
+            --build-dir build-release \
+            --version "${{ steps.version.outputs.version }}" \
+            --out-dir dist/release
+
+      - name: Upload Linux package artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kcp-linux-packages
+          path: dist/release/*
+          if-no-files-found: error
+
+  clion-plugin:
+    name: CLion plugin
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+
+    steps:
+      - name: Install plugin build dependencies
+        run: |
+          dnf -y update
+          dnf -y install \
+            clang \
+            cmake \
+            findutils \
+            gcc-c++ \
+            git \
+            java-21-openjdk-devel \
+            llvm-devel \
+            ninja-build \
+            unzip \
+            which
+
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${{ inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Build plugin ZIP
+        working-directory: clion-plugin
+        run: |
+          ./gradlew buildPlugin \
+            -PpluginVersion="${{ steps.version.outputs.version }}" \
+            -PclionLocalPath=
+
+      - name: Upload plugin artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kcp-clion-plugin
+          path: clion-plugin/build/distributions/*.zip
+          if-no-files-found: error
+
+      - name: Publish plugin to JetBrains Marketplace
+        if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')) || (github.event_name == 'workflow_dispatch' && inputs.publishMarketplace) }}
+        working-directory: clion-plugin
+        env:
+          JETBRAINS_MARKETPLACE_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
+        run: |
+          if [[ -z "${JETBRAINS_MARKETPLACE_TOKEN}" ]]; then
+            echo "JETBRAINS_MARKETPLACE_TOKEN is required to publish the plugin" >&2
+            exit 1
+          fi
+          ./gradlew publishPlugin \
+            -PpluginVersion="${{ steps.version.outputs.version }}" \
+            -PclionLocalPath=
+
+  github-release:
+    name: GitHub release
+    if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') }}
+    needs:
+      - linux-packages
+      - clion-plugin
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/github-release
+          merge-multiple: true
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/github-release/*
+          generate_release_notes: true

@@ -41,10 +41,13 @@ target_link_libraries(kcp
 
 add_dependencies(kcp cp_runtime)
 
+set(CP_DEFAULT_RUNTIME_LIBRARY_PATH "$<TARGET_FILE:cp_runtime>" CACHE STRING "Default runtime library path baked into the kcp executable.")
+set(CP_DEFAULT_STDLIB_ROOT_PATH "${CMAKE_SOURCE_DIR}/std" CACHE STRING "Default standard library root path baked into the kcp executable.")
+
 target_compile_definitions(kcp
     PRIVATE
-        CP_RUNTIME_LIBRARY_PATH="$<TARGET_FILE:cp_runtime>"
-        CP_STDLIB_ROOT_PATH="${CMAKE_SOURCE_DIR}/std"
+        CP_RUNTIME_LIBRARY_PATH="${CP_DEFAULT_RUNTIME_LIBRARY_PATH}"
+        CP_STDLIB_ROOT_PATH="${CP_DEFAULT_STDLIB_ROOT_PATH}"
 )
 
 set_target_properties(kcp PROPERTIES
@@ -52,4 +55,8 @@ set_target_properties(kcp PROPERTIES
     CXX_EXTENSIONS OFF
     CXX_MODULE_STD ON
     CXX_SCAN_FOR_MODULES ON
+)
+
+install(TARGETS kcp
+    RUNTIME DESTINATION bin
 )

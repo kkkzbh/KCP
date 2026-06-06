@@ -9,3 +9,7 @@ set_target_properties(cp_runtime PROPERTIES
     CXX_STANDARD 26
     CXX_EXTENSIONS OFF
 )
+
+install(TARGETS cp_runtime
+    ARCHIVE DESTINATION lib/kcp
+)

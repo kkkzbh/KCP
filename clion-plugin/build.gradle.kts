@@ -34,7 +34,8 @@ val stagedNativeRuntime = stagedNativeDir.map { it.file("libcp_runtime.a") }
 val stagedStdlibDir = stagedNativeDir.map { it.dir("std") }
 val clionLocalPath = providers.gradleProperty("clionLocalPath")
     .orElse(providers.environmentVariable("CLION_HOME"))
-    .get()
+val clionPlatformVersion = providers.gradleProperty("clionPlatformVersion")
+val marketplaceToken = providers.environmentVariable("JETBRAINS_MARKETPLACE_TOKEN")
 
 kotlin {
     jvmToolchain(21)
@@ -56,7 +57,11 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 
     intellijPlatform {
-        local(clionLocalPath)
+        if(clionLocalPath.isPresent && clionLocalPath.get().isNotBlank()) {
+            local(clionLocalPath.get())
+        } else {
+            clion(clionPlatformVersion.get())
+        }
         bundledModule("intellij.cidr.execution")
         bundledPlugin("com.intellij.nativeDebug")
         bundledPlugin("org.intellij.plugins.markdown")
@@ -76,6 +81,10 @@ intellijPlatform {
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
         }
+    }
+
+    publishing {
+        token = marketplaceToken
     }
 }
 
