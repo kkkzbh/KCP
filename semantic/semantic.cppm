@@ -1,3 +1,7 @@
+module;
+
+#include <cassert>
+
 export module semantic;
 
 export import :result;
@@ -612,7 +616,7 @@ export auto analyze_semantics(source_manager const& sources, std::span<parse_res
 {
     auto analyzer = semantic_analyzer{ sources };
     for(auto const& parsed : units) {
-        contract_assert(parsed.accepted and parsed.root);
+        assert(parsed.accepted and parsed.root);
         analyzer.add_unit(parsed.ast, *parsed.root);
     }
     return analyzer.analyze();

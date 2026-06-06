@@ -1,3 +1,7 @@
+module;
+
+#include <cassert>
+
 export module codegen.ir;
 
 import std;
@@ -980,7 +984,7 @@ struct function_lowerer
     {
         auto visiting = std::set<semantic_type_id>{};
         auto result = field_default_initialization_of(type, visiting);
-        contract_assert(result != field_default_initialization_state::deferred);
+        assert(result != field_default_initialization_state::deferred);
         return result == field_default_initialization_state::present;
     }
 
