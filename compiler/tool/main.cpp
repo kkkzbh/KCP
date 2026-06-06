@@ -247,18 +247,6 @@ auto print_diagnostic(source_manager const& sources, diagnostic const& value) ->
 
 auto shell_quote(std::string_view value) -> std::string
 {
-#ifdef _WIN32
-    auto output = std::string{ "\"" };
-    for(auto character : value) {
-        if(character == '"') {
-            output += "\\\"";
-        } else {
-            output += character;
-        }
-    }
-    output += '"';
-    return output;
-#else
     auto output = std::string{ "'" };
     for(auto character : value) {
         if(character == '\'') {
@@ -269,22 +257,16 @@ auto shell_quote(std::string_view value) -> std::string
     }
     output += '\'';
     return output;
-#endif
 }
 
 auto shell_join(std::vector<std::string> const& arguments) -> std::string
 {
-    auto command = (
+    return (
         arguments
         | std::views::transform([](std::string const& value) { return shell_quote(value); })
         | std::views::join_with(' ')
         | std::ranges::to<std::string>()
     );
-#ifdef _WIN32
-    return std::format("\"{}\"", command);
-#else
-    return command;
-#endif
 }
 
 auto run_command(std::vector<std::string> const& arguments, bool verbose) -> bool
@@ -335,7 +317,7 @@ auto append_release_args(std::vector<std::string>& output, cli_options const& op
 
 auto resolve_tool_path(std::string const& tool) -> std::string
 {
-    if(tool.find('/') != std::string::npos or tool.find('\\') != std::string::npos) {
+    if(tool.find('/') != std::string::npos) {
         return tool;
     }
     auto candidate = std::filesystem::path{ "/usr/bin" } / tool;
@@ -362,12 +344,9 @@ auto runtime_library_path(std::string_view executable) -> std::optional<std::str
         path = std::filesystem::absolute(std::filesystem::path{ executable }, error);
     }
     if(not error) {
-        auto constexpr filenames = std::array<std::string_view, 2uz>{ "cp_runtime.lib", "libcp_runtime.a" };
-        for(auto const& filename : filenames) {
-            auto const package_runtime = path.parent_path() / "../lib/kcp" / filename;
-            if(std::filesystem::is_regular_file(package_runtime, error)) {
-                return package_runtime.string();
-            }
+        auto const package_runtime = path.parent_path() / "../lib/kcp/libcp_runtime.a";
+        if(std::filesystem::is_regular_file(package_runtime, error)) {
+            return package_runtime.string();
         }
     }
     return std::nullopt;

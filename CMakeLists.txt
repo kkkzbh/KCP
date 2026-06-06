@@ -12,10 +12,6 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 project(KCP LANGUAGES C CXX)
 
-if(WIN32)
-    add_library(stdc++exp INTERFACE)
-endif()
-
 include(FetchContent)
 set(JSON_BuildTests OFF CACHE INTERNAL "")
 FetchContent_Declare(
