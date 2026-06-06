@@ -39,12 +39,15 @@ jobs:
             gcc-c++ \
             git \
             gzip \
+            libffi-devel \
             libstdc++-devel \
+            libxml2-devel \
             llvm-devel \
             ninja-build \
             rpm-build \
             tar \
             which \
+            zlib-devel \
             zstd
 
       - name: Check out source
@@ -104,11 +107,14 @@ jobs:
             findutils \
             gcc-c++ \
             git \
-            java-21-openjdk-devel \
+            java-25-openjdk-devel \
+            libffi-devel \
+            libxml2-devel \
             llvm-devel \
             ninja-build \
             unzip \
-            which
+            which \
+            zlib-devel
 
       - name: Check out source
         uses: actions/checkout@v4
@@ -129,6 +135,7 @@ jobs:
         run: |
           ./gradlew buildPlugin \
             -PpluginVersion="${{ steps.version.outputs.version }}" \
+            -PjavaToolchainVersion=25 \
             -PclionLocalPath=
 
       - name: Upload plugin artifact
@@ -150,6 +157,7 @@ jobs:
           fi
           ./gradlew publishPlugin \
             -PpluginVersion="${{ steps.version.outputs.version }}" \
+            -PjavaToolchainVersion=25 \
             -PclionLocalPath=
 
   github-release:

@@ -35,10 +35,11 @@ val stagedStdlibDir = stagedNativeDir.map { it.dir("std") }
 val clionLocalPath = providers.gradleProperty("clionLocalPath")
     .orElse(providers.environmentVariable("CLION_HOME"))
 val clionPlatformVersion = providers.gradleProperty("clionPlatformVersion")
+val javaToolchainVersion = providers.gradleProperty("javaToolchainVersion").map(String::toInt)
 val marketplaceToken = providers.environmentVariable("JETBRAINS_MARKETPLACE_TOKEN")
 
 kotlin {
-    jvmToolchain(21)
+    jvmToolchain(javaToolchainVersion.get())
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_21)
     }
