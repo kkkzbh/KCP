@@ -96,6 +96,10 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: fedora:latest
+    env:
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+      JAVA_TOOL_OPTIONS: -Dfile.encoding=UTF-8
 
     steps:
       - name: Install plugin build dependencies
@@ -107,6 +111,7 @@ jobs:
             findutils \
             gcc-c++ \
             git \
+            glibc-langpack-en \
             java-25-openjdk-devel \
             libffi-devel \
             libxml2-devel \
