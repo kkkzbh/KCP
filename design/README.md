@@ -40,7 +40,11 @@ npm run preview
 
 ## 部署
 
-Cloudflare Pages 项目名为 `kcp-docs`，生产入口域名为 `kcp.kkkzbh.cn`。
+Cloudflare Pages 项目名为 `cp-docs`，生产入口域名为 `cp.kkkzbh.cn`：
+
+<https://cp.kkkzbh.cn/>
+
+仓库的 GitHub Pages 地址 `https://kkkzbh.github.io/KCP/` 当前用于发布 Fedora 包仓库，不作为语言文档站入口。
 
 常规部署脚本：
 

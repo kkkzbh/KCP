@@ -61,8 +61,8 @@ const docsSidebar = (indexLink: string) => [
 
 export default defineConfig({
   lang: "zh-CN",
-  title: "cp 语言文档",
-  description: "cp 编译原理实验语言的语法与标准库学习文档",
+  title: "KCP 语言文档",
+  description: "KCP 语言的语法、语义与标准库学习文档",
   cleanUrls: true,
   lastUpdated: true,
   srcExclude: ["README.md", "docs/README.md"],

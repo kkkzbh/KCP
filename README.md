@@ -226,7 +226,11 @@ python3 .codex/skills/cp-code-style/scripts/check_cp_style.py
 
 ## Documentation
 
-The language documentation is maintained as a VitePress site:
+The public language documentation is available at:
+
+<https://cp.kkkzbh.cn/>
+
+The source for the documentation site lives in `design/` and can be previewed locally:
 
 ```bash
 cd design
