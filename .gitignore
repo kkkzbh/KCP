@@ -21,6 +21,7 @@ build.ninja
 rules.ninja
 
 # Native build outputs
+a.out
 *.a
 *.so
 *.dylib
@@ -47,5 +48,7 @@ node_modules/
 
 # Local scratch material
 教材ppt/
+实验要求.md
+实验要求.pdf
 exp/
 lab/
