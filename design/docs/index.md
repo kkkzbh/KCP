@@ -35,7 +35,11 @@
 - [迭代](iteration.md)：range-for 的语言入口、`iterator` / `iterable` 协议要求和内建类型入口。
 - [标准库 memory](std_memory.md)：`raw_buffer`、`span` 和 `contiguous_mutable_range` 的底层连续区间边界。
 - [标准库 text](std_text.md)：`str` 扩展、拥有型 `string`、迭代、失效和字符串限制。
-- [标准库 collections](std_collections.md)：`vector`、有序唯一键 `map/set`、node 语义和 order-statistics 接口。
+- [标准库 string](std_string.md)：拥有型 `string` 字符容器、`str` 视图桥接、追加、迭代和失效规则。
+- [标准库 collections](std_collections.md)：集合模块导览和容器选择。
+- [标准库 vector](std_vector.md)：连续动态数组、容量管理、下标访问、迭代和算法入口。
+- [标准库 map](std_map.md)：有序唯一键映射、node 引用、插入结果、按序访问和 rank。
+- [标准库 set](std_set.md)：有序唯一键集合、重复插入语义、按序访问和 rank。
 - [标准库 compare](std_compare.md)：三路比较分类、保留 concept、`asc` / `desc` 和默认排序协议。
 - [标准库 ranges](std_ranges.md)：`std.ranges` 的 sources、lazy adapters、terminals、UFCS 组合和非重载命名规则。
 - [标准库 algorithm](std_algorithm.md)：`sort` / `stable_sort` 的连续可写 range、比较器和稳定性边界。

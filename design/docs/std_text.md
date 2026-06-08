@@ -1,5 +1,7 @@
 # 标准库 text
 
+拥有型字符容器 `string` 的完整教程见 [标准库 string](std_string.md)。本页保留 `std.text` 模块导览、`str` 视图规则以及 `string` 公共接口速查。
+
 本文档记录 `std.text` 第一版公共接口。它把编译器认识的 `str` 字符串视图扩展成可比较、可迭代的标准库类型，并提供拥有型字符串 `string`。
 
 `std.text` 聚合模块当前重导出：

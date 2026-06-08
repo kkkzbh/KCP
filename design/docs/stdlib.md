@@ -117,7 +117,7 @@ main() -> i32
 }
 ```
 
-相关参考：[底层内存分配](memory_allocation.md)、[标准库 memory](std_memory.md)、[标准库 collections](std_collections.md)。
+相关参考：[底层内存分配](memory_allocation.md)、[标准库 memory](std_memory.md)、[标准库 collections](std_collections.md)、[标准库 vector](std_vector.md)。
 
 这一层的边界：
 
@@ -152,7 +152,7 @@ main() -> i32
 }
 ```
 
-相关参考：[标准库 collections](std_collections.md)。
+相关参考：[标准库 collections](std_collections.md)、[标准库 map](std_map.md)、[标准库 set](std_set.md)。
 
 查询接口要区分语义：`contains` 只返回是否存在，`find` 返回 `optional`，`at` 是“调用者保证存在”的前置条件访问，缺 key 会 panic。`map::operator [](key)` 不是只读查询；key 不存在时会插入 `V{}` 并返回 value 引用，因此要求 `V` 可默认构造。`insert` / `insert_node` 对 `map` 和 `set` 都是不覆盖插入；重复 key 返回已有节点且 `inserted == false`，但传入的 key / value / node 已经按值接收并在调用内部被 move 消费。
 
@@ -172,7 +172,7 @@ main() -> i32
 }
 ```
 
-相关参考：[标准库 text](std_text.md)、[类型系统](type_system.md)、[迭代](iteration.md)。
+相关参考：[标准库 text](std_text.md)、[标准库 string](std_string.md)、[类型系统](type_system.md)、[迭代](iteration.md)。
 
 当前 `std.text` 的公开面很小：
 
