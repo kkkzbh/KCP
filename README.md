@@ -1,5 +1,7 @@
 # KCP
 
+English | [简体中文](README.zh-CN.md)
+
 KCP is a compiler project for the KCP programming language. The repository contains the language design, frontend, semantic analysis, IR and LLVM lowering, runtime support, standard library, examples, documentation, and CLion integration.
 
 ![KCP in CLion](docs/assets/readme/clion-demo.png)
