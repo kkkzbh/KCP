@@ -47,6 +47,7 @@ node_modules/
 **/.vitepress/dist/
 
 # Local scratch material
+tmp/
 教材ppt/
 实验要求.md
 实验要求.pdf
