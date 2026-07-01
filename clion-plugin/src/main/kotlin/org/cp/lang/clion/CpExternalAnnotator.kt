@@ -14,12 +14,6 @@ class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, CpIns
         val result: CpInspectionResult,
     )
 
-    private data class HighlightAnnotationKey(
-        val category: String,
-        val startOffset: Int,
-        val endOffset: Int,
-    )
-
     override fun collectInformation(file: PsiFile): Request? = buildRequest(file)
 
     override fun collectInformation(file: PsiFile, editor: Editor, hasErrors: Boolean): Request? =
@@ -33,35 +27,17 @@ class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, CpIns
             return
         }
 
-        val textLength = file.textLength
-        val capturesByRange = annotationResult.captures.associateBy {
-            it.referenceStartOffset to it.referenceEndOffset
-        }
-        for (highlight in annotationResult.highlights.distinctBy(::highlightAnnotationKey)) {
-            val key = highlightKey(highlight.category) ?: continue
-            val start = highlight.startOffset.coerceIn(0, textLength)
-            val end = highlight.endOffset.coerceIn(start, textLength)
-            if (end == start) {
-                continue
-            }
-            val capture = capturesByRange[start to end]
-            val builder = if (capture == null) {
+        for (annotation in semanticAnnotations(annotationResult, file.textLength)) {
+            val builder = if (annotation.message == null) {
                 holder.newSilentAnnotation(HighlightSeverity.INFORMATION)
             } else {
-                holder.newAnnotation(HighlightSeverity.INFORMATION, captureMessage(capture))
+                holder.newAnnotation(HighlightSeverity.INFORMATION, annotation.message)
             }
-            builder.range(TextRange(start, end))
-                .textAttributes(key)
+            builder.range(annotation.range)
+                .textAttributes(annotation.textAttributes)
                 .create()
         }
     }
-
-    private fun highlightAnnotationKey(highlight: CpHelperHighlight): HighlightAnnotationKey =
-        HighlightAnnotationKey(
-            category = highlight.category,
-            startOffset = highlight.startOffset,
-            endOffset = highlight.endOffset,
-        )
 
     private fun buildRequest(file: PsiFile): Request? {
         if (file.language != CpLanguage) {
@@ -70,65 +46,29 @@ class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, CpIns
         return CpSemanticCache.get(file.project).presentation(file)?.let(::Request)
     }
 
-    private fun captureMessage(capture: CpHelperCapture): String {
-        val escape = if (capture.escaped) {
-            ", escaping ${capture.reason}"
-        } else {
-            ", non-escaping"
-        }
-        val mutation = if (capture.mutated) {
-            ", mutable"
-        } else {
-            ", read-only"
-        }
-        return "capture ${capture.name}: ${capture.mode}$escape$mutation"
-    }
-
-    private fun highlightKey(category: String): TextAttributesKey? = when (category) {
-        "function.declaration" -> CpSyntaxHighlighter.FUNCTION_DECLARATION
-        "function.call" -> CpSyntaxHighlighter.FUNCTION_CALL
-        "function.reference" -> CpSyntaxHighlighter.FUNCTION_CALL
-        "constructor.declaration" -> CpSyntaxHighlighter.CONSTRUCTOR
-        "destructor.declaration" -> CpSyntaxHighlighter.DESTRUCTOR
-        "member.function.call", "member.function.reference" -> CpSyntaxHighlighter.MEMBER_FUNCTION
-        "member.function.declaration" -> CpSyntaxHighlighter.MEMBER_FUNCTION
-        "associated.function.call", "associated.function.reference" -> CpSyntaxHighlighter.ASSOCIATED_FUNCTION
-        "associated.function.declaration" -> CpSyntaxHighlighter.ASSOCIATED_FUNCTION
-        "builtin.function.call" -> CpSyntaxHighlighter.BUILTIN_FUNCTION
-        "function.type" -> CpSyntaxHighlighter.FUNCTION_TYPE
-        "parameter.declaration", "parameter.reference" -> CpSyntaxHighlighter.PARAMETER
-        "parameter.pack.reference" -> CpSyntaxHighlighter.PARAMETER
-        "pattern.binding" -> CpSyntaxHighlighter.PARAMETER
-        "local.declaration", "local.reference" -> CpSyntaxHighlighter.LOCAL_VARIABLE
-        "constant.declaration", "constant.reference" -> CpSyntaxHighlighter.LOCAL_CONSTANT
-        "lambda.capture.reference",
-        "lambda.capture.const_ref",
-        "lambda.capture.ref",
-        "lambda.capture.copy",
-        "lambda.capture.owned_mut_copy" -> CpSyntaxHighlighter.LAMBDA_CAPTURE
-        "type" -> CpSyntaxHighlighter.TYPE
-        "type.parameter", "type.parameter.pack", "self.type" -> CpSyntaxHighlighter.TYPE_PARAMETER
-        "type.alias.declaration", "opaque.type.declaration" -> CpSyntaxHighlighter.TYPE_ALIAS
-        "associated.type.declaration", "associated.type.requirement", "associated.type.reference" ->
-            CpSyntaxHighlighter.ASSOCIATED_TYPE
-        "concept.declaration", "concept.reference" -> CpSyntaxHighlighter.CONCEPT
-        "concept.function.requirement" -> CpSyntaxHighlighter.FUNCTION_DECLARATION
-        "module.name", "import.name" -> CpSyntaxHighlighter.MODULE_NAME
-        "lambda.marker", "decltype" -> CpSyntaxHighlighter.DECLARATION_KEYWORD
-        "loop.label", "loop.label.reference" -> CpSyntaxHighlighter.LABEL
-        "field.declaration", "field.reference" -> CpSyntaxHighlighter.FIELD
-        "variant.case" -> CpSyntaxHighlighter.VARIANT_CASE
-        "enum.case" -> CpSyntaxHighlighter.ENUM_CASE
-        "literal", "number.literal" -> CpSyntaxHighlighter.NUMBER
-        "boolean.literal" -> CpSyntaxHighlighter.BOOLEAN
-        "null.literal" -> CpSyntaxHighlighter.NULL_LITERAL
-        "string.literal" -> CpSyntaxHighlighter.STRING
-        "character.literal" -> CpSyntaxHighlighter.CHARACTER
-        "operator" -> CpSyntaxHighlighter.OPERATOR
-        else -> null
-    }
-
     companion object {
+        internal fun semanticAnnotations(annotationResult: CpInspectionResult, textLength: Int): List<CpSemanticAnnotation> {
+            val capturesByRange = annotationResult.captures.associateBy {
+                it.referenceStartOffset to it.referenceEndOffset
+            }
+            return annotationResult.highlights
+                .distinctBy(::highlightAnnotationKey)
+                .mapNotNull { highlight ->
+                    val key = highlightKey(highlight.category) ?: return@mapNotNull null
+                    val start = highlight.startOffset.coerceIn(0, textLength)
+                    val end = highlight.endOffset.coerceIn(start, textLength)
+                    if (end == start) {
+                        return@mapNotNull null
+                    }
+                    val capture = capturesByRange[start to end]
+                    CpSemanticAnnotation(
+                        range = TextRange(start, end),
+                        textAttributes = key,
+                        message = capture?.let(::captureMessage),
+                    )
+                }
+        }
+
         internal fun emptyInspectionResult(): CpInspectionResult =
             CpInspectionResult(
                 accepted = false,
@@ -152,5 +92,82 @@ class CpExternalAnnotator : ExternalAnnotator<CpExternalAnnotator.Request, CpIns
                 "${diagnostic.message} [$details]"
             }
         }
+
+        private fun highlightAnnotationKey(highlight: CpHelperHighlight): HighlightAnnotationKey =
+            HighlightAnnotationKey(
+                category = highlight.category,
+                startOffset = highlight.startOffset,
+                endOffset = highlight.endOffset,
+            )
+
+        private fun captureMessage(capture: CpHelperCapture): String {
+            val escape = if (capture.escaped) {
+                ", escaping ${capture.reason}"
+            } else {
+                ", non-escaping"
+            }
+            val mutation = if (capture.mutated) {
+                ", mutable"
+            } else {
+                ", read-only"
+            }
+            return "capture ${capture.name}: ${capture.mode}$escape$mutation"
+        }
+
+        private fun highlightKey(category: String): TextAttributesKey? = when (category) {
+            "function.declaration" -> CpSyntaxHighlighter.FUNCTION_DECLARATION
+            "function.call" -> CpSyntaxHighlighter.FUNCTION_CALL
+            "function.reference" -> CpSyntaxHighlighter.FUNCTION_CALL
+            "constructor.declaration" -> CpSyntaxHighlighter.CONSTRUCTOR
+            "destructor.declaration" -> CpSyntaxHighlighter.DESTRUCTOR
+            "member.function.call", "member.function.reference" -> CpSyntaxHighlighter.MEMBER_FUNCTION
+            "member.function.declaration" -> CpSyntaxHighlighter.MEMBER_FUNCTION
+            "associated.function.call", "associated.function.reference" -> CpSyntaxHighlighter.ASSOCIATED_FUNCTION
+            "associated.function.declaration" -> CpSyntaxHighlighter.ASSOCIATED_FUNCTION
+            "builtin.function.call" -> CpSyntaxHighlighter.BUILTIN_FUNCTION
+            "function.type" -> CpSyntaxHighlighter.FUNCTION_TYPE
+            "parameter.declaration", "parameter.reference" -> CpSyntaxHighlighter.PARAMETER
+            "parameter.pack.reference" -> CpSyntaxHighlighter.PARAMETER
+            "pattern.binding" -> CpSyntaxHighlighter.PARAMETER
+            "local.declaration", "local.reference" -> CpSyntaxHighlighter.LOCAL_VARIABLE
+            "constant.declaration", "constant.reference" -> CpSyntaxHighlighter.LOCAL_CONSTANT
+            "lambda.capture.reference",
+            "lambda.capture.const_ref",
+            "lambda.capture.ref",
+            "lambda.capture.copy",
+            "lambda.capture.owned_mut_copy" -> CpSyntaxHighlighter.LAMBDA_CAPTURE
+            "type" -> CpSyntaxHighlighter.TYPE
+            "type.parameter", "type.parameter.pack", "self.type" -> CpSyntaxHighlighter.TYPE_PARAMETER
+            "type.alias.declaration", "opaque.type.declaration" -> CpSyntaxHighlighter.TYPE_ALIAS
+            "associated.type.declaration", "associated.type.requirement", "associated.type.reference" ->
+                CpSyntaxHighlighter.ASSOCIATED_TYPE
+            "concept.declaration", "concept.reference" -> CpSyntaxHighlighter.CONCEPT
+            "concept.function.requirement" -> CpSyntaxHighlighter.FUNCTION_DECLARATION
+            "module.name", "import.name" -> CpSyntaxHighlighter.MODULE_NAME
+            "lambda.marker", "decltype" -> CpSyntaxHighlighter.DECLARATION_KEYWORD
+            "loop.label", "loop.label.reference" -> CpSyntaxHighlighter.LABEL
+            "field.declaration", "field.reference" -> CpSyntaxHighlighter.FIELD
+            "variant.case" -> CpSyntaxHighlighter.VARIANT_CASE
+            "enum.case" -> CpSyntaxHighlighter.ENUM_CASE
+            "literal", "number.literal" -> CpSyntaxHighlighter.NUMBER
+            "boolean.literal" -> CpSyntaxHighlighter.BOOLEAN
+            "null.literal" -> CpSyntaxHighlighter.NULL_LITERAL
+            "string.literal" -> CpSyntaxHighlighter.STRING
+            "character.literal" -> CpSyntaxHighlighter.CHARACTER
+            "operator" -> CpSyntaxHighlighter.OPERATOR
+            else -> null
+        }
     }
 }
+
+internal data class CpSemanticAnnotation(
+    val range: TextRange,
+    val textAttributes: TextAttributesKey,
+    val message: String?,
+)
+
+private data class HighlightAnnotationKey(
+    val category: String,
+    val startOffset: Int,
+    val endOffset: Int,
+)

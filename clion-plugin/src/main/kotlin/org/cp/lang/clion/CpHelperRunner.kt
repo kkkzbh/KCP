@@ -1,8 +1,6 @@
 package org.cp.lang.clion
 
-import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.openapi.diagnostic.Logger
-import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.util.SystemInfo
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
@@ -283,23 +281,11 @@ object CpHelperRunner {
             return null
         }
 
-        pluginDescriptorRoot()?.resolve(CpPlugin.LINUX_HELPER_RELATIVE_PATH)?.let { helper ->
-            CpDiagnosticsTrace.info("helper-descriptor-candidate:$helper") {
-                "cp helper descriptor candidate=$helper exists=${Files.isRegularFile(helper)}"
-            }
-            if (Files.isRegularFile(helper)) {
-                return helper
-            }
-        }
-
         val classLocation = runCatching {
             Path.of(CpHelperRunner::class.java.protectionDomain.codeSource.location.toURI())
         }.getOrNull() ?: return null
 
-        val pluginRoot = when {
-            Files.isRegularFile(classLocation) -> classLocation.parent?.parent
-            else -> classLocation
-        } ?: return null
+        val pluginRoot = pluginRootFromClassLocation(classLocation) ?: return null
 
         val helper = pluginRoot.resolve(CpPlugin.LINUX_HELPER_RELATIVE_PATH)
         CpDiagnosticsTrace.info("helper-classpath-candidate:$helper") {
@@ -309,8 +295,15 @@ object CpHelperRunner {
         return helper.takeIf(Files::isRegularFile)
     }
 
-    private fun pluginDescriptorRoot(): Path? =
-        PluginManagerCore.getPlugin(PluginId.getId(CpPlugin.PLUGIN_ID))?.pluginPath
+    private fun pluginRootFromClassLocation(classLocation: Path): Path? =
+        when {
+            Files.isRegularFile(classLocation) ->
+                classLocation.parent
+                    ?.takeIf { it.fileName.toString() == "lib" }
+                    ?.parent
+            Files.isDirectory(classLocation) -> classLocation
+            else -> null
+        }
 }
 
 private fun Process.readAsync(stream: java.io.InputStream): CompletableFuture<String> =

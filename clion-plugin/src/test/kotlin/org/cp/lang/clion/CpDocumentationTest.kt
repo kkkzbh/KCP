@@ -1,6 +1,7 @@
 package org.cp.lang.clion
 
 import com.intellij.lang.LanguageParserDefinitions
+import com.intellij.platform.backend.documentation.DocumentationData
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -119,10 +120,13 @@ class CpDocumentationTest : BasePlatformTestCase() {
 
         val provider = CpDocumentationProvider()
         val typeName = myFixture.file.descendants(CpElements.TYPE_NAME).first { it.text == "box" }
+        val target = provider.documentationTarget(typeName, null)
+        val documentation = target?.computeDocumentation() as DocumentationData?
 
-        assertTrue(provider.getQuickNavigateInfo(typeName, null)!!.contains("struct box"))
-        assertTrue(provider.generateDoc(typeName, null)!!.contains("value: i32"))
-        assertNull(provider.generateDoc(myFixture.file, null))
-        assertNotNull(provider.getCustomDocumentationElement(myFixture.editor, myFixture.file, typeName))
+        assertNotNull(target)
+        assertTrue(target!!.computeDocumentationHint()!!.contains("struct box"))
+        assertTrue(documentation!!.html.contains("value: i32"))
+        assertNull(provider.documentationTarget(myFixture.file, null))
+        assertNotNull(provider.documentationTargets(myFixture.file, typeName.textOffset).single())
     }
 }

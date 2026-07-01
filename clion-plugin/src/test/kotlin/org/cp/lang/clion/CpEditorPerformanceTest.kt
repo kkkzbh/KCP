@@ -3,10 +3,11 @@ package org.cp.lang.clion
 import com.intellij.codeInsight.completion.CompletionContributor
 import com.intellij.codeInsight.completion.CompletionContributorEP
 import com.intellij.codeInsight.lookup.LookupManager
-import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.lang.LanguageParserDefinitions
 import com.intellij.openapi.actionSystem.IdeActions
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.extensions.DefaultPluginDescriptor
+import com.intellij.openapi.extensions.PluginId
 import com.intellij.openapi.fileTypes.FileTypeManager
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
@@ -28,13 +29,14 @@ class CpEditorPerformanceTest : BasePlatformTestCase() {
     override fun setUp() {
         super.setUp()
         LanguageParserDefinitions.INSTANCE.addExplicitExtension(CpLanguage, parserDefinition)
-        val pluginDescriptor = PluginManagerCore.getPlugin(PluginManagerCore.CORE_ID)
-            ?: error("platform plugin descriptor is unavailable")
         CompletionContributor.EP.point.registerExtension(
             CompletionContributorEP(
                 CpLanguage.id,
                 CpCompletionContributor::class.java.name,
-                pluginDescriptor,
+                DefaultPluginDescriptor(
+                    PluginId.getId(CpPlugin.PLUGIN_ID),
+                    CpCompletionContributor::class.java.classLoader,
+                ),
             ),
             testRootDisposable,
         )

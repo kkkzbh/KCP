@@ -3,6 +3,7 @@ import org.gradle.api.tasks.Sync
 import org.gradle.api.tasks.bundling.Zip
 import org.gradle.api.tasks.compile.JavaCompile
 import org.gradle.api.tasks.testing.Test
+import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.gradle.testing.jacoco.plugins.JacocoTaskExtension
@@ -15,7 +16,7 @@ plugins {
     jacoco
     kotlin("jvm") version "2.3.0"
     kotlin("plugin.serialization") version "2.3.0"
-    id("org.jetbrains.intellij.platform") version "2.13.1"
+    id("org.jetbrains.intellij.platform") version "2.17.0"
 }
 
 group = providers.gradleProperty("pluginGroup").get()
@@ -33,21 +34,37 @@ val stagedNativeHelper = stagedNativeDir.map { it.file("kcp-lexer-helper") }
 val stagedNativeCompiler = stagedNativeDir.map { it.file("kcp") }
 val stagedNativeRuntime = stagedNativeDir.map { it.file("libcp_runtime.a") }
 val stagedStdlibDir = stagedNativeDir.map { it.dir("std") }
+val nativeBuildJobs = providers.gradleProperty("nativeBuildJobs")
+    .map {
+        it.toInt().also { jobs ->
+            require(jobs > 0) { "nativeBuildJobs must be positive" }
+        }
+    }
+    .orElse(1)
+val useLocalClion = providers.gradleProperty("useLocalClion")
+    .map(String::toBooleanStrict)
+    .orElse(false)
 val clionLocalPath = providers.gradleProperty("clionLocalPath")
     .orElse(providers.environmentVariable("CLION_HOME"))
 val clionPlatformVersion = providers.gradleProperty("clionPlatformVersion")
 val javaToolchainVersion = providers.gradleProperty("javaToolchainVersion").map(String::toInt)
 val marketplaceToken = providers.environmentVariable("JETBRAINS_MARKETPLACE_TOKEN")
 
+java {
+    toolchain {
+        languageVersion.set(javaToolchainVersion.map { JavaLanguageVersion.of(it) })
+    }
+}
+
 kotlin {
     jvmToolchain(javaToolchainVersion.get())
     compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_21)
+        jvmTarget.set(javaToolchainVersion.map { JvmTarget.fromTarget(it.toString()) })
     }
 }
 
 tasks.withType<JavaCompile>().configureEach {
-    options.release.set(21)
+    options.release.set(javaToolchainVersion)
 }
 
 repositories {
@@ -63,15 +80,20 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
 
     intellijPlatform {
-        if(clionLocalPath.isPresent && clionLocalPath.get().isNotBlank()) {
+        if (useLocalClion.get()) {
             local(clionLocalPath.get())
         } else {
             clion(clionPlatformVersion.get())
         }
         bundledModule("intellij.cidr.execution")
+        bundledModule("intellij.cidr.runner")
+        bundledPlugin("com.intellij.platform.images")
+        bundledPlugin("com.intellij.clion")
         bundledPlugin("com.intellij.nativeDebug")
-        bundledPlugin("org.intellij.plugins.markdown")
+        bundledPlugin("intellij.structureView.plugin")
+        testBundledPlugin("org.intellij.plugins.markdown")
         testFramework(TestFrameworkType.Platform)
+        testFramework(TestFrameworkType.Plugin.CLion)
     }
 }
 
@@ -87,6 +109,7 @@ intellijPlatform {
 
         ideaVersion {
             sinceBuild = providers.gradleProperty("pluginSinceBuild")
+            untilBuild = providers.gradleProperty("pluginUntilBuild")
         }
     }
 
@@ -142,7 +165,7 @@ val buildNativeHelper by tasks.registering(Exec::class) {
         "cmake",
         "--build", nativeBuildDir.asFile.absolutePath,
         "--target", "cp_lexer_helper_cli",
-        "-j4",
+        "-j${nativeBuildJobs.get()}",
     )
 }
 
@@ -165,7 +188,7 @@ val buildNativeCompiler by tasks.registering(Exec::class) {
         "cmake",
         "--build", nativeBuildDir.asFile.absolutePath,
         "--target", "kcp",
-        "-j4",
+        "-j${nativeBuildJobs.get()}",
     )
 }
 
@@ -247,6 +270,7 @@ tasks.named("prepareSandbox").configure {
 tasks.named<Test>("test") {
     dependsOn(buildNativeHelper)
     useJUnit()
+    systemProperty("idea.load.plugins.id", "intellij.structureView.plugin,org.intellij.plugins.markdown")
     systemProperty("cp.helper.path", nativeHelperPath.asFile.absolutePath)
     systemProperty("cp.repo.root", repoRoot.asFile.absolutePath)
     extensions.configure<JacocoTaskExtension> {

@@ -1,35 +1,43 @@
 package org.cp.lang.clion
 
-import com.intellij.lang.documentation.AbstractDocumentationProvider
 import com.intellij.lang.documentation.DocumentationMarkup
-import com.intellij.openapi.editor.Editor
+import com.intellij.model.Pointer
 import com.intellij.openapi.util.Key
+import com.intellij.platform.backend.documentation.DocumentationResult
+import com.intellij.platform.backend.documentation.DocumentationTarget
+import com.intellij.platform.backend.documentation.DocumentationTargetProvider
+import com.intellij.platform.backend.documentation.PsiDocumentationTargetProvider
+import com.intellij.platform.backend.presentation.TargetPresentation
 import com.intellij.psi.PsiElement
 import com.intellij.psi.PsiFile
+import com.intellij.psi.SmartPointerManager
+import com.intellij.psi.SmartPsiElementPointer
 
-class CpDocumentationProvider : AbstractDocumentationProvider() {
-    override fun generateDoc(element: PsiElement, originalElement: PsiElement?): String? =
-        CpDocumentationEngine.documentation(element, originalElement)
+class CpDocumentationProvider : DocumentationTargetProvider, PsiDocumentationTargetProvider {
+    override fun documentationTargets(file: PsiFile, offset: Int): List<DocumentationTarget> {
+        if (file.language != CpLanguage || file.textLength == 0) {
+            return emptyList()
+        }
+        val resolvedOffset = offset.coerceIn(0, file.textLength - 1)
+        val element = file.findElementAt(resolvedOffset) ?: return emptyList()
+        return documentationTarget(element, element)?.let(::listOf).orEmpty()
+    }
 
-    override fun getQuickNavigateInfo(element: PsiElement, originalElement: PsiElement?): String? =
-        CpDocumentationEngine.quickInfo(element, originalElement)
-
-    @Deprecated("Deprecated IntelliJ quick documentation API compatibility")
-    override fun getCustomDocumentationElement(editor: Editor, file: PsiFile, contextElement: PsiElement?): PsiElement? {
-        val element = contextElement ?: return null
+    override fun documentationTarget(element: PsiElement, originalElement: PsiElement?): DocumentationTarget? {
         if (element.language != CpLanguage) {
             return null
         }
-        return element.reference?.resolve() ?: element.parent?.reference?.resolve() ?: element
+        val target = CpDocumentationEngine.target(element, originalElement) ?: return null
+        return CpPsiDocumentationTarget(SmartPointerManager.createPointer(target.element))
     }
 }
 
 object CpDocumentationEngine {
     fun quickInfo(element: PsiElement, originalElement: PsiElement? = null): String? =
-        docTarget(element, originalElement)?.definition
+        target(element, originalElement)?.documentation?.definition
 
     fun documentation(element: PsiElement, originalElement: PsiElement? = null): String? {
-        val target = docTarget(element, originalElement) ?: return null
+        val target = target(element, originalElement)?.documentation ?: return null
         val body = buildString {
             if (target.sections.isNotEmpty()) {
                 append(DocumentationMarkup.SECTIONS_START)
@@ -49,10 +57,10 @@ object CpDocumentationEngine {
             body
     }
 
-    private fun docTarget(element: PsiElement, originalElement: PsiElement?): CpDocTarget? {
+    fun target(element: PsiElement, originalElement: PsiElement? = null): CpResolvedDocumentation? {
         val resolved = originalElement?.reference?.resolve() ?: originalElement?.parent?.reference?.resolve()
         val candidate = resolved ?: element.reference?.resolve() ?: element.parent?.reference?.resolve() ?: element
-        return when (candidate.cpElementType()) {
+        val documentation = when (candidate.cpElementType()) {
             CpElements.FUNCTION_NAME -> candidate.parentByType(CpElements.FUNCTION)?.cachedDoc { functionDoc() }
             CpElements.TYPE_NAME -> candidate.typeDoc()
             CpElements.FIELD_DECLARATION -> candidate.parentByType(CpElements.STRUCT_FIELD)?.cachedDoc { fieldDoc() }
@@ -64,6 +72,7 @@ object CpDocumentationEngine {
                 else -> null
             }
         }
+        return documentation?.let { CpResolvedDocumentation(candidate, it) }
     }
 
     private fun PsiElement.functionDoc(): CpDocTarget? {
@@ -195,6 +204,33 @@ data class CpDocSection(
     val title: String,
     val content: String,
 )
+
+data class CpResolvedDocumentation(
+    val element: PsiElement,
+    val documentation: CpDocTarget,
+)
+
+private class CpPsiDocumentationTarget(
+    private val elementPointer: SmartPsiElementPointer<PsiElement>,
+) : DocumentationTarget {
+    override fun createPointer(): Pointer<out DocumentationTarget> =
+        Pointer.delegatingPointer(elementPointer) { element ->
+            CpPsiDocumentationTarget(SmartPointerManager.createPointer(element))
+        }
+
+    override fun computePresentation(): TargetPresentation {
+        val text = elementPointer.element?.let { CpDocumentationEngine.quickInfo(it) }.orEmpty()
+        return TargetPresentation.builder(text).presentation()
+    }
+
+    override fun computeDocumentationHint(): String? =
+        elementPointer.element?.let { CpDocumentationEngine.quickInfo(it) }
+
+    override fun computeDocumentation(): DocumentationResult? =
+        elementPointer.element
+            ?.let { CpDocumentationEngine.documentation(it) }
+            ?.let(DocumentationResult::documentation)
+}
 
 private data class CachedDocTarget(
     val modificationStamp: Long,

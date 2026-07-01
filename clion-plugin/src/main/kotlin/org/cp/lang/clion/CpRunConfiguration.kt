@@ -2,11 +2,11 @@ package org.cp.lang.clion
 
 import com.intellij.build.BuildViewManager
 import com.intellij.build.DefaultBuildDescriptor
+import com.intellij.build.BuildDescriptor
 import com.intellij.build.events.impl.FailureResultImpl
 import com.intellij.build.events.impl.SuccessResultImpl
 import com.intellij.build.progress.BuildProgress
 import com.intellij.build.progress.BuildProgressDescriptor
-import com.intellij.build.progress.BuildProgressDescriptorImpl
 import com.intellij.execution.BeforeRunTask
 import com.intellij.execution.BeforeRunTaskProvider
 import com.intellij.execution.CommonProgramRunConfigurationParameters
@@ -416,7 +416,7 @@ class CpBuildConfigurationProvider : CidrBuildConfigurationProvider {
 class CpProjectTaskRunner : CidrProjectTaskRunner() {
     override val buildSystemId: String = "CpRunFile"
 
-    override fun canRun(projectTask: ProjectTask): Boolean =
+    override fun canRun(project: Project, projectTask: ProjectTask, context: ProjectTaskContext?): Boolean =
         projectTask.cpBuildConfiguration() != null
 
     override fun runnerForTask(task: ProjectTask, project: Project): CidrTaskRunner? =
@@ -519,7 +519,13 @@ private fun CpRunConfiguration.startCpBuildProgress(): BuildProgress<BuildProgre
     descriptor.setActivateToolWindowWhenAdded(true)
     descriptor.setActivateToolWindowWhenFailed(true)
     return BuildViewManager.createBuildProgress(project)
-        .start(BuildProgressDescriptorImpl(descriptor))
+        .start(CpBuildProgressDescriptor(descriptor))
+}
+
+private data class CpBuildProgressDescriptor(private val descriptor: BuildDescriptor) : BuildProgressDescriptor {
+    override fun getTitle(): String = descriptor.title
+
+    override fun getBuildDescriptor(): BuildDescriptor = descriptor
 }
 
 private fun BuildProgress<BuildProgressDescriptor>.writeOutput(text: String, outputType: ProcessOutputType) {

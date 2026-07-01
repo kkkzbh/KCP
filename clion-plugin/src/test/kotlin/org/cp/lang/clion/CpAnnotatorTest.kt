@@ -1,11 +1,9 @@
 package org.cp.lang.clion
 
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
-import com.intellij.codeInsight.daemon.impl.AnnotationHolderImpl
 import com.intellij.lang.ExternalLanguageAnnotators
 import com.intellij.lang.LanguageAnnotators
 import com.intellij.lang.LanguageParserDefinitions
-import com.intellij.lang.annotation.AnnotationSession
 import com.intellij.lang.annotation.HighlightSeverity
 import com.intellij.openapi.editor.colors.TextAttributesKey
 import com.intellij.psi.PsiFile
@@ -154,26 +152,21 @@ class CpAnnotatorTest : BasePlatformTestCase() {
                 escaped = true,
             ),
         )
-        val annotator = CpExternalAnnotator()
-        val holder = annotationHolder(annotator, file)
-
-        holder.applyExternalAnnotatorWithContext(
-            file,
+        val annotations = CpExternalAnnotator.semanticAnnotations(
             CpInspectionResult(
                 accepted = true,
                 diagnostics = emptyList(),
                 highlights = highlights,
                 captures = captures,
             ),
+            file.textLength,
         )
-        holder.applyExternalAnnotatorWithContext(file, null)
-        holder.assertAllAnnotationsCreated()
 
-        assertEquals(categories.size, holder.size)
-        assertTrue(holder.any { it.textAttributes == CpSyntaxHighlighter.FUNCTION_DECLARATION })
-        assertTrue(holder.any { it.textAttributes == CpSyntaxHighlighter.VARIANT_CASE })
-        assertTrue(holder.any { it.message == "capture read: by-ref, non-escaping, read-only" })
-        assertTrue(holder.any { it.message == "capture escaped: move, escaping closure, mutable" })
+        assertEquals(categories.size, annotations.size)
+        assertTrue(annotations.any { it.textAttributes == CpSyntaxHighlighter.FUNCTION_DECLARATION })
+        assertTrue(annotations.any { it.textAttributes == CpSyntaxHighlighter.VARIANT_CASE })
+        assertTrue(annotations.any { it.message == "capture read: by-ref, non-escaping, read-only" })
+        assertTrue(annotations.any { it.message == "capture escaped: move, escaping closure, mutable" })
     }
 
     fun testExternalAnnotatorSemanticDiagnosticsBecomeEditorErrors() {
@@ -509,14 +502,4 @@ class CpAnnotatorTest : BasePlatformTestCase() {
         CpSemanticCache.get(project).store(request, CpHelperRunner.inspect(request), cpModificationCount(project))
     }
 
-    @Suppress("DEPRECATION")
-    private fun annotationHolder(annotator: CpExternalAnnotator, file: PsiFile): AnnotationHolderImpl {
-        val constructor = AnnotationHolderImpl::class.java.getDeclaredConstructor(
-            Any::class.java,
-            AnnotationSession::class.java,
-            Boolean::class.java,
-        )
-        constructor.isAccessible = true
-        return constructor.newInstance(annotator, AnnotationSession(file), true) as AnnotationHolderImpl
-    }
 }

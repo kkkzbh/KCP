@@ -7,6 +7,13 @@
         file type registration, syntax and semantic highlighting, comments,
         brace matching, native parsing, and semantic diagnostics.
     ]]></description>
+    <change-notes><![CDATA[
+        <h3>0.1.1</h3>
+        <ul>
+          <li>Replaced IntelliJ Platform internal API usages in build progress, plugin path resolution, and project task integration.</li>
+          <li>Migrated quick documentation integration to the 2026.2 documentation target API.</li>
+        </ul>
+    ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
     <depends>com.intellij.modules.clion</depends>
@@ -33,7 +40,8 @@
         <lang.findUsagesProvider language="cp" implementationClass="org.cp.lang.clion.CpFindUsagesProvider" />
         <findUsagesHandlerFactory implementation="org.cp.lang.clion.CpFindUsagesHandlerFactory" />
         <referencesSearch implementation="org.cp.lang.clion.CpReferencesSearch" />
-        <lang.documentationProvider language="cp" implementationClass="org.cp.lang.clion.CpDocumentationProvider" />
+        <platform.backend.documentation.targetProvider implementation="org.cp.lang.clion.CpDocumentationProvider" />
+        <platform.backend.documentation.psiTargetProvider implementation="org.cp.lang.clion.CpDocumentationProvider" />
         <lang.directNavigationProvider implementationClass="org.cp.lang.clion.CpDirectNavigationProvider" />
         <gotoDeclarationHandler implementation="org.cp.lang.clion.CpGotoDeclarationHandler" />
         <renamePsiElementProcessor implementation="org.cp.lang.clion.CpRenameProcessor" />

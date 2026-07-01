@@ -3,8 +3,7 @@ package org.cp.lang.clion
 import com.intellij.execution.ExecutionException
 import com.intellij.lang.annotation.HighlightSeverity
 import com.intellij.execution.configurations.RuntimeConfigurationError
-import com.intellij.mock.MockProject
-import com.intellij.openapi.Disposable
+import com.intellij.openapi.project.DefaultProjectFactory
 import com.intellij.testFramework.LightVirtualFile
 import org.jdom.Element
 import org.junit.Assert.assertEquals
@@ -1010,7 +1009,7 @@ class CpIntegrationTest {
     }
 
     private fun newCpRunConfiguration(): CpRunConfiguration {
-        val project = MockProject(null, Disposable {})
+        val project = DefaultProjectFactory.getInstance().defaultProject
         val factory = CpRunConfigurationType().configurationFactories.single()
         return CpRunConfiguration(project, factory, "main")
     }
