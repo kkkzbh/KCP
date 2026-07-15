@@ -157,8 +157,8 @@ jobs:
           JETBRAINS_MARKETPLACE_TOKEN: ${{ secrets.JETBRAINS_MARKETPLACE_TOKEN }}
         run: |
           if [[ -z "${JETBRAINS_MARKETPLACE_TOKEN}" ]]; then
-            echo "JETBRAINS_MARKETPLACE_TOKEN is not configured; skipping Marketplace publish."
-            exit 0
+            echo "::error::JETBRAINS_MARKETPLACE_TOKEN is required for Marketplace publishing."
+            exit 1
           fi
           ./gradlew publishPlugin \
             -PpluginVersion="${{ steps.version.outputs.version }}" \
