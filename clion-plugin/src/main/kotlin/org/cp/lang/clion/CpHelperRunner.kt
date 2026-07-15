@@ -281,29 +281,12 @@ object CpHelperRunner {
             return null
         }
 
-        val classLocation = runCatching {
-            Path.of(CpHelperRunner::class.java.protectionDomain.codeSource.location.toURI())
-        }.getOrNull() ?: return null
-
-        val pluginRoot = pluginRootFromClassLocation(classLocation) ?: return null
-
-        val helper = pluginRoot.resolve(CpPlugin.LINUX_HELPER_RELATIVE_PATH)
+        val helper = cpPluginNativePath("kcp-lexer-helper") ?: return null
         CpDiagnosticsTrace.info("helper-classpath-candidate:$helper") {
-            "cp helper classpath location=$classLocation root=$pluginRoot candidate=$helper " +
-                "exists=${Files.isRegularFile(helper)}"
+            "cp helper packaged candidate=$helper exists=${Files.isRegularFile(helper)}"
         }
         return helper.takeIf(Files::isRegularFile)
     }
-
-    private fun pluginRootFromClassLocation(classLocation: Path): Path? =
-        when {
-            Files.isRegularFile(classLocation) ->
-                classLocation.parent
-                    ?.takeIf { it.fileName.toString() == "lib" }
-                    ?.parent
-            Files.isDirectory(classLocation) -> classLocation
-            else -> null
-        }
 }
 
 private fun Process.readAsync(stream: java.io.InputStream): CompletableFuture<String> =

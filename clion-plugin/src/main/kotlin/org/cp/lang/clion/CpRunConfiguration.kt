@@ -485,7 +485,7 @@ private fun CpRunConfiguration.runCpBuild(): Boolean {
     val progress = startCpBuildProgress()
     return runCatching {
         val build = createBuildInvocation()
-        progress.output("${build.commandLine.commandLineString}\n", ProcessOutputType.SYSTEM)
+        progress.output("${build.commandLine.commandLineString}\n", ProcessOutputType.STDOUT)
         Files.deleteIfExists(build.executable)
         val output = CapturingProcessHandler(build.commandLine).runProcess()
         progress.writeOutput(output.stdout, ProcessOutputType.STDOUT)
@@ -607,7 +607,7 @@ internal object CpRunPaths {
             configured.toPathOrNull(),
             System.getProperty("kcp.compiler.path").toPathOrNull(),
             System.getenv("KCP").toPathOrNull(),
-            pluginNativePath("kcp"),
+            cpPluginNativePath("kcp"),
         )
             .plus(repoCompilerCandidates(project, source))
             .plus(
@@ -741,17 +741,6 @@ internal object CpRunPaths {
                         )
                     }
             }
-
-    private fun pluginNativePath(name: String): Path? {
-        val classLocation = runCatching {
-            Path.of(CpRunPaths::class.java.protectionDomain.codeSource.location.toURI())
-        }.getOrNull() ?: return null
-        val pluginRoot = when {
-            Files.isRegularFile(classLocation) -> classLocation.parent?.parent
-            else -> classLocation
-        } ?: return null
-        return pluginRoot.resolve("native/linux-x86_64").resolve(name)
-    }
 
     private fun sourceClosureKnownFiles(source: Path, roots: List<Path>, moduleSearchRoots: List<Path>): Map<String, CpInspectionFile> {
         val files = linkedMapOf<String, CpInspectionFile>()

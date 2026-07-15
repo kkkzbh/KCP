@@ -13,6 +13,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
 import java.util.Comparator
@@ -24,6 +25,31 @@ class CpIntegrationTest {
         assertEquals("KCP", CpFileType.INSTANCE.name)
         assertEquals("cp", CpFileType.INSTANCE.defaultExtension)
         assertEquals("KCP 源文件", CpFileType.INSTANCE.description)
+    }
+
+    @Test
+    fun packagedClassResourceResolvesPluginInstallRoot() {
+        val root = Files.createTempDirectory("kcp-plugin-root")
+        try {
+            val pluginRoot = root.resolve("kcp-clion-plugin")
+            val pluginJar = pluginRoot.resolve("lib/kcp-clion-plugin.jar")
+            Files.createDirectories(pluginJar.parent)
+            Files.write(pluginJar, byteArrayOf())
+            val classResource = URI.create("jar:${pluginJar.toUri()}!/org/cp/lang/clion/CpPlugin.class").toURL()
+
+            assertEquals(pluginRoot.toAbsolutePath().normalize(), cpPluginRootFromClassResource(classResource))
+        } finally {
+            Files.walk(root).use { stream ->
+                stream.sorted(Comparator.reverseOrder()).forEach(Files::deleteIfExists)
+            }
+        }
+    }
+
+    @Test
+    fun classDirectoryResourceDoesNotClaimPluginInstallRoot() {
+        val classResource = Path.of("/tmp/classes/org/cp/lang/clion/CpPlugin.class").toUri().toURL()
+
+        assertNull(cpPluginRootFromClassResource(classResource))
     }
 
     @Test

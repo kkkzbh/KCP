@@ -8,10 +8,11 @@
         brace matching, native parsing, and semantic diagnostics.
     ]]></description>
     <change-notes><![CDATA[
-        <h3>0.1.1</h3>
+        <h3>0.1.2</h3>
         <ul>
-          <li>Replaced IntelliJ Platform internal API usages in build progress, plugin path resolution, and project task integration.</li>
-          <li>Migrated quick documentation integration to the 2026.2 documentation target API.</li>
+          <li>Fixed bundled helper and compiler discovery for installed plugins.</li>
+          <li>Restored parser diagnostics in KCP run configurations.</li>
+          <li>Rendered successful build commands as standard output.</li>
         </ul>
     ]]></change-notes>
 
